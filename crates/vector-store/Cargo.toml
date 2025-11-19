@@ -1,0 +1,37 @@
+[package]
+name = "context-vector-store"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+log.workspace = true
+
+# Vector operations
+ndarray.workspace = true
+
+# Embeddings
+fastembed.workspace = true
+
+# Workspace dependencies
+context-code-chunker = { path = "../code-chunker" }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

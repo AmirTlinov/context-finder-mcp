@@ -1,0 +1,33 @@
+[package]
+name = "context-search"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Workspace dependencies
+context-code-chunker = { path = "../code-chunker" }
+context-vector-store = { path = "../vector-store" }
+
+# Async
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+log.workspace = true
+
+# Fuzzy matching
+nucleo-matcher.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tempfile.workspace = true

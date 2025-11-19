@@ -1,0 +1,34 @@
+[package]
+name = "context-indexer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Workspace dependencies
+context-code-chunker = { path = "../code-chunker" }
+context-vector-store = { path = "../vector-store" }
+
+# Async
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+log.workspace = true
+
+# File system
+walkdir.workspace = true
+ignore.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true
