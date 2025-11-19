@@ -12,6 +12,7 @@ pub struct VectorStore {
     embedder: EmbeddingModel,
     path: std::path::PathBuf,
     next_id: usize,
+    id_map: HashMap<usize, String>, // numeric_id -> string_id mapping
 }
 
 impl VectorStore {
@@ -27,6 +28,7 @@ impl VectorStore {
             embedder,
             path: path.as_ref().to_path_buf(),
             next_id: 0,
+            id_map: HashMap::new(),
         })
     }
 
@@ -52,6 +54,9 @@ impl VectorStore {
 
             // Add to HNSW index
             self.index.add(numeric_id, &vector)?;
+
+            // Add to id mapping
+            self.id_map.insert(numeric_id, id.clone());
 
             let stored = StoredChunk {
                 chunk,
@@ -92,11 +97,9 @@ impl VectorStore {
         Ok(results)
     }
 
-    /// Find chunk by numeric ID (inefficient, but works for now)
-    fn find_chunk_by_numeric_id(&self, _id: usize) -> Option<&StoredChunk> {
-        // TODO: maintain reverse mapping for efficiency
-        // For now, return first chunk as placeholder
-        self.chunks.values().next()
+    /// Find chunk by numeric ID using id_map
+    fn find_chunk_by_numeric_id(&self, id: usize) -> Option<&StoredChunk> {
+        self.id_map.get(&id).and_then(|string_id| self.chunks.get(string_id))
     }
 
     /// Get chunk by string ID
@@ -122,7 +125,15 @@ impl VectorStore {
     /// Save store to disk
     pub async fn save(&self) -> Result<()> {
         log::info!("Saving VectorStore to {:?}", self.path);
-        let data = serde_json::to_string_pretty(&self.chunks)?;
+
+        // Save both chunks and id_map
+        let save_data = serde_json::json!({
+            "chunks": self.chunks,
+            "id_map": self.id_map,
+            "next_id": self.next_id,
+        });
+
+        let data = serde_json::to_string_pretty(&save_data)?;
         tokio::fs::write(&self.path, data).await?;
         log::info!("VectorStore saved successfully");
         Ok(())
@@ -132,17 +143,24 @@ impl VectorStore {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
         log::info!("Loading VectorStore from {:?}", path.as_ref());
         let data = tokio::fs::read_to_string(&path).await?;
-        let chunks: HashMap<String, StoredChunk> = serde_json::from_str(&data)?;
+        let save_data: serde_json::Value = serde_json::from_str(&data)?;
+
+        // Load chunks and id_map
+        let chunks: HashMap<String, StoredChunk> =
+            serde_json::from_value(save_data["chunks"].clone())?;
+        let id_map: HashMap<usize, String> =
+            serde_json::from_value(save_data["id_map"].clone())?;
+        let next_id: usize = save_data["next_id"].as_u64().unwrap_or(0) as usize;
 
         let embedder = EmbeddingModel::new().await?;
         let dimension = embedder.dimension();
         let mut index = HnswIndex::new(dimension);
 
-        // Rebuild index
-        let mut next_id = 0;
-        for stored in chunks.values() {
-            index.add(next_id, &stored.vector)?;
-            next_id += 1;
+        // Rebuild index using id_map
+        for (&numeric_id, string_id) in &id_map {
+            if let Some(stored) = chunks.get(string_id) {
+                index.add(numeric_id, &stored.vector)?;
+            }
         }
 
         log::info!("Loaded {} chunks", chunks.len());
@@ -153,6 +171,7 @@ impl VectorStore {
             embedder,
             path: path.as_ref().to_path_buf(),
             next_id,
+            id_map,
         })
     }
 }

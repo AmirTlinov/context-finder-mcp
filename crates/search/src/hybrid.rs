@@ -34,15 +34,26 @@ impl HybridSearch {
         // Candidate pool size (retrieve more for fusion)
         let candidate_pool = limit * 5;
 
+        // Build chunk id -> index mapping
+        let mut chunk_id_to_idx: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for (idx, chunk) in self.chunks.iter().enumerate() {
+            let id = format!("{}:{}:{}", chunk.file_path, chunk.start_line, chunk.end_line);
+            chunk_id_to_idx.insert(id, idx);
+        }
+
         // 1. Semantic search (embeddings + cosine similarity)
         let semantic_results = self.store.search(query, candidate_pool).await?;
         log::debug!("Semantic: {} results", semantic_results.len());
 
-        // Convert semantic results to (index, score)
+        // Convert semantic results to (chunk_idx, score) using chunk_id_to_idx
         let semantic_scores: Vec<(usize, f32)> = semantic_results
             .iter()
-            .enumerate()
-            .map(|(rank, result)| (rank, result.score))
+            .filter_map(|result| {
+                chunk_id_to_idx
+                    .get(&result.id)
+                    .map(|&idx| (idx, result.score))
+            })
             .collect();
 
         // 2. Fuzzy search (path/symbol matching)
@@ -56,15 +67,17 @@ impl HybridSearch {
         // 4. AST-aware boosting
         let boosted_scores = AstBooster::boost(&self.chunks, fused_scores);
 
-        // 5. Convert back to SearchResult and apply limit
+        // 5. Convert back to SearchResult using chunk indices
         let mut final_results: Vec<SearchResult> = boosted_scores
             .into_iter()
             .filter_map(|(idx, score)| {
-                // Map back to semantic results if available, otherwise from chunks
-                semantic_results.get(idx).map(|sr| SearchResult {
-                    chunk: sr.chunk.clone(),
-                    score,
-                    id: sr.id.clone(),
+                self.chunks.get(idx).map(|chunk| {
+                    let id = format!("{}:{}:{}", chunk.file_path, chunk.start_line, chunk.end_line);
+                    SearchResult {
+                        chunk: chunk.clone(),
+                        score,
+                        id,
+                    }
                 })
             })
             .collect();
