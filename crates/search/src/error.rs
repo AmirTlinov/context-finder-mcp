@@ -7,6 +7,9 @@ pub enum SearchError {
     #[error("Vector store error: {0}")]
     VectorStoreError(#[from] context_vector_store::VectorStoreError),
 
+    #[error("Graph error: {0}")]
+    GraphError(#[from] context_graph::GraphError),
+
     #[error("Empty query")]
     EmptyQuery,
 

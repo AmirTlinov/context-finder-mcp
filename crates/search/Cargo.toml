@@ -10,6 +10,7 @@ repository.workspace = true
 # Workspace dependencies
 context-code-chunker = { path = "../code-chunker" }
 context-vector-store = { path = "../vector-store" }
+context-graph = { path = "../graph" }
 
 # Async
 tokio.workspace = true

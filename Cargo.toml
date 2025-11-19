@@ -5,7 +5,7 @@ members = [
     "crates/vector-store",
     "crates/indexer",
     "crates/search",
-    "crates/cli",
+    "crates/cli", "crates/graph",
 ]
 
 [workspace.package]

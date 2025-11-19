@@ -96,10 +96,11 @@ impl ProjectIndexer {
             );
         }
 
-        // 4. Process files
+        // 4. Process files (parallel for better performance)
         let mut current_mtimes = HashMap::new();
-        for file_path in files {
-            // Get mtime for tracking
+
+        // Collect mtimes for all files first
+        for file_path in &files {
             if let Ok(metadata) = tokio::fs::metadata(&file_path).await {
                 if let Ok(modified) = metadata.modified() {
                     if let Ok(duration) = modified.duration_since(SystemTime::UNIX_EPOCH) {
@@ -110,15 +111,23 @@ impl ProjectIndexer {
                     }
                 }
             }
+        }
 
-            // Process if in changed list
-            if files_to_process.contains(&file_path) {
-                match self.process_file(&file_path, &mut store, &mut stats).await {
-                    Ok(_) => {}
+        // Process changed files in parallel (with concurrency limit)
+        if !files_to_process.is_empty() {
+            let results = self.process_files_parallel(&files_to_process).await?;
+
+            // Aggregate results
+            for result in results {
+                match result {
+                    Ok((chunks, language, lines)) => {
+                        stats.add_file(&language, lines);
+                        stats.add_chunks(chunks.len());
+                        store.add_chunks(chunks).await?;
+                    }
                     Err(e) => {
-                        let error_msg = format!("{:?}: {}", file_path, e);
-                        log::warn!("Failed to process file: {}", error_msg);
-                        stats.add_error(error_msg);
+                        log::warn!("Failed to process file: {}", e);
+                        stats.add_error(e);
                     }
                 }
             }
@@ -187,7 +196,75 @@ impl ProjectIndexer {
         Ok(mtimes)
     }
 
-    /// Process single file
+    /// Process files in parallel with concurrency limit
+    async fn process_files_parallel(
+        &self,
+        files: &[PathBuf],
+    ) -> Result<Vec<std::result::Result<(Vec<context_code_chunker::CodeChunk>, String, usize), String>>> {
+        // Parallel file reading (IO bound)
+        const MAX_CONCURRENT: usize = 16;
+
+        let mut tasks = Vec::new();
+
+        for file_chunk in files.chunks(MAX_CONCURRENT) {
+            for file_path in file_chunk {
+                let file_path = file_path.clone();
+                let task = tokio::spawn(async move {
+                    Self::read_file_static(file_path).await
+                });
+                tasks.push(task);
+            }
+
+            // Wait for this batch and process with chunker
+            let mut batch_results = Vec::new();
+            for task in tasks.drain(..) {
+                match task.await {
+                    Ok(Ok((file_path, content, lines))) => {
+                        // Process with chunker (CPU bound, sequential per batch)
+                        match self.chunker.chunk_str(&content, file_path.to_str()) {
+                            Ok(chunks) => {
+                                if chunks.is_empty() {
+                                    batch_results.push(Ok((vec![], "unknown".to_string(), lines)));
+                                } else {
+                                    let language = chunks[0]
+                                        .metadata
+                                        .language
+                                        .as_deref()
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    batch_results.push(Ok((chunks, language, lines)));
+                                }
+                            }
+                            Err(e) => {
+                                batch_results.push(Err(format!("{:?}: {}", file_path, e)));
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => batch_results.push(Err(e)),
+                    Err(e) => batch_results.push(Err(format!("Task panicked: {}", e))),
+                }
+            }
+
+            return Ok(batch_results);
+        }
+
+        Ok(vec![])
+    }
+
+    /// Static method for file reading (IO bound)
+    async fn read_file_static(
+        file_path: PathBuf,
+    ) -> std::result::Result<(PathBuf, String, usize), String> {
+        let content = tokio::fs::read_to_string(&file_path)
+            .await
+            .map_err(|e| format!("{:?}: {}", file_path, e))?;
+
+        let lines = content.lines().count();
+
+        Ok((file_path, content, lines))
+    }
+
+    /// Process single file (legacy method, kept for compatibility)
     async fn process_file(
         &self,
         file_path: &Path,
