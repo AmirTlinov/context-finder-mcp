@@ -1,0 +1,35 @@
+[package]
+name = "context-graph"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Graph data structures
+petgraph = "0.6"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+log = "0.4"
+
+# AST analysis (using workspace versions)
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-typescript.workspace = true
+
+# Code chunker integration
+context-code-chunker = { path = "../code-chunker" }
+
+[dev-dependencies]
+tempfile = "3.8"
