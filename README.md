@@ -6,6 +6,13 @@ Context Finder — это CLI-инструмент для семантическ
 
 ## 🎯 Основные возможности
 
+### Phase 3 (Code Intelligence) 🧠 **NEW!**
+
+- **Code Graph Analysis** — AST-based extraction call chains & dependencies
+- **Context-Aware Search** — автоматическая сборка related code (flagship!)
+- **Smart Context Assembly** — relevance scoring по distance + relationship type
+- **Parallel Processing** — 16x concurrent file reads (3-5x ускорение)
+
 ### Phase 2 (Flagship AI Agent Optimization) ✨
 
 - **Контекстуальные embeddings** — imports + docstrings + code для богатой семантики
