@@ -338,7 +338,7 @@ impl AstAnalyzer {
         Ok(())
     }
 
-    /// Convert AST node to code chunk
+    /// Convert AST node to code chunk with docstrings
     fn node_to_chunk(
         &self,
         content: &str,
@@ -346,15 +346,25 @@ impl AstAnalyzer {
         node: Node,
         chunk_type: ChunkType,
     ) -> Result<CodeChunk> {
+        // Extract docstrings/comments before the node
+        let doc_comments = self.extract_doc_comments(content, node);
+
         let start_byte = node.start_byte();
         let end_byte = node.end_byte();
-        let chunk_content = &content[start_byte..end_byte];
+        let code_content = &content[start_byte..end_byte];
+
+        // Combine docstrings with code content for richer embeddings
+        let chunk_content = if doc_comments.is_empty() {
+            code_content.to_string()
+        } else {
+            format!("{}\n{}", doc_comments, code_content)
+        };
 
         let start_line = node.start_position().row + 1;
         let end_line = node.end_position().row + 1;
 
         let symbol_name = self.extract_symbol_name(content, node);
-        let estimated_tokens = ChunkMetadata::estimate_tokens_from_content(chunk_content);
+        let estimated_tokens = ChunkMetadata::estimate_tokens_from_content(&chunk_content);
 
         let metadata = ChunkMetadata {
             language: Some(self.language.as_str().to_string()),
@@ -368,10 +378,59 @@ impl AstAnalyzer {
             file_path.to_string(),
             start_line,
             end_line,
-            chunk_content.to_string(),
+            chunk_content,
             metadata,
         ))
     }
+
+    /// Extract documentation comments/docstrings before a node
+    /// Uses text-based parsing since Tree-sitter doesn't include comments in AST
+    fn extract_doc_comments(&self, content: &str, node: Node) -> String {
+        let node_start_line = node.start_position().row;
+        let lines: Vec<&str> = content.lines().collect();
+
+        if node_start_line == 0 || node_start_line >= lines.len() {
+            return String::new();
+        }
+
+        let mut doc_lines = Vec::new();
+
+        // Scan backwards from the node's start line to find doc comments
+        let mut line_idx = node_start_line;
+        while line_idx > 0 {
+            line_idx -= 1;
+            let line = lines[line_idx].trim();
+
+            // Check for doc comments based on language
+            let is_doc = match self.language {
+                Language::Rust => {
+                    // Rust doc comments: ///, //!, /** */, etc.
+                    line.starts_with("///") || line.starts_with("//!") || line.starts_with("/**")
+                }
+                Language::Python => {
+                    // Python doc comments: # or """ docstrings
+                    line.starts_with('#') || line.starts_with("\"\"\"") || line.starts_with("'''")
+                }
+                Language::JavaScript | Language::TypeScript => {
+                    // JS/TS doc comments: //, /* */
+                    line.starts_with("//") || line.starts_with("/*") || line.starts_with("*")
+                }
+                _ => false,
+            };
+
+            if is_doc {
+                doc_lines.push(lines[line_idx]);
+            } else if !line.is_empty() {
+                // Stop if we hit a non-empty, non-comment line
+                break;
+            }
+        }
+
+        // Reverse to restore original order
+        doc_lines.reverse();
+        doc_lines.join("\n")
+    }
+
 
     /// Extract symbol name from AST node
     fn extract_symbol_name(&self, content: &str, node: Node) -> Option<String> {
