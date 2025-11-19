@@ -20,6 +20,29 @@ impl RRFFusion {
         }
     }
 
+    /// Fuse semantic and fuzzy results using RRF with adaptive weights based on query type
+    ///
+    /// Query classification:
+    /// - Exact name: CamelCase, snake_case, single word → fuzzy-heavy (30/70)
+    /// - Conceptual: multi-word, descriptive → semantic-heavy (70/30)
+    pub fn fuse_adaptive(
+        &self,
+        query: &str,
+        semantic_results: Vec<(usize, f32)>,
+        fuzzy_results: Vec<(usize, f32)>,
+    ) -> Vec<(usize, f32)> {
+        let (semantic_weight, fuzzy_weight) = Self::adaptive_weights(query);
+
+        log::debug!(
+            "Adaptive weights for '{}': semantic={:.1}%, fuzzy={:.1}%",
+            query,
+            semantic_weight * 100.0,
+            fuzzy_weight * 100.0
+        );
+
+        self.fuse_with_weights(semantic_results, fuzzy_results, semantic_weight, fuzzy_weight)
+    }
+
     /// Fuse semantic and fuzzy results using RRF
     ///
     /// RRF formula: score(d) = Σ weight_i / (k + rank_i(d))
@@ -30,17 +53,33 @@ impl RRFFusion {
         semantic_results: Vec<(usize, f32)>,
         fuzzy_results: Vec<(usize, f32)>,
     ) -> Vec<(usize, f32)> {
+        self.fuse_with_weights(
+            semantic_results,
+            fuzzy_results,
+            self.semantic_weight,
+            self.fuzzy_weight,
+        )
+    }
+
+    /// Fuse with explicit weights
+    fn fuse_with_weights(
+        &self,
+        semantic_results: Vec<(usize, f32)>,
+        fuzzy_results: Vec<(usize, f32)>,
+        semantic_weight: f32,
+        fuzzy_weight: f32,
+    ) -> Vec<(usize, f32)> {
         let mut scores: HashMap<usize, f32> = HashMap::new();
 
         // Add semantic scores
         for (rank, (idx, _score)) in semantic_results.iter().enumerate() {
-            let rrf_score = self.semantic_weight / (self.k + rank as f32 + 1.0);
+            let rrf_score = semantic_weight / (self.k + rank as f32 + 1.0);
             *scores.entry(*idx).or_insert(0.0) += rrf_score;
         }
 
         // Add fuzzy scores
         for (rank, (idx, _score)) in fuzzy_results.iter().enumerate() {
-            let rrf_score = self.fuzzy_weight / (self.k + rank as f32 + 1.0);
+            let rrf_score = fuzzy_weight / (self.k + rank as f32 + 1.0);
             *scores.entry(*idx).or_insert(0.0) += rrf_score;
         }
 
@@ -49,6 +88,31 @@ impl RRFFusion {
         fused.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         fused
+    }
+
+    /// Determine optimal weights based on query characteristics
+    fn adaptive_weights(query: &str) -> (f32, f32) {
+        let query_trimmed = query.trim();
+
+        // Check for exact name patterns
+        let is_single_word = !query_trimmed.contains(' ') && !query_trimmed.contains('_');
+        let has_camel_case = query_trimmed.chars().any(|c| c.is_uppercase())
+            && query_trimmed.chars().any(|c| c.is_lowercase());
+        let has_snake_case = query_trimmed.contains('_');
+
+        // Exact name query: prioritize fuzzy matching
+        if is_single_word && (has_camel_case || has_snake_case) {
+            return (0.3, 0.7); // semantic 30%, fuzzy 70%
+        }
+
+        // Short query (1-2 words) without code patterns: balanced
+        let word_count = query_trimmed.split_whitespace().count();
+        if word_count <= 2 && !has_camel_case && !has_snake_case {
+            return (0.5, 0.5); // balanced 50/50
+        }
+
+        // Conceptual/descriptive query: prioritize semantic
+        (0.7, 0.3) // semantic 70%, fuzzy 30% (default)
     }
 }
 

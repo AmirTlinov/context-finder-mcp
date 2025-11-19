@@ -67,8 +67,8 @@ impl HybridSearch {
         let fuzzy_scores = self.fuzzy.search(query, &self.chunks, candidate_pool);
         log::debug!("Fuzzy: {} results", fuzzy_scores.len());
 
-        // 3. RRF Fusion
-        let fused_scores = self.fusion.fuse(semantic_scores, fuzzy_scores);
+        // 3. RRF Fusion with adaptive weights based on query type
+        let fused_scores = self.fusion.fuse_adaptive(query, semantic_scores, fuzzy_scores);
         log::debug!("Fused: {} results", fused_scores.len());
 
         // 4. AST-aware boosting
