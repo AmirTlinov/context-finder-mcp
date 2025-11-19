@@ -97,12 +97,84 @@ impl AstAnalyzer {
             };
 
             if let Some(chunk_type) = chunk_type {
-                let chunk = self.node_to_chunk(content, file_path, child, chunk_type)?;
-                chunks.push(chunk);
+                // For impl blocks, extract methods separately
+                if kind == "impl_item" {
+                    self.extract_impl_methods(content, file_path, child, chunks)?;
+                } else {
+                    let chunk = self.node_to_chunk(content, file_path, child, chunk_type)?;
+                    chunks.push(chunk);
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Extract methods from impl block
+    fn extract_impl_methods(
+        &self,
+        content: &str,
+        file_path: &str,
+        impl_node: Node,
+        chunks: &mut Vec<CodeChunk>,
+    ) -> Result<()> {
+        // Get impl target name (struct/trait being implemented)
+        let impl_target = self.extract_impl_target(content, impl_node);
+
+        // Find declaration_list (contains methods in Rust)
+        let mut cursor = impl_node.walk();
+        for child in impl_node.children(&mut cursor) {
+            if child.kind() == "declaration_list" {
+                // Walk through declaration_list to find methods
+                let mut decl_cursor = child.walk();
+                for method_node in child.children(&mut decl_cursor) {
+                    let kind = method_node.kind();
+
+                    // Extract methods and associated functions
+                    if kind == "function_item" {
+                        let mut chunk = self.node_to_chunk(content, file_path, method_node, ChunkType::Method)?;
+
+                        // Set parent scope to impl target
+                        if let Some(ref target) = impl_target {
+                            chunk.metadata.parent_scope = Some(target.clone());
+                        }
+
+                        chunks.push(chunk);
+                    } else if kind == "const_item" || kind == "type_item" {
+                        // Associated constants and types
+                        let chunk_type = if kind == "const_item" {
+                            ChunkType::Const
+                        } else {
+                            ChunkType::Impl // Type aliases in impl
+                        };
+
+                        let mut chunk = self.node_to_chunk(content, file_path, method_node, chunk_type)?;
+
+                        if let Some(ref target) = impl_target {
+                            chunk.metadata.parent_scope = Some(target.clone());
+                        }
+
+                        chunks.push(chunk);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract the target of an impl block (struct/trait name)
+    fn extract_impl_target(&self, content: &str, impl_node: Node) -> Option<String> {
+        let mut cursor = impl_node.walk();
+        for child in impl_node.children(&mut cursor) {
+            // Look for type_identifier (the struct/enum being implemented for)
+            if child.kind() == "type_identifier" {
+                let start = child.start_byte();
+                let end = child.end_byte();
+                return Some(content[start..end].to_string());
+            }
+        }
+        None
     }
 
     /// Extract chunks from Python code
@@ -125,8 +197,53 @@ impl AstAnalyzer {
             };
 
             if let Some(chunk_type) = chunk_type {
-                let chunk = self.node_to_chunk(content, file_path, child, chunk_type)?;
-                chunks.push(chunk);
+                // For classes, extract methods separately
+                if kind == "class_definition" {
+                    self.extract_python_class_methods(content, file_path, child, chunks)?;
+                } else {
+                    let chunk = self.node_to_chunk(content, file_path, child, chunk_type)?;
+                    chunks.push(chunk);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract methods from Python class
+    fn extract_python_class_methods(
+        &self,
+        content: &str,
+        file_path: &str,
+        class_node: Node,
+        chunks: &mut Vec<CodeChunk>,
+    ) -> Result<()> {
+        // Get class name
+        let class_name = self.extract_symbol_name(content, class_node);
+
+        // Find the class body (block node)
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "block" {
+                // Extract methods from class body
+                let mut body_cursor = child.walk();
+                for method_node in child.children(&mut body_cursor) {
+                    if method_node.kind() == "function_definition" {
+                        let mut chunk = self.node_to_chunk(
+                            content,
+                            file_path,
+                            method_node,
+                            ChunkType::Method,
+                        )?;
+
+                        // Set parent scope to class name
+                        if let Some(ref name) = class_name {
+                            chunk.metadata.parent_scope = Some(name.clone());
+                        }
+
+                        chunks.push(chunk);
+                    }
+                }
             }
         }
 
@@ -156,8 +273,65 @@ impl AstAnalyzer {
             };
 
             if let Some(chunk_type) = chunk_type {
-                let chunk = self.node_to_chunk(content, file_path, child, chunk_type)?;
-                chunks.push(chunk);
+                // For classes, extract methods separately
+                if kind == "class_declaration" {
+                    self.extract_js_class_methods(content, file_path, child, chunks)?;
+                } else {
+                    let chunk = self.node_to_chunk(content, file_path, child, chunk_type)?;
+                    chunks.push(chunk);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract methods from JavaScript/TypeScript class
+    fn extract_js_class_methods(
+        &self,
+        content: &str,
+        file_path: &str,
+        class_node: Node,
+        chunks: &mut Vec<CodeChunk>,
+    ) -> Result<()> {
+        // Get class name
+        let class_name = self.extract_symbol_name(content, class_node);
+
+        // Find the class body
+        let mut cursor = class_node.walk();
+        for child in class_node.children(&mut cursor) {
+            if child.kind() == "class_body" {
+                // Extract methods from class body
+                let mut body_cursor = child.walk();
+                for method_node in child.children(&mut body_cursor) {
+                    let method_kind = method_node.kind();
+
+                    // Extract various class members
+                    if method_kind == "method_definition"
+                        || method_kind == "field_definition"
+                        || method_kind == "public_field_definition" {
+
+                        let chunk_type = if method_kind == "method_definition" {
+                            ChunkType::Method
+                        } else {
+                            ChunkType::Variable
+                        };
+
+                        let mut chunk = self.node_to_chunk(
+                            content,
+                            file_path,
+                            method_node,
+                            chunk_type,
+                        )?;
+
+                        // Set parent scope to class name
+                        if let Some(ref name) = class_name {
+                            chunk.metadata.parent_scope = Some(name.clone());
+                        }
+
+                        chunks.push(chunk);
+                    }
+                }
             }
         }
 
