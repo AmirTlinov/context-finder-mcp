@@ -1,6 +1,7 @@
 use crate::error::{Result, SearchError};
 use crate::fusion::{AstBooster, RRFFusion};
 use crate::fuzzy::FuzzySearch;
+use crate::query_expansion::QueryExpander;
 use context_code_chunker::CodeChunk;
 use context_vector_store::{SearchResult, VectorStore};
 
@@ -10,6 +11,7 @@ pub struct HybridSearch {
     chunks: Vec<CodeChunk>,
     fuzzy: FuzzySearch,
     fusion: RRFFusion,
+    expander: QueryExpander,
 }
 
 impl HybridSearch {
@@ -20,6 +22,7 @@ impl HybridSearch {
             chunks,
             fuzzy: FuzzySearch::new(),
             fusion: RRFFusion::default(),
+            expander: QueryExpander::new(),
         })
     }
 
@@ -30,6 +33,10 @@ impl HybridSearch {
         }
 
         log::debug!("Hybrid search: query='{}', limit={}", query, limit);
+
+        // Expand query with synonyms and variants
+        let expanded_query = self.expander.expand_to_query(query);
+        log::debug!("Expanded query: '{}'", expanded_query);
 
         // Candidate pool size (retrieve more for fusion)
         let candidate_pool = limit * 5;
@@ -42,8 +49,8 @@ impl HybridSearch {
             chunk_id_to_idx.insert(id, idx);
         }
 
-        // 1. Semantic search (embeddings + cosine similarity)
-        let semantic_results = self.store.search(query, candidate_pool).await?;
+        // 1. Semantic search (embeddings + cosine similarity) with expanded query
+        let semantic_results = self.store.search(&expanded_query, candidate_pool).await?;
         log::debug!("Semantic: {} results", semantic_results.len());
 
         // Convert semantic results to (chunk_idx, score) using chunk_id_to_idx
