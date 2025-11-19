@@ -39,6 +39,14 @@ enum Commands {
         /// Project path (defaults to current directory)
         #[arg(short, long)]
         project: Option<PathBuf>,
+
+        /// Enable context-aware search with related code (depth: 1=Direct, 2=Extended, 3=Deep)
+        #[arg(short, long)]
+        context_depth: Option<u8>,
+
+        /// Show code relationship graph for results
+        #[arg(short = 'g', long)]
+        show_graph: bool,
     },
 
     /// Get context around a specific line
@@ -86,6 +94,28 @@ struct SearchResultOutput {
     score: f32,
     content: String,
     context: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    related: Option<Vec<RelatedCodeOutput>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph: Option<Vec<RelationshipOutput>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RelatedCodeOutput {
+    file: String,
+    start_line: usize,
+    end_line: usize,
+    symbol: Option<String>,
+    relationship: Vec<String>,
+    distance: usize,
+    relevance: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RelationshipOutput {
+    from: String,
+    to: String,
+    relationship: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -141,9 +171,11 @@ async fn main() -> Result<()> {
             query,
             limit,
             project,
+            context_depth,
+            show_graph,
         } => {
             let project = project.unwrap_or_else(|| PathBuf::from("."));
-            cmd_search(&query, limit, &project).await?;
+            cmd_search(&query, limit, &project, context_depth, show_graph).await?;
         }
 
         Commands::GetContext {
@@ -173,7 +205,14 @@ async fn cmd_index(path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_search(query: &str, limit: usize, project: &Path) -> Result<()> {
+#[allow(clippy::too_many_lines)]
+async fn cmd_search(
+    query: &str,
+    limit: usize,
+    project: &Path,
+    context_depth: Option<u8>,
+    show_graph: bool,
+) -> Result<()> {
     let store_path = project.join(".context-finder").join("index.json");
 
     if !store_path.exists() {
@@ -194,35 +233,144 @@ async fn cmd_search(query: &str, limit: usize, project: &Path) -> Result<()> {
 
     log::info!("Loaded {} chunks from index", chunks.len());
 
-    // Create hybrid search
-    let mut search = HybridSearch::new(store, chunks)
-        .context("Failed to create search engine")?;
+    // Context-aware search if depth specified
+    if let Some(depth) = context_depth {
+        use context_graph::{AssemblyStrategy, GraphLanguage};
+        use context_search::ContextSearch;
 
-    // Search
-    let results = search
-        .search(query, limit)
-        .await
-        .context("Search failed")?;
+        // Create hybrid search
+        let hybrid = HybridSearch::new(store, chunks.clone())
+            .context("Failed to create search engine")?;
 
-    // Format output
-    let output = SearchOutput {
-        query: query.to_string(),
-        results: results
-            .into_iter()
-            .map(|r| SearchResultOutput {
-                file: r.chunk.file_path.clone(),
-                start_line: r.chunk.start_line,
-                end_line: r.chunk.end_line,
-                symbol: r.chunk.metadata.symbol_name.clone(),
-                chunk_type: r.chunk.metadata.chunk_type.map(|ct| ct.as_str().to_string()),
-                score: r.score,
-                content: r.chunk.content.clone(),
-                context: r.chunk.metadata.context_imports,
-            })
-            .collect(),
-    };
+        // Create context-aware search
+        let mut context_search = ContextSearch::new(hybrid)
+            .context("Failed to create context search")?;
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+        // Build code graph (assuming Rust for now, TODO: detect language)
+        context_search
+            .build_graph(GraphLanguage::Rust)
+            .context("Failed to build code graph")?;
+
+        // Map depth to strategy
+        let strategy = match depth {
+            1 => AssemblyStrategy::Direct,
+            2 => AssemblyStrategy::Extended,
+            _ => AssemblyStrategy::Deep,
+        };
+
+        // Search with context
+        let enriched_results = context_search
+            .search_with_context(query, limit, strategy)
+            .await
+            .context("Context search failed")?;
+
+        // Format output with enriched context
+        let output = SearchOutput {
+            query: query.to_string(),
+            results: enriched_results
+                .into_iter()
+                .map(|er| {
+                    let r = &er.primary;
+                    
+                    // Format related chunks
+                    let related = if er.related.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            er.related
+                                .iter()
+                                .map(|rc| RelatedCodeOutput {
+                                    file: rc.chunk.file_path.clone(),
+                                    start_line: rc.chunk.start_line,
+                                    end_line: rc.chunk.end_line,
+                                    symbol: rc.chunk.metadata.symbol_name.clone(),
+                                    relationship: rc.relationship_path.clone(),
+                                    distance: rc.distance,
+                                    relevance: rc.relevance_score,
+                                })
+                                .collect(),
+                        )
+                    };
+
+                    // Format graph if requested
+                    let graph = if show_graph && !er.related.is_empty() {
+                        let primary_symbol = r
+                            .chunk
+                            .metadata
+                            .symbol_name
+                            .as_deref()
+                            .unwrap_or("unknown");
+
+                        Some(
+                            er.related
+                                .iter()
+                                .map(|rc| RelationshipOutput {
+                                    from: primary_symbol.to_string(),
+                                    to: rc
+                                        .chunk
+                                        .metadata
+                                        .symbol_name
+                                        .as_deref()
+                                        .unwrap_or("unknown")
+                                        .to_string(),
+                                    relationship: rc.relationship_path.join(" → "),
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    };
+
+                    SearchResultOutput {
+                        file: r.chunk.file_path.clone(),
+                        start_line: r.chunk.start_line,
+                        end_line: r.chunk.end_line,
+                        symbol: r.chunk.metadata.symbol_name.clone(),
+                        chunk_type: r.chunk.metadata.chunk_type.map(|ct| ct.as_str().to_string()),
+                        score: r.score,
+                        content: r.chunk.content.clone(),
+                        context: r.chunk.metadata.context_imports.clone(),
+                        related,
+                        graph,
+                    }
+                })
+                .collect(),
+        };
+
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        // Standard hybrid search (no context)
+        let mut search = HybridSearch::new(store, chunks)
+            .context("Failed to create search engine")?;
+
+        let results = search
+            .search(query, limit)
+            .await
+            .context("Search failed")?;
+
+        // Format output (standard)
+        let output = SearchOutput {
+            query: query.to_string(),
+            results: results
+                .into_iter()
+                .map(|r| SearchResultOutput {
+                    file: r.chunk.file_path.clone(),
+                    start_line: r.chunk.start_line,
+                    end_line: r.chunk.end_line,
+                    symbol: r.chunk.metadata.symbol_name.clone(),
+                    chunk_type: r.chunk.metadata.chunk_type.map(|ct| ct.as_str().to_string()),
+                    score: r.score,
+                    content: r.chunk.content.clone(),
+                    context: r.chunk.metadata.context_imports,
+                    related: None,
+                    graph: None,
+                })
+                .collect(),
+        };
+
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+
     Ok(())
 }
 

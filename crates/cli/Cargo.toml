@@ -16,6 +16,7 @@ context-code-chunker = { path = "../code-chunker" }
 context-vector-store = { path = "../vector-store" }
 context-indexer = { path = "../indexer" }
 context-search = { path = "../search" }
+context-graph = { path = "../graph" }
 
 # CLI
 clap.workspace = true

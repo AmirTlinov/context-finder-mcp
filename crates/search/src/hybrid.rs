@@ -89,6 +89,9 @@ impl HybridSearch {
             })
             .collect();
 
+        // 6. Normalize scores to 0-1 range
+        Self::normalize_scores(&mut final_results);
+
         // Sort by final score descending
         final_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         final_results.truncate(limit);
@@ -174,6 +177,9 @@ impl HybridSearch {
                 })
                 .collect();
 
+            // Normalize scores to 0-1 range
+            Self::normalize_scores(&mut final_results);
+
             // Sort and truncate
             final_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
             final_results.truncate(limit);
@@ -205,9 +211,42 @@ impl HybridSearch {
     }
 
     /// Get all chunks
-    #[must_use] 
+    #[must_use]
     pub fn chunks(&self) -> &[CodeChunk] {
         &self.chunks
+    }
+
+    /// Normalize scores to 0-1 range using min-max normalization
+    fn normalize_scores(results: &mut [SearchResult]) {
+        if results.is_empty() {
+            return;
+        }
+
+        // Find min and max scores
+        let mut min_score = f32::MAX;
+        let mut max_score = f32::MIN;
+
+        for result in results.iter() {
+            min_score = min_score.min(result.score);
+            max_score = max_score.max(result.score);
+        }
+
+        // Avoid division by zero if all scores are equal
+        if (max_score - min_score).abs() < f32::EPSILON {
+            // All scores are the same, set them all to 1.0
+            for result in results {
+                result.score = 1.0;
+            }
+            return;
+        }
+
+        // Normalize: (score - min) / (max - min)
+        let range = max_score - min_score;
+        for result in results {
+            result.score = (result.score - min_score) / range;
+        }
+
+        log::debug!("Normalized scores: range [{min_score:.4}, {max_score:.4}] → [0.0, 1.0]");
     }
 }
 

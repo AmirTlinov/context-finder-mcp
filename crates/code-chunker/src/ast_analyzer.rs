@@ -176,11 +176,44 @@ impl AstAnalyzer {
     fn extract_impl_target(content: &str, impl_node: Node) -> Option<String> {
         let mut cursor = impl_node.walk();
         for child in impl_node.children(&mut cursor) {
-            // Look for type_identifier (the struct/enum being implemented for)
-            if child.kind() == "type_identifier" {
-                let start = child.start_byte();
-                let end = child.end_byte();
-                return Some(content[start..end].to_string());
+            let kind = child.kind();
+
+            // Handle different type representations
+            match kind {
+                // Simple type: impl MyStruct
+                "type_identifier" => {
+                    let start = child.start_byte();
+                    let end = child.end_byte();
+                    return Some(content[start..end].to_string());
+                }
+
+                // Generic type: impl<T> MyStruct<T>
+                "generic_type" => {
+                    // Get the base type name (before <...>)
+                    let mut type_cursor = child.walk();
+                    for type_child in child.children(&mut type_cursor) {
+                        if type_child.kind() == "type_identifier" {
+                            let start = type_child.start_byte();
+                            let end = type_child.end_byte();
+                            return Some(content[start..end].to_string());
+                        }
+                    }
+                }
+
+                // Qualified path: impl module::MyStruct
+                "scoped_type_identifier" => {
+                    // Extract the final identifier after ::
+                    let mut type_cursor = child.walk();
+                    for type_child in child.children(&mut type_cursor) {
+                        if type_child.kind() == "type_identifier" {
+                            let start = type_child.start_byte();
+                            let end = type_child.end_byte();
+                            return Some(content[start..end].to_string());
+                        }
+                    }
+                }
+
+                _ => {}
             }
         }
         None
