@@ -1,0 +1,321 @@
+[
+  {
+    "name": "RLM",
+    "path": "/home/amir/Документы/PROJECTS/RLM",
+    "files": 23866,
+    "language_count": 21,
+    "note": "Legacy HTML + Python + C/C++ стек для сложных графов зависимостей.",
+    "languages": [
+      {
+        "language": "HTML",
+        "files": 4441,
+        "share": 0.357
+      },
+      {
+        "language": "Python",
+        "files": 3606,
+        "share": 0.2899
+      },
+      {
+        "language": "C/C++",
+        "files": 3150,
+        "share": 0.2532
+      },
+      {
+        "language": "JavaScript",
+        "files": 350,
+        "share": 0.0281
+      },
+      {
+        "language": "C++",
+        "files": 317,
+        "share": 0.0255
+      },
+      {
+        "language": "Markdown",
+        "files": 234,
+        "share": 0.0188
+      }
+    ],
+    "queries": [
+      {
+        "query": "flash decode benchmark script",
+        "type": "benchmark",
+        "difficulty": "medium",
+        "expected_snippet": "Python bench entrypoints for flash decode pipelines",
+        "relevant_files": [
+          "tools/bench/run_flash_decode.py",
+          "tools/bench/run_matrix.py"
+        ]
+      },
+      {
+        "query": "kv allocator bench",
+        "type": "benchmark",
+        "difficulty": "hard",
+        "expected_snippet": "Allocator benchmarks for KV cache",
+        "relevant_files": [
+          "tools/kv/bench_allocator.py"
+        ]
+      },
+      {
+        "query": "quant gemm benchmark",
+        "type": "benchmark",
+        "difficulty": "medium",
+        "expected_snippet": "Quantization GEMM perf harness",
+        "relevant_files": [
+          "tools/quant/bench_gemm.py"
+        ]
+      }
+    ],
+    "negative_examples": [
+      {
+        "query": "marketing landing page",
+        "reason": "HTML лендинги не должны появляться в ответе для инженерных бенчмарков."
+      },
+      {
+        "query": "vendor transformerengine setup",
+        "reason": "Вендорские setup.py в vendor/ должны быть понижены, чтобы проверить устойчивость."
+      }
+    ]
+  },
+  {
+    "name": "Venorus",
+    "path": "/home/amir/Документы/PROJECTS/Venorus",
+    "files": 16533,
+    "language_count": 16,
+    "note": "TypeScript/Python продукт, покрывает web full-stack и DevOps YAML.",
+    "languages": [
+      {
+        "language": "TypeScript",
+        "files": 6186,
+        "share": 0.422
+      },
+      {
+        "language": "Python",
+        "files": 3322,
+        "share": 0.2266
+      },
+      {
+        "language": "JavaScript",
+        "files": 2208,
+        "share": 0.1506
+      },
+      {
+        "language": "Markdown",
+        "files": 1264,
+        "share": 0.0862
+      },
+      {
+        "language": "YAML",
+        "files": 593,
+        "share": 0.0405
+      },
+      {
+        "language": "JSON",
+        "files": 565,
+        "share": 0.0385
+      }
+    ],
+    "queries": [
+      {
+        "query": "personal tags utility functions",
+        "type": "frontend",
+        "difficulty": "easy",
+        "expected_snippet": "Helpers around personal tag management",
+        "relevant_files": [
+          "Venorus-Legacy/packages/utils/personal-tags.ts",
+          "Venorus-Legacy/packages/utils/index.ts"
+        ]
+      },
+      {
+        "query": "selection tables helper",
+        "type": "frontend",
+        "difficulty": "medium",
+        "expected_snippet": "Selection table builder exported from utils",
+        "relevant_files": [
+          "Venorus-Legacy/packages/utils/selection-tables.ts",
+          "Venorus/packages/utils/selection-tables.ts"
+        ]
+      },
+      {
+        "query": "pnpm workspace layout",
+        "type": "infrastructure",
+        "difficulty": "easy",
+        "expected_snippet": "pnpm workspace definition describing package graph",
+        "relevant_files": [
+          "Venorus-Legacy/pnpm-workspace.yaml"
+        ]
+      }
+    ],
+    "negative_examples": [
+      {
+        "query": "generic roadmap",
+        "reason": "Документы roadmap/README не должны замещать конкретные утилиты."
+      },
+      {
+        "query": "docker compose override",
+        "reason": "Для проверки устойчивости ищем, чтобы DevOps YAML не вытеснял фронтовые файлы."
+      }
+    ]
+  },
+  {
+    "name": "idea_a",
+    "path": "/home/amir/Документы/PROJECTS/AI/idea_a",
+    "files": 69017,
+    "language_count": 27,
+    "note": "Когнитивная платформа на Python+C++ с фронтендом, подходит для мульти-языковых тестов.",
+    "languages": [
+      {
+        "language": "Python",
+        "files": 32944,
+        "share": 0.597
+      },
+      {
+        "language": "C/C++",
+        "files": 19877,
+        "share": 0.3602
+      },
+      {
+        "language": "JavaScript",
+        "files": 791,
+        "share": 0.0143
+      },
+      {
+        "language": "JSON",
+        "files": 318,
+        "share": 0.0058
+      },
+      {
+        "language": "C++",
+        "files": 311,
+        "share": 0.0056
+      },
+      {
+        "language": "Markdown",
+        "files": 154,
+        "share": 0.0028
+      }
+    ],
+    "queries": [
+      {
+        "query": "streaming kv runtime config",
+        "type": "config",
+        "difficulty": "medium",
+        "expected_snippet": "YAML definition of streaming_kv settings consumed by runtime",
+        "relevant_files": [
+          "configs/streaming_kv.yaml",
+          "configs/orchestrator.yaml"
+        ]
+      },
+      {
+        "query": "train stage A sft roles schedule",
+        "type": "training",
+        "difficulty": "hard",
+        "expected_snippet": "Stage A schedule with role weights for SFT",
+        "relevant_files": [
+          "configs/train_stage_A_sft_roles.yaml"
+        ]
+      },
+      {
+        "query": "memory index runtime tuning",
+        "type": "ops",
+        "difficulty": "medium",
+        "expected_snippet": "Runtime overrides for memory index service",
+        "relevant_files": [
+          "configs/memory_index_runtime.yaml"
+        ]
+      }
+    ],
+    "negative_examples": [
+      {
+        "query": "deprecated orchestrator.ini",
+        "reason": "Должно игнорировать старые ini-конфиги и фокусироваться на YAML из configs/."
+      },
+      {
+        "query": "nightly hotpatch readme",
+        "reason": "Запрос на общие README не должен перекрывать специализированные конфиги benchmarks."
+      }
+    ]
+  },
+  {
+    "name": "memory",
+    "path": "/home/amir/Документы/PROJECTS/mcp/memory",
+    "files": 121196,
+    "language_count": 29,
+    "note": "Локальный аналог hyperscale monorepo: Python/Rust/C++ pipeline + сервисы.",
+    "languages": [
+      {
+        "language": "Python",
+        "files": 30256,
+        "share": 0.3501
+      },
+      {
+        "language": "Rust",
+        "files": 26617,
+        "share": 0.308
+      },
+      {
+        "language": "C/C++",
+        "files": 20033,
+        "share": 0.2318
+      },
+      {
+        "language": "JSON",
+        "files": 4988,
+        "share": 0.0577
+      },
+      {
+        "language": "Markdown",
+        "files": 1428,
+        "share": 0.0165
+      },
+      {
+        "language": "TOML",
+        "files": 1173,
+        "share": 0.0136
+      }
+    ],
+    "queries": [
+      {
+        "query": "memory orchestrator prompt template",
+        "type": "runtime",
+        "difficulty": "medium",
+        "expected_snippet": "Prompt builder definitions for orchestrator flows",
+        "relevant_files": [
+          "src/domain/orchestrator/prompt.rs",
+          "src/domain/orchestrator/mod.rs"
+        ]
+      },
+      {
+        "query": "mcp aggregate event sourcing",
+        "type": "domain",
+        "difficulty": "hard",
+        "expected_snippet": "Aggregate and events definitions for MCP domain",
+        "relevant_files": [
+          "src/domain/mcp/aggregate.rs",
+          "src/domain/mcp/events.rs"
+        ]
+      },
+      {
+        "query": "watch service timeline model",
+        "type": "domain",
+        "difficulty": "medium",
+        "expected_snippet": "Data model for watch service timeline entries",
+        "relevant_files": [
+          "src/domain/watch/model.rs",
+          "src/domain/watch/mod.rs"
+        ]
+      }
+    ],
+    "negative_examples": [
+      {
+        "query": "memory old proto schema",
+        "reason": "Проверяет, что поиск не ловит удалённые proto-файлы в artifacts/."
+      },
+      {
+        "query": "generic README",
+        "reason": "README верхнего уровня не должен заменять целевой доменный код."
+      }
+    ]
+  }
+]

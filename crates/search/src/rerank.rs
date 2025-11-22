@@ -283,10 +283,11 @@ fn inject_must_hits(
     let base = reranked.first().map(|(_, score)| *score).unwrap_or(0.0);
     let target = base + base_bonus.max(0.0);
     for (idx, boost) in profile.must_hit_matches(tokens, chunks) {
-        if reranked.iter().any(|(existing, _)| *existing == idx) {
-            continue;
+        if let Some((_, score)) = reranked.iter_mut().find(|(existing, _)| *existing == idx) {
+            *score = score.max(target * boost.max(1.0));
+        } else {
+            reranked.push((idx, target * boost.max(1.0)));
         }
-        reranked.push((idx, target * boost.max(1.0)));
     }
     reranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
     reranked.dedup_by(|a, b| a.0 == b.0);

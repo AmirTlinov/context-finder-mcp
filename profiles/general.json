@@ -3,11 +3,15 @@
   "description": "Generic relevance profile without project-specific paths. Boost source/lib/utils/configs/tools while penalizing obvious noise.",
   "paths": {
     "boost": [
-      { "pattern": "src/", "kind": "prefix", "weight": 1.25 },
-      { "pattern": "lib/", "kind": "contains", "weight": 1.15 },
-      { "pattern": "utils", "kind": "contains", "weight": 1.1 },
-      { "pattern": "configs/", "kind": "contains", "weight": 1.3 },
-      { "pattern": "tools/bench", "kind": "contains", "weight": 1.3 }
+      { "pattern": "src/", "kind": "prefix", "weight": 1.3 },
+      { "pattern": "lib/", "kind": "contains", "weight": 1.2 },
+      { "pattern": "utils", "kind": "contains", "weight": 1.2 },
+      { "pattern": "configs/", "kind": "contains", "weight": 1.35 },
+      { "pattern": "tools/bench", "kind": "contains", "weight": 1.6 },
+      { "pattern": "workspace.yaml", "kind": "suffix", "weight": 1.45 },
+      { "pattern": "pnpm-workspace", "kind": "contains", "weight": 1.6 },
+      { "pattern": "bench", "kind": "contains", "weight": 1.35 },
+      { "pattern": "packages/", "kind": "contains", "weight": 1.35 }
     ],
     "penalty": [
       { "pattern": "/tests/", "kind": "contains", "weight": 0.3 },
@@ -48,6 +52,16 @@
       { "pattern": "bench/logs", "kind": "contains" }
     ]
   },
+  "must_hit": [
+    { "pattern": "workspace.yaml", "kind": "suffix", "tokens": ["workspace"], "boost": 1.6 },
+    { "pattern": "pnpm-workspace", "kind": "contains", "tokens": ["workspace"], "boost": 1.65 },
+    { "pattern": "tools/bench", "kind": "contains", "tokens": ["bench"], "boost": 1.6 },
+    { "pattern": "bench_", "kind": "contains", "tokens": ["bench"], "boost": 1.5 },
+    { "pattern": "bench_gemm", "kind": "contains", "tokens": ["gemm"], "boost": 1.9 },
+    { "pattern": "bench_alloc", "kind": "contains", "tokens": ["alloc"], "boost": 1.9 },
+    { "pattern": "packages/utils", "kind": "contains", "tokens": ["utility"], "boost": 1.6 },
+    { "pattern": "utils/", "kind": "contains", "tokens": ["utility"], "boost": 1.4 }
+  ],
   "rerank": {
     "thresholds": {
       "min_fuzzy_score": 0.18,
@@ -59,13 +73,13 @@
       "window": 210
     },
     "boosts": {
-      "path": 1.8,
+      "path": 2.0,
       "symbol": 2.2,
-      "yaml_path": 0.9,
-      "bm25": 1.1
+      "yaml_path": 1.2,
+      "bm25": 1.15
     },
     "must_hit": {
-      "base_bonus": 20.0
+      "base_bonus": 150.0
     }
   }
 }

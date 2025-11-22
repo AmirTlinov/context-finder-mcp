@@ -316,8 +316,11 @@ impl SearchProfile {
             if !rule.tokens.is_empty() && !rule.tokens.iter().all(|t| tokens.contains(t)) {
                 continue;
             }
-            if let Some((idx, bonus)) = find_match(chunks, &rule.matcher, rule.boost) {
-                hits.push((idx, bonus));
+            for (idx, chunk) in chunks.iter().enumerate() {
+                let lower = chunk.file_path.to_ascii_lowercase();
+                if rule.matcher.matches(&lower) {
+                    hits.push((idx, rule.boost.max(1.0)));
+                }
             }
         }
         hits
@@ -593,17 +596,6 @@ fn parse_raw(bytes: &[u8]) -> Result<RawProfile> {
             toml::from_str(utf8).map_err(|toml_err| anyhow!("{json_err}; {toml_err}"))
         }
     }
-}
-
-fn find_match(
-    chunks: &[context_code_chunker::CodeChunk],
-    matcher: &Matcher,
-    boost: f32,
-) -> Option<(usize, f32)> {
-    chunks.iter().enumerate().find_map(|(idx, chunk)| {
-        let lower = chunk.file_path.to_ascii_lowercase();
-        matcher.matches(&lower).then_some((idx, boost.max(1.0)))
-    })
 }
 
 const fn default_weight() -> f32 {
