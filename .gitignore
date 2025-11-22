@@ -23,3 +23,5 @@ bench/results/.current_bench
 bench/results/*.json
 !bench/results/bench_general_rerank.json
 !bench/results/bench_targeted_rerank.json
+.deps/
+.context-finder/cache/ort_cuda/
