@@ -1,0 +1,42 @@
+[package]
+name = "context-finder-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP server for Context Finder - semantic code search for AI agents"
+
+[[bin]]
+name = "context-finder-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace dependencies (reuse existing crates)
+context-code-chunker = { path = "../code-chunker" }
+context-vector-store = { path = "../vector-store" }
+context-indexer = { path = "../indexer" }
+context-search = { path = "../search" }
+context-graph = { path = "../graph" }
+
+# MCP SDK
+rmcp = { version = "0.8", features = ["server", "transport-io", "macros"] }
+
+# Async runtime
+tokio = { version = "1.41", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "1.0.0-alpha.17"
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging (stderr only for MCP)
+log.workspace = true
+env_logger.workspace = true
+
+# Utilities
+dirs = "5.0"
