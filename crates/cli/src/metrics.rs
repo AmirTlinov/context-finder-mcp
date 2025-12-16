@@ -32,43 +32,43 @@ impl MetricsExporter {
 
         let has_watcher = IntGauge::with_opts(Opts::new(
             "contextfinder_watcher_present",
-            "1 когда StreamingIndexer активен",
+            "1 when StreamingIndexer is active",
         ))?;
         let indexing = IntGauge::with_opts(Opts::new(
             "contextfinder_indexing_active",
-            "1 когда идёт инкрементальное обновление",
+            "1 when incremental indexing is running",
         ))?;
         let pending_events = IntGauge::with_opts(Opts::new(
             "contextfinder_pending_events",
-            "Сколько файловых событий ждут обработки",
+            "Number of file events waiting to be processed",
         ))?;
         let consecutive_failures = IntGauge::with_opts(Opts::new(
             "contextfinder_consecutive_failures",
-            "Сколько ошибок подряд было у индексатора",
+            "Number of consecutive indexing failures",
         ))?;
         let last_duration_ms = IntGauge::with_opts(Opts::new(
             "contextfinder_last_index_duration_ms",
-            "Длительность последнего цикла индексирования",
+            "Duration of the last indexing cycle",
         ))?;
         let last_success_unix_ms = IntGauge::with_opts(Opts::new(
             "contextfinder_last_success_unix_ms",
-            "Unix timestamp (ms) последнего успешного цикла",
+            "Unix timestamp (ms) of the last successful cycle",
         ))?;
         let files_per_second = Gauge::with_opts(Opts::new(
             "contextfinder_files_per_second",
-            "Скорость индексирования (файлов/сек)",
+            "Indexing throughput (files/sec)",
         ))?;
         let index_size_bytes = IntGauge::with_opts(Opts::new(
             "contextfinder_index_size_bytes",
-            "Размер index.json в байтах",
+            "Size of index.json (bytes)",
         ))?;
         let duration_p95_ms = IntGauge::with_opts(Opts::new(
             "contextfinder_duration_p95_ms",
-            "P95 времени индексирования",
+            "P95 indexing duration",
         ))?;
         let alert_log_len = IntGauge::with_opts(Opts::new(
             "contextfinder_alert_log_len",
-            "Количество записей в alert log",
+            "Number of entries in the alert log",
         ))?;
 
         for metric in [

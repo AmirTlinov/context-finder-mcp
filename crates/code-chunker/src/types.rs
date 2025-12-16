@@ -88,11 +88,11 @@ pub struct ChunkMetadata {
     #[serde(default)]
     pub tags: Vec<String>,
 
-    /// Tier/bundle markers (например, file/document/test)
+    /// Tier/bundle markers (e.g., file/document/test)
     #[serde(default)]
     pub bundle_tags: Vec<String>,
 
-    /// Связанные относительные пути (тесты, конфиги, docs)
+    /// Related relative paths (tests, configs, docs)
     #[serde(default)]
     pub related_paths: Vec<String>,
 }

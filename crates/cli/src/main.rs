@@ -44,7 +44,7 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
-    /// Quiet mode: логируем только предупреждения/ошибки (stdout зарезервирован под JSON)
+    /// Quiet mode: log only warnings/errors (stdout is reserved for JSON)
     #[arg(long, global = true)]
     quiet: bool,
 

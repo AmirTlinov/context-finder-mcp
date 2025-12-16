@@ -11,7 +11,7 @@ Context Finder is a semantic code search tool for AI agents. It indexes a codeba
 ### 1) Build and install
 
 ```bash
-git clone <REPO_URL>
+git clone https://github.com/AmirTlinov/context-finder.git
 cd context-finder
 
 cargo build --release
@@ -150,4 +150,3 @@ MIT OR Apache-2.0
 ## Contributing
 
 See `CONTRIBUTING.md`.
-

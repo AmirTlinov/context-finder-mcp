@@ -3,17 +3,17 @@ syntax = "proto3";
 package command;
 
 message CommandPayload {
-  // JSON-оригинал CommandRequest в UTF-8
+  // CommandRequest JSON payload (UTF-8)
   bytes json = 1;
 }
 
 message CommandReply {
-  // JSON-ответ CommandResponse в UTF-8
+  // CommandResponse JSON reply (UTF-8)
   bytes json = 1;
 }
 
 message HealthRequest {
-  // путь к проекту (по умолчанию current working dir)
+  // Project path (defaults to the current working dir)
   string project = 1;
 }
 

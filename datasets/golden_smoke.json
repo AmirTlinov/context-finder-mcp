@@ -47,7 +47,7 @@
     },
     {
       "id": "install_models_and_manifest",
-      "query": "как устроена установка моделей и проверка sha256",
+      "query": "how are models installed and sha256 verified",
       "expected_paths": ["crates/cli/src/models.rs", "models/manifest.json"],
       "intent": "conceptual"
     },
@@ -65,7 +65,7 @@
     },
     {
       "id": "query_classifier_logic",
-      "query": "как определяется тип запроса path identifier conceptual",
+      "query": "how is the query intent determined (path / identifier / conceptual)",
       "expected_paths": ["crates/search/src/query_classifier.rs"],
       "intent": "conceptual"
     },
@@ -101,7 +101,7 @@
     },
     {
       "id": "cli_default_profile",
-      "query": "где задаётся дефолтный профиль quality fast general",
+      "query": "where is the default profile set (quality / fast / general)",
       "expected_paths": ["crates/cli/src/main.rs", "crates/cli/src/command/context.rs"],
       "intent": "conceptual"
     },
@@ -146,7 +146,7 @@
     },
     {
       "id": "cpu_fallback_policy",
-      "query": "как разрешить cpu fallback если cuda недоступна",
+      "query": "how to allow CPU fallback when CUDA is unavailable",
       "expected_paths": ["crates/vector-store/src/embeddings.rs", "crates/cli/src/models.rs"],
       "intent": "conceptual"
     },

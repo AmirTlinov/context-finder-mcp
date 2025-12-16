@@ -20,7 +20,7 @@ impl FileScanner {
         let root = self.root.clone();
         let mut builder = WalkBuilder::new(&self.root);
         builder
-            .hidden(true) // не индексируем скрытые по умолчанию
+            .hidden(true) // do not index hidden files by default
             .git_ignore(true)
             .git_global(true)
             .git_exclude(true);
@@ -213,7 +213,7 @@ const NOISE_FILE_NAMES: &[&str] = &[
 ];
 const MAX_FILE_SIZE_BYTES: u64 = 1_048_576; // 1 MB
 
-/// Broad set of extensions (code + docs + infra) to make индекс максимально полезным
+/// Broad set of extensions (code + docs + infra) to make the index maximally useful.
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     // General purpose languages
     "rs",

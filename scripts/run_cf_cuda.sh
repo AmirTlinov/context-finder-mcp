@@ -22,7 +22,7 @@ if [[ "${ORT_DISABLE_CUDA:-0}" != "1" ]]; then
   export ORT_USE_CUDA=1
   export ORT_DYLIB_PATH="${DEPS_DIR}"
 else
-  echo "[run_cf_cuda] ORT_DISABLE_CUDA=1 → запускаем без локальных CUDA либ" >&2
+  echo "[run_cf_cuda] ORT_DISABLE_CUDA=1 → running without local CUDA libraries" >&2
 fi
 
 exec "${BIN}" "$@"
