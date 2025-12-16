@@ -2,7 +2,7 @@
 
 ## What is Context Finder?
 
-Context Finder is a semantic code search tool designed for AI agents (Claude, GPT, etc.). It indexes codebases using tree-sitter AST parsing and ONNX embeddings, enabling fast semantic search.
+Context Finder is a semantic code search tool designed for AI agents and coding assistants. It indexes codebases using tree-sitter AST parsing and ONNX embeddings, enabling fast semantic search.
 
 ## Installation
 
@@ -296,7 +296,7 @@ Supported placeholders: `{text}`, `{path}`, `{language}`, `{chunk_type}`, `{symb
 
 ## Integration with AI
 
-### Claude Code / MCP
+### MCP integration
 
 Context Finder can be used as a context provider for AI coding assistants:
 

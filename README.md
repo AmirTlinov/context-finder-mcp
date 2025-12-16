@@ -105,7 +105,7 @@ Install:
 cargo install --path crates/mcp-server
 ```
 
-Example Codex/Claude config (`~/.codex/config.toml`):
+Example Codex config (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.context-finder]

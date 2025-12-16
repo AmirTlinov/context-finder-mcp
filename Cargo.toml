@@ -12,11 +12,11 @@ members = [
 exclude = ["proto"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["AI Context Tools Contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/context-finder"
+repository = "https://github.com/AmirTlinov/context-finder"
 
 [workspace.dependencies]
 # Async runtime
