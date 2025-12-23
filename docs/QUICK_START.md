@@ -196,10 +196,28 @@ context-finder command --json '{
 }'
 ```
 
+Batch (one request → many actions, one bounded result):
+
+```bash
+context-finder command --json '{
+  "action": "batch",
+  "options": { "stale_policy": "auto", "max_reindex_ms": 1500 },
+  "payload": {
+    "project": ".",
+    "max_chars": 20000,
+    "items": [
+      { "id": "idx", "action": "index", "payload": { "path": "." } },
+      { "id": "pack", "action": "task_pack", "payload": { "intent": "understand the indexing pipeline" } }
+    ]
+  }
+}'
+```
+
 ### Available Actions
 
 | Action | Description |
 |--------|-------------|
+| `batch` | Execute multiple actions in one request (bounded output, partial success) |
 | `index` | Index a project directory |
 | `search` | Semantic code search |
 | `search_with_context` | Search with surrounding context |

@@ -101,6 +101,30 @@ context-finder eval-compare . --dataset datasets/golden_smoke.json \
 
 ## Integration examples
 
+### JSON Command API: `action=batch` (one round-trip)
+
+Use `batch` when an agent needs multiple pieces of information but you still want **one bounded JSON response**.
+
+```bash
+context-finder command --json '{
+  "action":"batch",
+  "options":{"stale_policy":"auto","max_reindex_ms":1500},
+  "payload":{
+    "project":".",
+    "max_chars":20000,
+    "items":[
+      {"id":"idx","action":"index","payload":{"path":"."}},
+      {"id":"pack","action":"task_pack","payload":{"intent":"locate the indexing pipeline","max_chars":12000}},
+      {"id":"map","action":"map","payload":{"depth":2,"limit":40}}
+    ]
+  }
+}'
+```
+
+Notes:
+- The outer `options` apply to all items (freshness policy, budgets, filters).
+- Item results are independent (`status: ok|error`); the batch itself can still be `ok` (partial success).
+
 ### Python: one call → context pack
 
 ```python
@@ -163,4 +187,3 @@ console.log(res.data.results.length);
 - `profiles/general.json` — "deep/multi" profile (higher latency for quality)
 - `models/manifest.json` — model roster + assets (sha256), downloaded into `./models/`
 - `datasets/*.json` — golden datasets for objective tuning
-

@@ -7,6 +7,7 @@ If you’re tired of “search → open file → search again → maybe the righ
 ## What you get
 
 - **Agent-first output:** `context-pack` returns a single JSON payload bounded by `max_chars`.
+- **One-call orchestration:** `action=batch` runs multiple actions under one `max_chars` budget (partial success per item).
 - **Freshness by default:** every response can carry `meta.index_state`; `options.stale_policy=auto|warn|fail` controls (re)index behavior.
 - **Stable integration surfaces:** CLI JSON, HTTP, gRPC, MCP — all treated as contracts.
 - **Hybrid retrieval:** semantic + fuzzy + fusion + profile-driven boosts.
@@ -81,6 +82,23 @@ context-finder command --json '{
   "action":"task_pack",
   "options":{"stale_policy":"auto","max_reindex_ms":1500,"include_paths":["src"]},
   "payload":{"intent":"refresh watermark policy","project":".","max_chars":20000}
+}'
+```
+
+Batch (one request → many actions):
+
+```bash
+context-finder command --json '{
+  "action":"batch",
+  "options":{"stale_policy":"auto","max_reindex_ms":1500},
+  "payload":{
+    "project":".",
+    "max_chars":20000,
+    "items":[
+      {"id":"idx","action":"index","payload":{"path":"."}},
+      {"id":"pack","action":"context_pack","payload":{"query":"stale policy gate","limit":6}}
+    ]
+  }
 }'
 ```
 

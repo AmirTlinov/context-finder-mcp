@@ -35,6 +35,7 @@ Notes:
 
 | action                | payload struct                | data struct                |
 |----------------------|-------------------------------|----------------------------|
+| `batch`              | `BatchPayload`                | `BatchOutput`              |
 | `search`             | `SearchPayload`               | `SearchOutput`             |
 | `search_with_context`| `SearchWithContextPayload`    | `SearchOutput`             |
 | `context_pack`       | `ContextPackPayload`          | `ContextPackOutput`        |
@@ -48,6 +49,41 @@ Notes:
 | `map`                | `MapPayload`                  | `MapOutput`                |
 | `eval`               | `EvalPayload`                 | `EvalOutput`               |
 | `eval_compare`       | `EvalComparePayload`          | `EvalCompareOutput`        |
+
+### `batch` (one request → many actions)
+
+Goal: enable an agent to do *one round-trip* and receive a **single bounded result**.
+
+Source of truth:
+
+- Batch schema: [contracts/command/v1/batch.schema.json](../contracts/command/v1/batch.schema.json)
+
+Shape (simplified; see schema for canonical fields):
+
+```jsonc
+{
+  "action": "batch",
+  "options": { "stale_policy": "auto", "max_reindex_ms": 1500 },
+  "payload": {
+    "project": ".",
+    "max_chars": 20000,
+    "stop_on_error": false,
+    "items": [
+      { "id": "index", "action": "index", "payload": { "path": "." } },
+      { "id": "pack", "action": "task_pack", "payload": { "intent": "find the indexing pipeline" } }
+    ]
+  }
+}
+```
+
+Semantics:
+
+- Batch items are processed sequentially.
+- **Partial success:** the outer `CommandResponse.status` is `ok` if the batch request itself is valid; each item carries its own `status`.
+- **No nested batch:** items cannot use `action=batch`.
+- **Project consistency:** `payload.project` (or the first item project/path) becomes the batch project; items must not disagree.
+- **Freshness guard is lazy:** `options.stale_policy` is enforced only right before the first item that requires an index (so `index → pack` is possible within one batch even with strict policies).
+- `payload.max_chars` is a best-effort budget for the *serialized batch output*. When exceeded, the batch is truncated and the response carries a warning hint.
 
 ### Request options (cross-cutting)
 
