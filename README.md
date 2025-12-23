@@ -134,6 +134,19 @@ args = []
 CONTEXT_FINDER_PROFILE = "quality"
 ```
 
+Agent-friendly tip: the MCP tool `batch` lets you execute multiple tools in one call (one bounded JSON result):
+
+```jsonc
+{
+  "path": "/path/to/project",
+  "max_chars": 20000,
+  "items": [
+    { "id": "map", "tool": "map", "input": { "depth": 2, "limit": 40 } },
+    { "id": "pack", "tool": "context_pack", "input": { "query": "stale policy gate", "limit": 6 } }
+  ]
+}
+```
+
 ## Contracts (source of truth)
 
 All integration surfaces are contract-first and versioned:

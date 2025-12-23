@@ -168,6 +168,28 @@ context-finder serve-grpc --bind 0.0.0.0:50052
 context-finder daemon-loop
 ```
 
+### MCP Server (tools)
+
+Install and run the MCP server:
+
+```bash
+cargo install --path crates/mcp-server
+context-finder-mcp
+```
+
+Batch tool (one MCP call → many tools, bounded output):
+
+```jsonc
+{
+  "path": "/path/to/project",
+  "max_chars": 20000,
+  "items": [
+    { "id": "map", "tool": "map", "input": { "depth": 2, "limit": 40 } },
+    { "id": "pack", "tool": "context_pack", "input": { "query": "rate limiter", "limit": 6 } }
+  ]
+}
+```
+
 ## JSON Command API
 
 For programmatic access, use the `command` subcommand:
