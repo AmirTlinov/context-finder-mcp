@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/command_request.schema.json",
+  "title": "Context Finder CommandRequest (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "Command identifier (snake_case).",
+      "enum": [
+        "search",
+        "search_with_context",
+        "context_pack",
+        "index",
+        "get_context",
+        "list_symbols",
+        "config_read",
+        "compare_search",
+        "map",
+        "eval",
+        "eval_compare"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "description": "Action-specific payload. Unknown fields are ignored unless the corresponding payload struct opts into strict parsing.",
+      "default": {},
+      "additionalProperties": true
+    },
+    "config": {
+      "description": "Optional per-request config overrides merged into the effective project config.",
+      "default": null,
+      "type": ["object", "null"],
+      "additionalProperties": true
+    }
+  },
+  "$comment": "Rust source of truth: crates/cli/src/command/domain.rs::CommandRequest / CommandAction"
+}
+

@@ -1,0 +1,68 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Context Finder HTTP API",
+    "version": "v1",
+    "description": "HTTP surface for `context-finder serve-http`.\n\nThis OpenAPI document is contract-first and references the canonical JSON Schemas under `contracts/command/v1/`."
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "paths": {
+    "/command": {
+      "post": {
+        "summary": "Execute a Command API request",
+        "operationId": "commandExecute",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CommandRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "CommandResponse envelope",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CommandResponse" }
+              }
+            }
+          },
+          "400": { "description": "Invalid JSON request" },
+          "500": { "description": "Internal server error" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health snapshot for the current working directory",
+        "operationId": "healthGet",
+        "responses": {
+          "200": {
+            "description": "Health report",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthReport" }
+              }
+            }
+          },
+          "500": { "description": "Internal server error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CommandRequest": {
+        "$ref": "../../command/v1/command_request.schema.json"
+      },
+      "CommandResponse": {
+        "$ref": "../../command/v1/command_response.schema.json"
+      },
+      "HealthReport": {
+        "$ref": "../../command/v1/health_report.schema.json"
+      }
+    }
+  }
+}
+

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/health_report.schema.json",
+  "title": "HTTP Health Report (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "failures"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ok", "cold"]
+    },
+    "last_success_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "last_failure_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "p95_duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "files_per_sec": { "type": ["number", "null"], "minimum": 0 },
+    "pending_events": { "type": ["integer", "null"], "minimum": 0 },
+    "failures": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "last_failure_reason": { "type": "string" },
+    "index_size_bytes": { "type": "integer", "minimum": 0 },
+    "graph_cache_size_bytes": { "type": "integer", "minimum": 0 },
+    "failure_count": { "type": "integer", "minimum": 0 },
+    "stale_ms": { "type": "integer", "minimum": 0 }
+  },
+  "$comment": "Rust source of truth: crates/cli/src/command/infra/health.rs::HealthReport"
+}
+

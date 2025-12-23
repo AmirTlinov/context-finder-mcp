@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/context_pack.schema.json",
+  "title": "Context Pack Output (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "query", "model_id", "profile", "items", "budget"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "query": { "type": "string" },
+    "model_id": { "type": "string" },
+    "profile": { "type": "string" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "file", "start_line", "end_line", "score", "imports", "content"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": {
+            "type": "string",
+            "description": "Chunk role in the pack.",
+            "enum": ["primary", "related"]
+          },
+          "file": { "type": "string" },
+          "start_line": { "type": "integer", "minimum": 0 },
+          "end_line": { "type": "integer", "minimum": 0 },
+          "symbol": { "type": "string" },
+          "type": { "type": "string" },
+          "score": { "type": "number" },
+          "imports": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "content": { "type": "string" },
+          "relationship": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "distance": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_chars", "used_chars", "truncated", "dropped_items"],
+      "properties": {
+        "max_chars": { "type": "integer", "minimum": 0 },
+        "used_chars": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "dropped_items": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$comment": "Rust source of truth: crates/search/src/context_pack.rs::ContextPackOutput (CONTEXT_PACK_VERSION=1)"
+}
+

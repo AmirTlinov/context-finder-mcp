@@ -6,6 +6,14 @@
 - A single JSON response envelope: `{status,hints,data,meta}`.
 - Reduce cognitive load: CLI subcommands build `CommandRequest` and reuse the same handler (or compose multiple requests).
 
+## 1.1 Source of truth (contracts)
+
+This RFC is human-oriented. The **canonical contracts** are machine-readable:
+
+- Request schema: [contracts/command/v1/command_request.schema.json](../contracts/command/v1/command_request.schema.json)
+- Response schema: [contracts/command/v1/command_response.schema.json](../contracts/command/v1/command_response.schema.json)
+- HTTP surface: [contracts/http/v1/openapi.json](../contracts/http/v1/openapi.json) (`POST /command`, `GET /health`)
+
 ## 2. Request shape
 
 ```jsonc
@@ -19,6 +27,7 @@
 Notes:
 
 - `action` names are snake_case (see `crates/cli/src/command/domain.rs`).
+- Full request schema is defined in [contracts/command/v1/command_request.schema.json](../contracts/command/v1/command_request.schema.json).
 - Unknown fields in `payload` are ignored unless the corresponding payload struct opts into stricter parsing.
 
 ### Actions overview
@@ -47,32 +56,13 @@ Notes:
     { "type": "info" | "cache" | "action" | "warn" | "deprecation", "text": "..." }
   ],
   "data": { ... },  // action-specific result
-  "meta": {
-    "config_path": "string|null",
-    "graph_cache": "bool|null",
-    "index_updated": "bool|null",
-    "duration_ms": "number|null",
-    "index_mtime_ms": "number|null",
-    "graph_nodes": "number|null",
-    "graph_edges": "number|null",
-    "health_last_success_ms": "number|null",
-    "health_last_failure_ms": "number|null",
-    "health_last_failure_reason": "string|null",
-    "health_failure_reasons": "string[]|null",
-    "health_failure_count": "number|null",
-    "health_p95_ms": "number|null",
-    "health_files_per_sec": "number|null",
-    "health_stale_ms": "number|null",
-    "health_pending_events": "number|null",
-    "index_size_bytes": "number|null",
-    "graph_cache_size_bytes": "number|null",
-    "compare_avg_baseline_ms": "number|null",
-    "compare_avg_context_ms": "number|null",
-    "compare_avg_overlap_ratio": "number|null",
-    "compare_avg_related": "number|null"
-  }
+  "meta": { ... }   // optional diagnostics (see contract)
 }
 ```
+
+Canonical response contract:
+
+- [contracts/command/v1/command_response.schema.json](../contracts/command/v1/command_response.schema.json)
 
 Interpretation highlights:
 
@@ -130,4 +120,3 @@ Expected:
 2. Rewrite subcommands as aliases and emit `deprecation` hints where needed.
 3. Document that the JSON structure is stable (only the envelope adds `status/hints/meta`).
 4. Later, mark legacy subcommands as deprecated.
-

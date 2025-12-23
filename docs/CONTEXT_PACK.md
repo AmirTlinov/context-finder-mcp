@@ -4,6 +4,10 @@
 
 The CLI and the MCP server return `ContextPackOutput` under the `data` field of the standard `CommandResponse` envelope (`{status,hints,data,meta}`).
 
+Canonical schema (source of truth):
+
+- [contracts/command/v1/context_pack.schema.json](../contracts/command/v1/context_pack.schema.json)
+
 ## Schema (data)
 
 ```jsonc
@@ -24,8 +28,8 @@ The CLI and the MCP server return `ContextPackOutput` under the `data` field of 
       "score": 0.0,
       "imports": ["..."],
       "content": "string",
-      "relationship": ["optional edge labels..."],
-      "distance": 1
+      "relationship": ["optional edge labels..."], // optional
+      "distance": 1                                // optional
     }
   ],
   "budget": {

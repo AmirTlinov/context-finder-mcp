@@ -1,12 +1,20 @@
 # Context Finder
 
-Context Finder is a semantic code search tool for AI agents. It indexes a codebase using tree-sitter AST chunking and ONNX Runtime embeddings, and exposes results via:
+Semantic code search **built for AI agents**: index once, then ask for **one bounded context pack** you can feed into a model or pipeline.
 
-- CLI (`context-finder`)
-- JSON Command API (`context-finder command`, `context-finder serve-http`, `context-finder serve-grpc`)
-- MCP server (`context-finder-mcp`)
+If you’re tired of “search → open file → search again → maybe the right function?”, Context Finder turns a query into a compact, contract-stable JSON response — with optional graph-aware “halo” context.
 
-## Quick start
+## What you get
+
+- **Agent-first output:** `context-pack` returns a single JSON payload bounded by `max_chars`.
+- **Stable integration surfaces:** CLI JSON, HTTP, gRPC, MCP — all treated as contracts.
+- **Hybrid retrieval:** semantic + fuzzy + fusion + profile-driven boosts.
+- **Graph-aware context:** attach related chunks (calls/imports/tests) when you need it.
+- **Measured quality:** golden datasets + MRR/recall/latency/bytes + A/B comparisons.
+- **Offline-first models:** download once from a manifest, verify sha256, never commit assets.
+- **No silent CPU fallback:** CUDA by default; CPU only if explicitly allowed.
+
+## 60-second quick start
 
 ### 1) Build and install
 
@@ -24,13 +32,13 @@ Optional local alias (avoids `cargo install` during iteration):
 alias context-finder='./target/release/context-finder'
 ```
 
-### 2) Install models (offline)
+### 2) Install models (offline) and verify
 
 Model assets are downloaded once into `./models/` (gitignored) from `models/manifest.json`:
 
 ```bash
 context-finder install-models
-context-finder doctor
+context-finder doctor --json
 ```
 
 Execution policy:
@@ -38,68 +46,47 @@ Execution policy:
 - GPU-only by default (CUDA).
 - CPU fallback is allowed only when `CONTEXT_FINDER_ALLOW_CPU=1`.
 
-### 3) Index and query
+### 3) Index and ask for a bounded pack
 
 ```bash
 cd /path/to/project
 
-# Index once
 context-finder index . --json
-
-# Best default for agents: one bounded JSON context pack
 context-finder context-pack "index schema version" --path . --max-chars 20000 --json --quiet
+```
 
-# Exploratory search (with graph-aware context assembly)
+Want exploration with graph expansion?
+
+```bash
 context-finder context "streaming indexer health" --path . --strategy deep --show-graph --json --quiet
 ```
 
-## Configuration
+## Integrations
 
-### Profiles
+### CLI + JSON Command API
 
-Select a profile with `--profile <name>` or `CONTEXT_FINDER_PROFILE=<name>`.
-
-- `quality` (default): balanced speed/quality routing.
-- `fast`: speed-first (single lightweight model).
-- `general`: quality-first (multi-model routing; higher latency).
-- `targeted/venorus`: targeted boosts/must-hit rules on top of `general`.
-
-Profiles live under `profiles/` (JSON or TOML).
-
-### Environment variables
-
-- `CONTEXT_FINDER_MODEL_DIR`: model directory root (default: `./models`)
-- `CONTEXT_FINDER_EMBEDDING_MODEL`: embedding model id (default: `bge-small`)
-- `CONTEXT_FINDER_EMBEDDING_MODE`: `fast` (default) or `stub` (deterministic tests, no GPU/models)
-- `CONTEXT_FINDER_PROFILE`: active profile name (default: `quality`)
-- `CONTEXT_FINDER_CUDA_DEVICE`: CUDA device id
-- `CONTEXT_FINDER_CUDA_MEM_LIMIT_MB`: CUDA EP arena limit in MB
-- `CONTEXT_FINDER_ALLOW_CPU`: set to `1` to explicitly allow CPU fallback
-
-Most of these also have CLI overrides (`--model-dir`, `--embed-model`, `--embed-mode`, `--profile`, `--cuda-device`, `--cuda-mem-limit-mb`).
-
-Project-local configuration can be stored in `.context-finder/config.json`.
-
-## JSON Command API
-
-Use the `command` subcommand to execute a JSON request:
+One request shape; one response envelope:
 
 ```bash
 context-finder command --json '{"action":"search","payload":{"query":"embedding templates","limit":5,"project":"."}}'
 ```
 
-You can also expose the same API over HTTP or gRPC:
+### HTTP
 
 ```bash
 context-finder serve-http --bind 127.0.0.1:7700
+```
+
+- `POST /command`
+- `GET /health`
+
+### gRPC
+
+```bash
 context-finder serve-grpc --bind 127.0.0.1:50051
 ```
 
-See `docs/QUICK_START.md` and `docs/COMMAND_RFC.md` for details.
-
-## MCP server
-
-Install:
+### MCP server
 
 ```bash
 cargo install --path crates/mcp-server
@@ -116,28 +103,31 @@ args = []
 CONTEXT_FINDER_PROFILE = "quality"
 ```
 
-### Background daemon
+## Contracts (source of truth)
 
-The CLI can spawn a background daemon (`context-finder daemon-loop`) to keep indexes warm for recently used projects.
+All integration surfaces are contract-first and versioned:
 
-- Socket: `~/.context-finder/daemon.sock`
-- Default TTL: 5 minutes (configurable via `CONTEXT_FINDER_DAEMON_TTL_MS`)
-
-If auto-start cannot find the CLI binary (non-standard installation), set `CONTEXT_FINDER_DAEMON_EXE=/path/to/context-finder`.
+- [contracts/README.md](contracts/README.md)
+- [contracts/command/v1/](contracts/command/v1/) (JSON Schemas)
+- [contracts/http/v1/openapi.json](contracts/http/v1/openapi.json) (OpenAPI 3.1)
+- [proto/](proto/) (gRPC)
 
 ## Documentation
 
-- `docs/QUICK_START.md` (install, CLI, servers, JSON API)
-- `USAGE_EXAMPLES.md` (agent-first workflows)
-- `docs/ARCHITECTURE.md`
-- `docs/CONTEXT_PACK.md`
-- `docs/COMMAND_RFC.md`
-- `models/README.md`
-- `bench/README.md`
+- [docs/README.md](docs/README.md) (navigation hub)
+- [docs/QUICK_START.md](docs/QUICK_START.md) (install, CLI, servers, JSON API)
+- [USAGE_EXAMPLES.md](USAGE_EXAMPLES.md) (agent-first workflows)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/CONTEXT_PACK.md](docs/CONTEXT_PACK.md)
+- [docs/COMMAND_RFC.md](docs/COMMAND_RFC.md)
+- [PHILOSOPHY.md](PHILOSOPHY.md)
+- [models/README.md](models/README.md)
+- [bench/README.md](bench/README.md)
 
 ## Development
 
 ```bash
+scripts/validate_contracts.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace

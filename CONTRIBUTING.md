@@ -20,6 +20,7 @@ CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
 Run these before opening a PR:
 
 ```bash
+scripts/validate_contracts.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
@@ -29,6 +30,17 @@ CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
 
 - Documentation is maintained in English (`*.md`).
 - Keep command examples consistent with `context-finder --help`.
+
+## Contract-first changes (APIs/integrations)
+
+If your change affects anything another process can call or parse (CLI JSON, HTTP, gRPC, MCP tools):
+
+1. Update the contract first (`contracts/…` and/or `proto/…`).
+2. Implement the change.
+3. Add/adjust tests.
+4. Run the quality gates above.
+
+See `contracts/README.md` and `AGENTS.md`.
 
 ## Models and caches
 
@@ -45,4 +57,3 @@ CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
 - Keep changes focused and avoid unrelated refactors.
 - Add tests for behavior changes.
 - Prefer clear error messages and stable JSON outputs.
-

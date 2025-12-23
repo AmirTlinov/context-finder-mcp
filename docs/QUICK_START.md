@@ -129,6 +129,8 @@ context-finder serve-http --bind 0.0.0.0:8080
 
 API endpoint: `POST /command`
 
+Health endpoint: `GET /health`
+
 Example request:
 ```bash
 curl -X POST http://localhost:7700/command \
@@ -141,6 +143,12 @@ curl -X POST http://localhost:7700/command \
       "project": "/path/to/project"
     }
   }'
+```
+
+Example health request:
+
+```bash
+curl http://localhost:7700/health
 ```
 
 ### gRPC Server

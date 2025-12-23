@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/command_response.schema.json",
+  "title": "Context Finder CommandResponse (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "data", "meta"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ok", "error"]
+    },
+    "message": {
+      "type": "string",
+      "description": "Optional human-readable message (present mainly on errors)."
+    },
+    "hints": {
+      "type": "array",
+      "description": "Optional structured hints for agents (info/warn/cache/deprecation).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "text"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["info", "cache", "action", "warn", "deprecation"]
+          },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "data": {
+      "description": "Action-specific result. For errors: usually null.",
+      "default": null
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional diagnostics and performance metadata.",
+      "properties": {
+        "config_path": { "type": "string" },
+        "graph_cache": { "type": "boolean" },
+        "index_updated": { "type": "boolean" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "index_mtime_ms": { "type": "integer", "minimum": 0 },
+        "graph_nodes": { "type": "integer", "minimum": 0 },
+        "graph_edges": { "type": "integer", "minimum": 0 },
+        "index_files": { "type": "integer", "minimum": 0 },
+        "index_chunks": { "type": "integer", "minimum": 0 },
+        "index_size_bytes": { "type": "integer", "minimum": 0 },
+        "graph_cache_size_bytes": { "type": "integer", "minimum": 0 },
+        "health_last_success_ms": { "type": "integer", "minimum": 0 },
+        "health_last_failure_reason": { "type": "string" },
+        "warm": { "type": "boolean" },
+        "warm_cost_ms": { "type": "integer", "minimum": 0 },
+        "warm_graph_cache_hit": { "type": "boolean" },
+        "duplicates_dropped": { "type": "integer", "minimum": 0 },
+        "merge_spans_dropped": { "type": "integer", "minimum": 0 },
+        "timing_load_index_ms": { "type": "integer", "minimum": 0 },
+        "timing_graph_ms": { "type": "integer", "minimum": 0 },
+        "timing_search_ms": { "type": "integer", "minimum": 0 },
+        "health_last_failure_ms": { "type": "integer", "minimum": 0 },
+        "health_failure_reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "health_p95_ms": { "type": "integer", "minimum": 0 },
+        "health_failure_count": { "type": "integer", "minimum": 0 },
+        "health_files_per_sec": { "type": "number", "minimum": 0 },
+        "health_stale_ms": { "type": "integer", "minimum": 0 },
+        "health_pending_events": { "type": "integer", "minimum": 0 },
+        "profile": { "type": "string" },
+        "profile_path": { "type": "string" },
+        "compare_avg_baseline_ms": { "type": "number", "minimum": 0 },
+        "compare_avg_context_ms": { "type": "number", "minimum": 0 },
+        "compare_avg_overlap_ratio": { "type": "number", "minimum": 0 },
+        "compare_avg_related": { "type": "number", "minimum": 0 }
+      }
+    }
+  },
+  "$comment": "Rust source of truth: crates/cli/src/command/domain.rs::CommandResponse / ResponseMeta / HintKind"
+}
+
