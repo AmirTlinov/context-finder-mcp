@@ -19,8 +19,8 @@ If you’re tired of “search → open file → search again → maybe the righ
 ### 1) Build and install
 
 ```bash
-git clone https://github.com/AmirTlinov/context-finder.git
-cd context-finder
+git clone https://github.com/AmirTlinov/context-finder-mcp.git
+cd context-finder-mcp
 
 cargo build --release
 cargo install --path crates/cli

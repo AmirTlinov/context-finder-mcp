@@ -9,8 +9,8 @@ Context Finder is a semantic code search tool designed for AI agents and coding 
 ### From Source (recommended)
 
 ```bash
-git clone https://github.com/AmirTlinov/context-finder.git
-cd context-finder
+git clone https://github.com/AmirTlinov/context-finder-mcp.git
+cd context-finder-mcp
 cargo build --release
 cargo install --path crates/cli
 ```

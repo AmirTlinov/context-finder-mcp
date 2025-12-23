@@ -16,7 +16,7 @@ version = "0.1.1"
 edition = "2021"
 authors = ["AI Context Tools Contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/AmirTlinov/context-finder"
+repository = "https://github.com/AmirTlinov/context-finder-mcp"
 
 [workspace.dependencies]
 # Async runtime
