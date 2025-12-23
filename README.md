@@ -9,6 +9,7 @@ If you’re tired of “search → open file → search again → maybe the righ
 - **Agent-first output:** `context-pack` returns a single JSON payload bounded by `max_chars`.
 - **One-call orchestration:** `action=batch` runs multiple actions under one `max_chars` budget (partial success per item).
 - **Safe file reads:** MCP `file_slice` returns a bounded file window (root-locked, line-based, hashed).
+- **Safe file listing:** MCP `list_files` returns bounded file paths (glob/substring filter).
 - **Freshness by default:** every response can carry `meta.index_state`; `options.stale_policy=auto|warn|fail` controls (re)index behavior.
 - **Stable integration surfaces:** CLI JSON, HTTP, gRPC, MCP — all treated as contracts.
 - **Hybrid retrieval:** semantic + fuzzy + fusion + profile-driven boosts.
@@ -156,6 +157,17 @@ When you need the *exact* contents of a file region (without `cat`/`sed`), use t
   "file": "src/lib.rs",
   "start_line": 120,
   "max_lines": 80,
+  "max_chars": 8000
+}
+```
+
+When you need file paths first (without `ls/find/rg --files`), use `list_files`:
+
+```jsonc
+{
+  "path": "/path/to/project",
+  "file_pattern": "src/*",
+  "limit": 200,
   "max_chars": 8000
 }
 ```

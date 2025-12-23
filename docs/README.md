@@ -20,7 +20,7 @@ If you are integrating Context Finder programmatically, treat the **contracts** 
 
 - [docs/COMMAND_RFC.md](COMMAND_RFC.md) — Command API overview (links to canonical schemas)
 - [docs/CONTEXT_PACK.md](CONTEXT_PACK.md) — Context Pack v1 overview (links to canonical schema)
-- MCP: tool contracts live in [crates/mcp-server/src/tools.rs](../crates/mcp-server/src/tools.rs) (includes `batch` for one-call multi-tool workflows and `file_slice` for bounded safe file reads)
+- MCP: tool contracts live in [crates/mcp-server/src/tools.rs](../crates/mcp-server/src/tools.rs) (includes `batch` for one-call multi-tool workflows, `file_slice` for bounded safe file reads, and `list_files` for bounded file enumeration)
 
 ## Contribution / dev workflow
 

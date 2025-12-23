@@ -202,6 +202,17 @@ File slice tool (bounded, root-locked file read; designed to replace ad-hoc `cat
 }
 ```
 
+List files tool (bounded file enumeration; designed to replace `ls/find/rg --files` in agent loops):
+
+```jsonc
+{
+  "path": "/path/to/project",
+  "file_pattern": "src/*",
+  "limit": 200,
+  "max_chars": 8000
+}
+```
+
 ## JSON Command API
 
 For programmatic access, use the `command` subcommand:
