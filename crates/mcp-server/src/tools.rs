@@ -523,7 +523,7 @@ async fn compute_list_files_result(
             source = "corpus".to_string();
 
             let mut candidates: Vec<&String> = corpus.files().keys().collect();
-            candidates.sort_by(|a, b| a.cmp(b));
+            candidates.sort();
             scanned_files = candidates.len();
 
             for file in candidates {
@@ -656,21 +656,36 @@ fn merge_grep_ranges(mut ranges: Vec<GrepRange>) -> Vec<GrepRange> {
     merged
 }
 
-async fn compute_grep_context_result(
-    root: &Path,
-    root_display: &str,
-    request: &GrepContextRequest,
-    regex: &Regex,
+struct GrepContextComputeOptions<'a> {
     case_sensitive: bool,
     before: usize,
     after: usize,
     max_matches: usize,
     max_hunks: usize,
     max_chars: usize,
-    resume_file: Option<&str>,
+    resume_file: Option<&'a str>,
     resume_line: usize,
+}
+
+async fn compute_grep_context_result(
+    root: &Path,
+    root_display: &str,
+    request: &GrepContextRequest,
+    regex: &Regex,
+    opts: GrepContextComputeOptions<'_>,
 ) -> Result<GrepContextResult> {
     const MAX_FILE_BYTES: u64 = 2_000_000;
+
+    let GrepContextComputeOptions {
+        case_sensitive,
+        before,
+        after,
+        max_matches,
+        max_hunks,
+        max_chars,
+        resume_file,
+        resume_line,
+    } = opts;
 
     let file_pattern = request
         .file_pattern
@@ -709,7 +724,7 @@ async fn compute_grep_context_result(
             Some(corpus) => {
                 source = "corpus".to_string();
                 let mut files: Vec<&String> = corpus.files().keys().collect();
-                files.sort_by(|a, b| a.cmp(b));
+                files.sort();
                 for file in files {
                     if !ContextFinderService::matches_file_pattern(file, file_pattern) {
                         continue;
@@ -805,7 +820,7 @@ async fn compute_grep_context_result(
                 total_matches += 1;
                 if total_matches >= max_matches {
                     truncated = true;
-                    truncation = Some(GrepContextTruncation::MaxMatches);
+                    truncation = Some(GrepContextTruncation::Matches);
                     stop_after_this_file = true;
                     break;
                 }
@@ -850,7 +865,7 @@ async fn compute_grep_context_result(
 
             if hunks.len() >= max_hunks {
                 truncated = true;
-                truncation = Some(GrepContextTruncation::MaxHunks);
+                truncation = Some(GrepContextTruncation::Hunks);
                 next_cursor_state = Some((display_file.clone(), range_start_line));
                 break 'outer_files;
             }
@@ -885,7 +900,7 @@ async fn compute_grep_context_result(
 
                 if used_chars.saturating_add(extra_chars) > max_chars {
                     truncated = true;
-                    truncation = Some(GrepContextTruncation::MaxChars);
+                    truncation = Some(GrepContextTruncation::Chars);
                     stop_due_to_budget = true;
                     break;
                 }
@@ -1688,9 +1703,12 @@ struct GrepContextCursorV1 {
 #[derive(Debug, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GrepContextTruncation {
-    MaxChars,
-    MaxMatches,
-    MaxHunks,
+    #[serde(rename = "max_chars")]
+    Chars,
+    #[serde(rename = "max_matches")]
+    Matches,
+    #[serde(rename = "max_hunks")]
+    Hunks,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -2932,7 +2950,7 @@ impl ContextFinderService {
                     )]));
                 }
 
-                for chunk_index in start_chunk..chunk_refs.len() {
+                for (chunk_index, chunk) in chunk_refs.iter().enumerate().skip(start_chunk) {
                     if matches.len() >= max_results {
                         truncated = true;
                         next_state = Some(TextSearchCursorModeV1::Corpus {
@@ -2943,7 +2961,6 @@ impl ContextFinderService {
                         break 'outer_corpus;
                     }
 
-                    let chunk = chunk_refs[chunk_index];
                     let line_start = if first_file && chunk_index == start_chunk {
                         start_line_offset
                     } else {
@@ -3544,14 +3561,16 @@ impl ContextFinderService {
             &root_display,
             &request,
             &regex,
-            case_sensitive,
-            before,
-            after,
-            max_matches,
-            max_hunks,
-            max_chars,
-            resume_file.as_deref(),
-            resume_line,
+            GrepContextComputeOptions {
+                case_sensitive,
+                before,
+                after,
+                max_matches,
+                max_hunks,
+                max_chars,
+                resume_file: resume_file.as_deref(),
+                resume_line,
+            },
         )
         .await
         {
