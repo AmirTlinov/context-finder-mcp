@@ -121,6 +121,71 @@ async fn batch_v2_resolves_refs_between_items() -> Result<()> {
 }
 
 #[tokio::test]
+async fn batch_v2_accepts_action_payload_aliases() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("src").join("a.txt"), "hello\n").context("write a.txt")?;
+
+    let args = serde_json::json!({
+        "version": 2,
+        "path": root.to_string_lossy(),
+        "max_chars": 20000,
+        "items": [
+            { "id": "files", "action": "list_files", "payload": { "file_pattern": "src/*", "limit": 10 } }
+        ]
+    });
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "batch".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling batch")??;
+
+    assert_ne!(result.is_error, Some(true), "batch returned error");
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("batch did not return text content")?;
+    let json: Value = serde_json::from_str(text).context("batch output is not valid JSON")?;
+
+    let items = json
+        .get("items")
+        .and_then(Value::as_array)
+        .context("batch items missing")?;
+    let files_item = items.first().context("missing files item")?;
+    assert_eq!(files_item.get("status").and_then(Value::as_str), Some("ok"));
+    let data = files_item.get("data").context("files item missing data")?;
+    let files = data
+        .get("files")
+        .and_then(Value::as_array)
+        .context("files data missing files array")?;
+    assert!(files.iter().any(|v| v.as_str() == Some("src/a.txt")));
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn batch_v2_ref_to_failed_item_data_returns_error() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 

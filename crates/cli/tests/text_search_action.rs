@@ -1,12 +1,10 @@
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
 use std::fs;
 use tempfile::tempdir;
 
-#[allow(deprecated)]
 fn run_cli_raw(workdir: &std::path::Path, request: &str) -> (bool, Value) {
-    let output = Command::cargo_bin("context-finder")
-        .expect("binary")
+    let output = cargo_bin_cmd!("context-finder")
         .current_dir(workdir)
         .env("CONTEXT_FINDER_EMBEDDING_MODE", "stub")
         .arg("command")
@@ -62,5 +60,31 @@ fn text_search_respects_allow_filesystem_fallback_flag() {
     assert!(
         message.contains("filesystem fallback is disabled"),
         "unexpected message: {message}"
+    );
+}
+
+#[test]
+fn text_search_uses_env_root_when_project_missing() {
+    let repo = setup_repo();
+    let root = repo.path();
+    let workdir = tempdir().unwrap();
+
+    let request = r#"{"action":"text_search","payload":{"pattern":"greet"}}"#;
+    let output = cargo_bin_cmd!("context-finder")
+        .current_dir(workdir.path())
+        .env("CONTEXT_FINDER_EMBEDDING_MODE", "stub")
+        .env("CONTEXT_FINDER_ROOT", root)
+        .arg("command")
+        .arg("--json")
+        .arg(request)
+        .output()
+        .expect("command run");
+
+    let body: Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert!(output.status.success(), "expected ok, got {body}");
+    let matches = body["data"]["matches"].as_array().expect("matches array");
+    assert!(
+        matches.iter().any(|m| m["file"] == "src/lib.rs"),
+        "expected src/lib.rs in matches"
     );
 }

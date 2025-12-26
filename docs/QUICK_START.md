@@ -245,6 +245,9 @@ Pagination (cursor): when a tool returns `truncated: true` and `next_cursor`, ca
 Cursor tokens are opaque and bound to the original query/options (changing them will be rejected).
 
 Most read-oriented MCP tools include `meta.index_state` when available to expose index freshness.
+For semantic tools (`context_pack`, `context`, `impact`, `trace`, `explain`, `overview`),
+`auto_index` defaults to true; use `auto_index=false` or `auto_index_budget_ms` to control the
+reindex budget. The attempt is reported under `meta.index_state.reindex`.
 
 Batch tool (one MCP call → many tools, bounded output). In `version: 2`, item inputs can depend on earlier outputs via `$ref` (JSON Pointer):
 
@@ -274,6 +277,7 @@ Notes:
 - `path` is canonical; `project` is accepted as an alias.
 - `version` defaults to 2; set `version: 1` to disable `$ref` resolution (legacy).
 - Batch v2 requires unique `id` values per item.
+- `action/payload` are accepted as aliases for `tool/input` (canonical) to match Command API batch.
 - `$ref` pointers resolve against an evaluation context keyed by item `id` (`#/items/<id>/...`, not array indices).
 - `$ref` to a failed item is rejected; use `{ "$ref": "...", "$default": <value> }` for optional pointers.
 - Command API `batch` uses the same `$ref` wrapper semantics (see `contracts/command/v1/batch.schema.json`).

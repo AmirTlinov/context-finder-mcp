@@ -1,14 +1,13 @@
 use super::super::{
-    CallToolResult, Content, ContextFinderService, McpError, SearchRequest, SearchResult,
+    AutoIndexPolicy, CallToolResult, Content, ContextFinderService, McpError, SearchRequest,
+    SearchResult,
 };
-use std::path::PathBuf;
 
 /// Semantic code search
 pub(in crate::tools::dispatch) async fn search(
     service: &ContextFinderService,
     request: SearchRequest,
 ) -> Result<CallToolResult, McpError> {
-    let path = PathBuf::from(request.path.unwrap_or_else(|| ".".to_string()));
     let limit = request.limit.unwrap_or(10).clamp(1, 50);
 
     if request.query.trim().is_empty() {
@@ -17,17 +16,16 @@ pub(in crate::tools::dispatch) async fn search(
         )]));
     }
 
-    let root = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
-            ))]));
+    let root = match service.resolve_root(request.path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => {
+            return Ok(CallToolResult::error(vec![Content::text(message)]));
         }
     };
 
+    let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);
     let results = {
-        let mut engine = match service.lock_engine(&root).await {
+        let (mut engine, _meta) = match service.prepare_semantic_engine(&root, policy).await {
             Ok(engine) => engine,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(

@@ -34,9 +34,9 @@ pub struct BatchRequest {
     )]
     pub version: Option<u32>,
 
-    /// Project directory path (defaults to current directory)
+    /// Project directory path (defaults to session root; fallback: env/git/cwd)
     #[schemars(
-        description = "Project directory path (defaults to current directory). Alias: `project`."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd). Alias: `project`."
     )]
     #[serde(alias = "project")]
     pub path: Option<String>,
@@ -65,7 +65,8 @@ pub struct BatchItem {
     /// pointers (`#/items/<id>/data/...`) into prior item results.
     pub id: String,
 
-    /// Tool name to execute.
+    /// Tool name to execute (alias: action).
+    #[serde(alias = "action")]
     pub tool: BatchToolName,
 
     /// Tool input object (tool-specific). Defaults to `{}`.
@@ -73,7 +74,7 @@ pub struct BatchItem {
     /// In batch v2, any value position may be a `$ref` wrapper:
     /// `{ "$ref": "#/items/<id>/data/...", "$default": <optional> }`.
     /// The wrapper is recognized only when the object contains exactly `$ref` (+ optional `$default`).
-    #[serde(default)]
+    #[serde(default, alias = "payload")]
     pub input: serde_json::Value,
 }
 

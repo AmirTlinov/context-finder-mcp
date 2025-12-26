@@ -1,10 +1,10 @@
 use super::super::{
-    CallToolResult, Content, ContextFinderService, ExplainRequest, ExplainResult, McpError,
+    AutoIndexPolicy, CallToolResult, Content, ContextFinderService, ExplainRequest, ExplainResult,
+    McpError,
 };
 use crate::tools::util::path_has_extension_ignore_ascii_case;
 use context_graph::{CodeGraph, RelationshipType};
 use petgraph::graph::NodeIndex;
-use std::path::{Path, PathBuf};
 
 type ToolResult<T> = std::result::Result<T, CallToolResult>;
 
@@ -47,16 +47,10 @@ struct ExplainData {
 }
 
 async fn compute_explain_data(
-    service: &ContextFinderService,
-    root: &Path,
+    engine: &mut super::super::EngineLock,
     language: Option<&str>,
     symbol: &str,
 ) -> ToolResult<ExplainData> {
-    let mut engine = service
-        .lock_engine(root)
-        .await
-        .map_err(|e| tool_error(format!("Error: {e}")))?;
-
     let language = language.map_or_else(
         || {
             ContextFinderService::detect_language(
@@ -71,66 +65,62 @@ async fn compute_explain_data(
         .await
         .map_err(|e| tool_error(format!("Graph build error: {e}")))?;
 
-    let data = {
-        let Some(assembler) = engine.engine_mut().context_search.assembler() else {
-            return Err(tool_error(
-                "Graph build error: missing assembler after build",
-            ));
-        };
-        let graph = assembler.graph();
-
-        let Some(node) = graph.find_node(symbol) else {
-            return Err(tool_error(format!("Symbol '{symbol}' not found")));
-        };
-
-        let (deps, dependents_raw) = graph.get_symbol_relations(node);
-        let dependencies = format_symbol_relations(graph, &deps);
-        let dependents = format_symbol_relations(graph, &dependents_raw);
-
-        let test_nodes = graph.find_related_tests(node);
-        let mut tests: Vec<String> = test_nodes
-            .iter()
-            .filter_map(|n| graph.get_node(*n).map(|nd| nd.symbol.name.clone()))
-            .collect();
-        tests.sort();
-        tests.dedup();
-
-        let node_data = graph.get_node(node);
-        let (kind, file, line, documentation, content) = node_data.map_or_else(
-            || (String::new(), String::new(), 0, None, String::new()),
-            |nd| {
-                let symbol_type = &nd.symbol.symbol_type;
-                let doc = nd
-                    .chunk
-                    .as_ref()
-                    .and_then(|c| c.metadata.documentation.clone());
-                let content = nd
-                    .chunk
-                    .as_ref()
-                    .map_or_else(String::new, |c| c.content.clone());
-                (
-                    format!("{symbol_type:?}"),
-                    nd.symbol.file_path.clone(),
-                    nd.symbol.start_line,
-                    doc,
-                    content,
-                )
-            },
-        );
-
-        ExplainData {
-            dependencies,
-            dependents,
-            tests,
-            kind,
-            file,
-            line,
-            documentation,
-            content,
-        }
+    let Some(assembler) = engine.engine_mut().context_search.assembler() else {
+        return Err(tool_error(
+            "Graph build error: missing assembler after build",
+        ));
     };
-    drop(engine);
-    Ok(data)
+    let graph = assembler.graph();
+
+    let Some(node) = graph.find_node(symbol) else {
+        return Err(tool_error(format!("Symbol '{symbol}' not found")));
+    };
+
+    let (deps, dependents_raw) = graph.get_symbol_relations(node);
+    let dependencies = format_symbol_relations(graph, &deps);
+    let dependents = format_symbol_relations(graph, &dependents_raw);
+
+    let test_nodes = graph.find_related_tests(node);
+    let mut tests: Vec<String> = test_nodes
+        .iter()
+        .filter_map(|n| graph.get_node(*n).map(|nd| nd.symbol.name.clone()))
+        .collect();
+    tests.sort();
+    tests.dedup();
+
+    let node_data = graph.get_node(node);
+    let (kind, file, line, documentation, content) = node_data.map_or_else(
+        || (String::new(), String::new(), 0, None, String::new()),
+        |nd| {
+            let symbol_type = &nd.symbol.symbol_type;
+            let doc = nd
+                .chunk
+                .as_ref()
+                .and_then(|c| c.metadata.documentation.clone());
+            let content = nd
+                .chunk
+                .as_ref()
+                .map_or_else(String::new, |c| c.content.clone());
+            (
+                format!("{symbol_type:?}"),
+                nd.symbol.file_path.clone(),
+                nd.symbol.start_line,
+                doc,
+                content,
+            )
+        },
+    );
+
+    Ok(ExplainData {
+        dependencies,
+        dependents,
+        tests,
+        kind,
+        file,
+        line,
+        documentation,
+        content,
+    })
 }
 
 /// Deep dive into a symbol
@@ -138,24 +128,26 @@ pub(in crate::tools::dispatch) async fn explain(
     service: &ContextFinderService,
     request: ExplainRequest,
 ) -> Result<CallToolResult, McpError> {
-    let ExplainRequest {
-        path,
-        symbol,
-        language,
-    } = request;
-    let path = PathBuf::from(path.unwrap_or_else(|| ".".to_string()));
-    let root = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(tool_error(format!("Invalid path: {e}")));
-        }
+    let path = request.path;
+    let symbol = request.symbol;
+    let language = request.language;
+    let root = match service.resolve_root(path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => return Ok(tool_error(message)),
     };
-    let data = match compute_explain_data(service, &root, language.as_deref(), &symbol).await {
+    let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);
+    let (mut engine, meta) = match service.prepare_semantic_engine(&root, policy).await {
+        Ok(engine) => engine,
+        Err(err) => return Ok(tool_error(format!("Error: {err}"))),
+    };
+
+    let data = match compute_explain_data(&mut engine, language.as_deref(), &symbol).await {
         Ok(data) => data,
         Err(err) => return Ok(err),
     };
+    drop(engine);
 
-    let mut result = ExplainResult {
+    let result = ExplainResult {
         symbol,
         kind: data.kind,
         file: data.file,
@@ -165,9 +157,8 @@ pub(in crate::tools::dispatch) async fn explain(
         dependents: data.dependents,
         tests: data.tests,
         content: data.content,
-        meta: None,
+        meta: Some(meta),
     };
-    result.meta = Some(service.tool_meta(&root).await);
 
     Ok(CallToolResult::success(vec![Content::text(
         serde_json::to_string_pretty(&result).unwrap_or_default(),

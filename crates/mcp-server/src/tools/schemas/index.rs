@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct IndexRequest {
     /// Project directory path
-    #[schemars(description = "Project directory to index")]
+    #[schemars(
+        description = "Project directory to index (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+    )]
     pub path: Option<String>,
 
     /// Force full reindex (alias for `full`)

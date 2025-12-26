@@ -115,6 +115,7 @@ async fn impact_falls_back_to_text_matches_when_graph_has_no_edges() -> Result<(
         "path": root.to_string_lossy(),
         "depth": 2,
         "language": "rust",
+        "auto_index": false,
     });
     let impact_result = tokio::time::timeout(
         Duration::from_secs(10),
@@ -218,6 +219,7 @@ async fn impact_returns_text_matches_when_symbol_is_missing_from_graph() -> Resu
         "path": root.to_string_lossy(),
         "depth": 2,
         "language": "rust",
+        "auto_index": false,
     });
     let impact_result = tokio::time::timeout(
         Duration::from_secs(10),

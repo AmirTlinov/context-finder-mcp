@@ -14,6 +14,7 @@ use std::time::Duration;
 
 const VERSION: u32 = 1;
 const DEFAULT_MAX_CHARS: usize = 20_000;
+const MIN_MAX_CHARS: usize = 1_000;
 const MAX_MAX_CHARS: usize = 500_000;
 const DEFAULT_GREP_CONTEXT: usize = 20;
 const MAX_GREP_MATCHES: usize = 10_000;
@@ -44,18 +45,15 @@ struct ReadPackContext {
     inner_max_chars: usize,
 }
 
-fn build_context(request: &ReadPackRequest) -> ToolResult<ReadPackContext> {
-    let root_path = PathBuf::from(request.path.as_deref().unwrap_or("."));
-    let root = root_path
-        .canonicalize()
-        .map_err(|e| call_error(format!("Invalid path: {e}")))?;
-    ContextFinderService::touch_daemon_best_effort(&root);
-    let root_display = root.to_string_lossy().to_string();
-
+fn build_context(
+    request: &ReadPackRequest,
+    root: PathBuf,
+    root_display: String,
+) -> ToolResult<ReadPackContext> {
     let max_chars = request
         .max_chars
         .unwrap_or(DEFAULT_MAX_CHARS)
-        .clamp(1, MAX_MAX_CHARS);
+        .clamp(MIN_MAX_CHARS, MAX_MAX_CHARS);
     // Inner tool budgets leave headroom for JSON overhead (especially `\\n` escaping).
     let inner_max_chars = (max_chars.saturating_mul(3) / 5).max(1_000).min(max_chars);
 
@@ -100,28 +98,155 @@ fn resolve_intent(request: &ReadPackRequest) -> ToolResult<ReadPackIntent> {
     Ok(ReadPackIntent::Onboarding)
 }
 
+fn intent_label(intent: ReadPackIntent) -> &'static str {
+    match intent {
+        ReadPackIntent::Auto => "auto",
+        ReadPackIntent::File => "file",
+        ReadPackIntent::Grep => "grep",
+        ReadPackIntent::Query => "query",
+        ReadPackIntent::Onboarding => "onboarding",
+    }
+}
+
 fn finalize_and_trim(mut result: ReadPackResult, max_chars: usize) -> ToolResult<ReadPackResult> {
     finalize_read_pack_budget(&mut result).map_err(|err| call_error(format!("Error: {err:#}")))?;
 
-    while result.budget.used_chars > max_chars && !result.next_actions.is_empty() {
+    while result.budget.used_chars > max_chars && result.next_actions.len() > 1 {
         result.next_actions.pop();
         result.budget.truncated = true;
         result.budget.truncation = Some(ReadPackTruncation::MaxChars);
         let _ = finalize_read_pack_budget(&mut result);
     }
-    while result.budget.used_chars > max_chars && !result.sections.is_empty() {
+    while result.budget.used_chars > max_chars && result.sections.len() > 1 {
         result.sections.pop();
         result.budget.truncated = true;
         result.budget.truncation = Some(ReadPackTruncation::MaxChars);
         let _ = finalize_read_pack_budget(&mut result);
     }
     if result.budget.used_chars > max_chars {
-        return Err(call_error(format!(
-            "max_chars={max_chars} is too small for the read_pack payload"
-        )));
+        result.budget.truncated = true;
+        result.budget.truncation = Some(ReadPackTruncation::MaxChars);
+        let _ = finalize_read_pack_budget(&mut result);
     }
 
     Ok(result)
+}
+
+fn ensure_retry_action(
+    result: &mut ReadPackResult,
+    ctx: &ReadPackContext,
+    request: &ReadPackRequest,
+    intent: ReadPackIntent,
+) {
+    if !result.budget.truncated || !result.next_actions.is_empty() {
+        return;
+    }
+
+    let suggested_max_chars = ctx
+        .max_chars
+        .saturating_mul(2)
+        .clamp(DEFAULT_MAX_CHARS, MAX_MAX_CHARS);
+
+    let mut args = serde_json::Map::new();
+    args.insert(
+        "path".to_string(),
+        serde_json::Value::String(ctx.root_display.clone()),
+    );
+    args.insert(
+        "intent".to_string(),
+        serde_json::Value::String(intent_label(intent).to_string()),
+    );
+    args.insert(
+        "max_chars".to_string(),
+        serde_json::Value::Number(suggested_max_chars.into()),
+    );
+
+    if let Some(cursor) = trimmed_non_empty_str(request.cursor.as_deref()) {
+        args.insert(
+            "cursor".to_string(),
+            serde_json::Value::String(cursor.to_string()),
+        );
+    }
+
+    match intent {
+        ReadPackIntent::File => {
+            if let Some(file) = trimmed_non_empty_str(request.file.as_deref()) {
+                args.insert(
+                    "file".to_string(),
+                    serde_json::Value::String(file.to_string()),
+                );
+            }
+            if let Some(start_line) = request.start_line {
+                args.insert(
+                    "start_line".to_string(),
+                    serde_json::Value::Number(start_line.into()),
+                );
+            }
+            if let Some(max_lines) = request.max_lines {
+                args.insert(
+                    "max_lines".to_string(),
+                    serde_json::Value::Number(max_lines.into()),
+                );
+            }
+        }
+        ReadPackIntent::Grep => {
+            if let Some(pattern) = trimmed_non_empty_str(request.pattern.as_deref()) {
+                args.insert(
+                    "pattern".to_string(),
+                    serde_json::Value::String(pattern.to_string()),
+                );
+            }
+            if let Some(file_pattern) = trimmed_non_empty_str(request.file_pattern.as_deref()) {
+                args.insert(
+                    "file_pattern".to_string(),
+                    serde_json::Value::String(file_pattern.to_string()),
+                );
+            }
+            if let Some(before) = request.before {
+                args.insert(
+                    "before".to_string(),
+                    serde_json::Value::Number(before.into()),
+                );
+            }
+            if let Some(after) = request.after {
+                args.insert("after".to_string(), serde_json::Value::Number(after.into()));
+            }
+            if let Some(case_sensitive) = request.case_sensitive {
+                args.insert(
+                    "case_sensitive".to_string(),
+                    serde_json::Value::Bool(case_sensitive),
+                );
+            }
+        }
+        ReadPackIntent::Query => {
+            if let Some(query) = trimmed_non_empty_str(request.query.as_deref()) {
+                args.insert(
+                    "query".to_string(),
+                    serde_json::Value::String(query.to_string()),
+                );
+            }
+            if let Some(prefer_code) = request.prefer_code {
+                args.insert(
+                    "prefer_code".to_string(),
+                    serde_json::Value::Bool(prefer_code),
+                );
+            }
+            if let Some(include_docs) = request.include_docs {
+                args.insert(
+                    "include_docs".to_string(),
+                    serde_json::Value::Bool(include_docs),
+                );
+            }
+        }
+        ReadPackIntent::Onboarding | ReadPackIntent::Auto => {}
+    }
+
+    result.next_actions.push(ReadPackNextAction {
+        tool: "read_pack".to_string(),
+        args: serde_json::Value::Object(args),
+        reason: "Increase max_chars to get a fuller read_pack payload.".to_string(),
+    });
+    let _ = finalize_read_pack_budget(result);
 }
 
 fn apply_meta_to_sections(meta: &ToolMeta, sections: &mut [ReadPackSection]) {
@@ -436,7 +561,8 @@ async fn handle_query_intent(
             include_docs: request.include_docs,
             prefer_code: request.prefer_code,
             related_mode: None,
-            auto_index: Some(true),
+            auto_index: request.auto_index,
+            auto_index_budget_ms: request.auto_index_budget_ms,
             trace: Some(false),
         }))
         .await
@@ -489,7 +615,11 @@ pub(in crate::tools::dispatch) async fn read_pack(
     service: &ContextFinderService,
     request: ReadPackRequest,
 ) -> Result<CallToolResult, McpError> {
-    let ctx = match build_context(&request) {
+    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+        Ok(value) => value,
+        Err(message) => return Ok(call_error(message)),
+    };
+    let ctx = match build_context(&request, root, root_display) {
         Ok(value) => value,
         Err(result) => return Ok(result),
     };
@@ -572,10 +702,11 @@ pub(in crate::tools::dispatch) async fn read_pack(
         meta: Some(meta),
     };
 
-    let result = match finalize_and_trim(result, ctx.max_chars) {
+    let mut result = match finalize_and_trim(result, ctx.max_chars) {
         Ok(value) => value,
         Err(result) => return Ok(result),
     };
+    ensure_retry_action(&mut result, &ctx, &request, intent);
 
     Ok(CallToolResult::success(vec![Content::text(
         serde_json::to_string(&result).unwrap_or_default(),
@@ -585,6 +716,7 @@ pub(in crate::tools::dispatch) async fn read_pack(
 #[cfg(test)]
 mod tests {
     use super::{build_context, ReadPackRequest};
+    use std::path::PathBuf;
 
     fn base_request() -> ReadPackRequest {
         ReadPackRequest {
@@ -604,6 +736,8 @@ mod tests {
             cursor: None,
             prefer_code: None,
             include_docs: None,
+            auto_index: None,
+            auto_index_budget_ms: None,
         }
     }
 
@@ -611,8 +745,8 @@ mod tests {
     fn build_context_reserves_headroom() {
         let mut request = base_request();
         request.max_chars = Some(20_000);
-        let ctx =
-            build_context(&request).unwrap_or_else(|_| panic!("build_context should succeed"));
+        let ctx = build_context(&request, PathBuf::from("."), ".".to_string())
+            .unwrap_or_else(|_| panic!("build_context should succeed"));
         assert_eq!(ctx.inner_max_chars, 12_000);
     }
 
@@ -620,8 +754,8 @@ mod tests {
     fn build_context_never_exceeds_max_chars() {
         let mut request = base_request();
         request.max_chars = Some(500);
-        let ctx =
-            build_context(&request).unwrap_or_else(|_| panic!("build_context should succeed"));
-        assert_eq!(ctx.inner_max_chars, 500);
+        let ctx = build_context(&request, PathBuf::from("."), ".".to_string())
+            .unwrap_or_else(|_| panic!("build_context should succeed"));
+        assert_eq!(ctx.inner_max_chars, 1000);
     }
 }

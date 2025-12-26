@@ -1,12 +1,12 @@
 use super::super::{
     build_graph_docs, current_model_id, graph_language_key, graph_nodes_store_path,
     pack_enriched_results, prepare_context_pack_enriched, tokenize_focus_query, unix_ms,
-    CallToolResult, Content, ContextFinderService, ContextPackOutput, ContextPackRequest,
-    GraphDocConfig, GraphNodeDoc, GraphNodeStore, GraphNodeStoreMeta, McpError, QueryClassifier,
-    QueryKind, QueryType, RelatedMode, CONTEXT_PACK_VERSION, GRAPH_DOC_VERSION,
+    AutoIndexPolicy, CallToolResult, Content, ContextFinderService, ContextPackOutput,
+    ContextPackRequest, GraphDocConfig, GraphNodeDoc, GraphNodeStore, GraphNodeStoreMeta, McpError,
+    QueryClassifier, QueryKind, QueryType, RelatedMode, CONTEXT_PACK_VERSION, GRAPH_DOC_VERSION,
 };
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 type ToolResult<T> = std::result::Result<T, CallToolResult>;
 
@@ -42,7 +42,7 @@ impl ContextPackFlags {
 
 #[derive(Clone, Debug)]
 struct ContextPackInputs {
-    path: PathBuf,
+    path: Option<String>,
     limit: usize,
     max_chars: usize,
     max_related_per_primary: usize,
@@ -101,7 +101,7 @@ fn parse_inputs(request: &ContextPackRequest) -> ToolResult<ContextPackInputs> {
     let max_chars = request.max_chars.unwrap_or(20_000).max(1_000);
     let max_related_per_primary = request.max_related_per_primary.unwrap_or(3).clamp(0, 12);
     let trace = request.trace.unwrap_or(false);
-    let auto_index = request.auto_index.unwrap_or(false);
+    let auto_index = request.auto_index.unwrap_or(true);
 
     let query_type = QueryClassifier::classify(&request.query);
     let docs_intent = QueryClassifier::is_docs_intent(&request.query);
@@ -136,7 +136,7 @@ fn parse_inputs(request: &ContextPackRequest) -> ToolResult<ContextPackInputs> {
     };
 
     Ok(ContextPackInputs {
-        path: PathBuf::from(request.path.clone().unwrap_or_else(|| ".".to_string())),
+        path: request.path.clone(),
         limit,
         max_chars,
         max_related_per_primary,
@@ -147,28 +147,6 @@ fn parse_inputs(request: &ContextPackRequest) -> ToolResult<ContextPackInputs> {
         candidate_limit,
         query_tokens,
     })
-}
-
-async fn lock_engine_with_auto_index(
-    service: &ContextFinderService,
-    root: &Path,
-    auto_index: bool,
-) -> ToolResult<super::super::EngineLock> {
-    match service.lock_engine(root).await {
-        Ok(engine) => Ok(engine),
-        Err(err) => {
-            if !auto_index {
-                return Err(tool_error(format!("Error: {err}")));
-            }
-            if let Err(index_err) = service.auto_index_project(root).await {
-                return Err(tool_error(format!("Auto-index error: {index_err}")));
-            }
-            service
-                .lock_engine(root)
-                .await
-                .map_err(|err| tool_error(format!("Error after auto-index: {err}")))
-        }
-    }
 }
 
 fn select_language(
@@ -489,18 +467,19 @@ pub(in crate::tools::dispatch) async fn context_pack(
         Err(err) => return Ok(err),
     };
 
-    let root = match inputs.path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(tool_error(format!("Invalid path: {e}")));
-        }
+    let root = match service.resolve_root(inputs.path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => return Ok(tool_error(message)),
     };
 
-    let mut engine =
-        match lock_engine_with_auto_index(service, &root, inputs.flags.auto_index()).await {
-            Ok(engine) => engine,
-            Err(err) => return Ok(err),
-        };
+    let policy = AutoIndexPolicy::from_request(
+        Some(inputs.flags.auto_index()),
+        request.auto_index_budget_ms,
+    );
+    let (mut engine, meta) = match service.prepare_semantic_engine(&root, policy).await {
+        Ok(engine) => engine,
+        Err(err) => return Ok(tool_error(format!("Error: {err}"))),
+    };
 
     let language = select_language(request.language.as_deref(), &mut engine);
     if let Err(err) = engine.engine_mut().ensure_graph(language).await {
@@ -555,7 +534,6 @@ pub(in crate::tools::dispatch) async fn context_pack(
         &inputs.query_tokens,
     );
     let model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
-    let meta = service.tool_meta(&root).await;
     let output = ContextPackOutput {
         version: CONTEXT_PACK_VERSION,
         query: request.query,
@@ -596,6 +574,7 @@ mod tests {
             strategy: None,
             language: None,
             auto_index: None,
+            auto_index_budget_ms: None,
             trace: None,
         };
         let inputs = parse_inputs(&request)
@@ -617,6 +596,7 @@ mod tests {
             strategy: None,
             language: None,
             auto_index: None,
+            auto_index_budget_ms: None,
             trace: None,
         };
         let inputs = parse_inputs(&request)

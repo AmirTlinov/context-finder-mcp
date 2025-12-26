@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MapRequest {
-    /// Project directory path (defaults to current directory)
-    #[schemars(description = "Project directory path")]
+    /// Project directory path (defaults to session root; fallback: env/git/cwd)
+    #[schemars(
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+    )]
     pub path: Option<String>,
 
     /// Directory depth for aggregation (default: 2)

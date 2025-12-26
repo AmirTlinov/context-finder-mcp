@@ -4,22 +4,14 @@ use super::super::{
     DoctorIndexDrift, DoctorProjectResult, DoctorRequest, DoctorResult, McpError,
 };
 use context_vector_store::corpus_path_for_project_root;
-use std::path::PathBuf;
+use std::path::Path;
 
 async fn diagnose_project(
-    raw_path: &str,
+    root: &Path,
     issues: &mut Vec<String>,
     hints: &mut Vec<String>,
 ) -> Option<DoctorProjectResult> {
-    let root = match PathBuf::from(raw_path).canonicalize() {
-        Ok(p) => p,
-        Err(err) => {
-            issues.push(format!("Invalid project path: {err}"));
-            return None;
-        }
-    };
-
-    let corpus_path = corpus_path_for_project_root(&root);
+    let corpus_path = corpus_path_for_project_root(root);
     let has_corpus = corpus_path.exists();
 
     let indexes_dir = root.join(".context-finder").join("indexes");
@@ -157,10 +149,11 @@ pub(in crate::tools::dispatch) async fn doctor(
         hints.push("Some models are missing assets. Run `context-finder install-models` to download them into the model directory.".into());
     }
 
-    let project = match path.as_deref() {
-        Some(raw) => diagnose_project(raw, &mut issues, &mut hints).await,
-        None => None,
+    let root = match service.resolve_root(path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => return Ok(CallToolResult::error(vec![Content::text(message)])),
     };
+    let project = diagnose_project(&root, &mut issues, &mut hints).await;
 
     let mut result = DoctorResult {
         env: DoctorEnvResult {
@@ -177,11 +170,7 @@ pub(in crate::tools::dispatch) async fn doctor(
         hints,
         meta: None,
     };
-    if let Some(raw) = path.as_deref() {
-        if let Ok(root) = PathBuf::from(raw).canonicalize() {
-            result.meta = Some(service.tool_meta(&root).await);
-        }
-    }
+    result.meta = Some(service.tool_meta(&root).await);
 
     Ok(CallToolResult::success(vec![Content::text(
         serde_json::to_string_pretty(&result).unwrap_or_default(),

@@ -37,20 +37,12 @@ impl CommandContext {
     }
 
     pub async fn resolve_project(&self, provided: Option<PathBuf>) -> Result<ProjectContext> {
-        let root = if let Some(path) = provided {
-            path
-        } else {
-            env::current_dir().context("Failed to determine current directory")?
-        };
+        let root = resolve_project_root(provided)?;
 
         if let Some(cached) = self.resolved.lock().await.as_ref() {
             if cached.root == root {
                 return Ok(cached.clone());
             }
-        }
-
-        if !root.exists() {
-            anyhow::bail!("Project path does not exist: {}", root.display());
         }
 
         let (file_config, config_path, mut hints) = self.load_file_config(&root).await?;
@@ -237,6 +229,49 @@ pub fn graph_nodes_path_for_model(project: &Path, model_id: &str) -> PathBuf {
         .join("indexes")
         .join(model_dir)
         .join("graph_nodes.json")
+}
+
+fn resolve_project_root(provided: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = provided {
+        return canonicalize_root(path);
+    }
+
+    if let Some(path) = env_root_override() {
+        return canonicalize_root(path).with_context(|| {
+            "Project path from CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT is invalid"
+        });
+    }
+
+    let cwd = env::current_dir().context("Failed to determine current directory")?;
+    let candidate = find_git_root(&cwd).unwrap_or(cwd);
+    canonicalize_root(candidate)
+}
+
+fn env_root_override() -> Option<PathBuf> {
+    for key in ["CONTEXT_FINDER_ROOT", "CONTEXT_FINDER_PROJECT_ROOT"] {
+        if let Ok(value) = env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(PathBuf::from(trimmed));
+            }
+        }
+    }
+    None
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|candidate| candidate.join(".git").exists())
+        .map(PathBuf::from)
+}
+
+fn canonicalize_root(path: PathBuf) -> Result<PathBuf> {
+    if !path.exists() {
+        anyhow::bail!("Project path does not exist: {}", path.display());
+    }
+    path.canonicalize()
+        .with_context(|| format!("Failed to canonicalize {}", path.display()))
 }
 
 pub fn ensure_index_exists(path: &Path) -> Result<()> {

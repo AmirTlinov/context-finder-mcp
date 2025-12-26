@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FileSliceRequest {
     /// Project directory path
-    #[schemars(description = "Project directory path")]
+    #[schemars(
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+    )]
     pub path: Option<String>,
 
     /// File path (relative to project root)

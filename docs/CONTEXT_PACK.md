@@ -77,6 +77,19 @@ watermark and index freshness. It is optional and may be omitted if unavailable.
 
 - Canonical schema: [contracts/command/v1/index_state.schema.json](../contracts/command/v1/index_state.schema.json)
 
+## Auto-index policy (MCP tool)
+
+The MCP tool `context_pack` can auto-build or refresh the semantic index:
+
+- `auto_index` (default: true)
+- `auto_index_budget_ms` (default: 3000, clamped 100..120000)
+
+When enabled, missing or stale indexes trigger a best-effort reindex before search. The outcome
+is reported under `meta.index_state.reindex`. Set `auto_index=false` to fail fast when no index
+is available.
+
+For the Command API, use `options.stale_policy` and `options.max_reindex_ms` instead.
+
 ## Examples
 
 ### 1) Identifier query

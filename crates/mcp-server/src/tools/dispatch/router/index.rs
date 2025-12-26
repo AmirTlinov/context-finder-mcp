@@ -3,28 +3,23 @@ use super::super::{
     IndexRequest, IndexResult, McpError, QueryKind,
 };
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 /// Index a project
 pub(in crate::tools::dispatch) async fn index(
     service: &ContextFinderService,
     request: IndexRequest,
 ) -> Result<CallToolResult, McpError> {
-    let path = PathBuf::from(request.path.unwrap_or_else(|| ".".to_string()));
     let force = request.force.unwrap_or(false);
     let full = request.full.unwrap_or(false) || force;
     let experts = request.experts.unwrap_or(false);
     let extra_models = request.models.unwrap_or_default();
 
-    let canonical = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
-            ))]));
+    let canonical = match service.resolve_root(request.path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => {
+            return Ok(CallToolResult::error(vec![Content::text(message)]));
         }
     };
-    ContextFinderService::touch_daemon_best_effort(&canonical);
 
     let start = std::time::Instant::now();
 

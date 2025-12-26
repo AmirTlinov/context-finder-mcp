@@ -12,6 +12,7 @@ use super::ContextFinderService;
 
 const VERSION: u32 = 1;
 const DEFAULT_MAX_CHARS: usize = 20_000;
+const MIN_MAX_CHARS: usize = 1_000;
 const MAX_MAX_CHARS: usize = 500_000;
 const DEFAULT_MAP_DEPTH: usize = 2;
 const DEFAULT_MAP_LIMIT: usize = 20;
@@ -164,7 +165,7 @@ fn add_docs_best_effort(
 
 fn trim_to_budget(result: &mut RepoOnboardingPackResult) -> anyhow::Result<()> {
     finalize_repo_onboarding_budget(result)?;
-    while result.budget.used_chars > result.budget.max_chars && !result.next_actions.is_empty() {
+    while result.budget.used_chars > result.budget.max_chars && result.next_actions.len() > 1 {
         result.next_actions.pop();
         result.budget.truncated = true;
         result.budget.truncation = Some(RepoOnboardingPackTruncation::MaxChars);
@@ -176,11 +177,17 @@ fn trim_to_budget(result: &mut RepoOnboardingPackResult) -> anyhow::Result<()> {
         result.budget.truncation = Some(RepoOnboardingPackTruncation::MaxChars);
         let _ = finalize_repo_onboarding_budget(result);
     }
+    while result.budget.used_chars > result.budget.max_chars && !result.map.directories.is_empty() {
+        result.map.directories.pop();
+        result.map.truncated = true;
+        result.budget.truncated = true;
+        result.budget.truncation = Some(RepoOnboardingPackTruncation::MaxChars);
+        let _ = finalize_repo_onboarding_budget(result);
+    }
     if result.budget.used_chars > result.budget.max_chars {
-        anyhow::bail!(
-            "max_chars={} is too small for the onboarding pack payload",
-            result.budget.max_chars
-        );
+        result.budget.truncated = true;
+        result.budget.truncation = Some(RepoOnboardingPackTruncation::MaxChars);
+        let _ = finalize_repo_onboarding_budget(result);
     }
     Ok(())
 }
@@ -193,7 +200,7 @@ pub(super) async fn compute_repo_onboarding_pack_result(
     let max_chars = request
         .max_chars
         .unwrap_or(DEFAULT_MAX_CHARS)
-        .clamp(1, MAX_MAX_CHARS);
+        .clamp(MIN_MAX_CHARS, MAX_MAX_CHARS);
     let map_depth = request.map_depth.unwrap_or(DEFAULT_MAP_DEPTH).clamp(1, 4);
     let map_limit = request.map_limit.unwrap_or(DEFAULT_MAP_LIMIT).clamp(1, 200);
     let docs_limit = request

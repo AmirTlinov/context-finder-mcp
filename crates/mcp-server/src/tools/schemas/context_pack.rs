@@ -8,7 +8,9 @@ pub struct ContextPackRequest {
     pub query: String,
 
     /// Project directory path
-    #[schemars(description = "Project directory path")]
+    #[schemars(
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+    )]
     pub path: Option<String>,
 
     /// Maximum primary results (default: 10)
@@ -45,11 +47,15 @@ pub struct ContextPackRequest {
     #[schemars(description = "Programming language for graph analysis")]
     pub language: Option<String>,
 
-    /// Auto-index the project if missing (opt-in)
+    /// Automatically build or refresh the semantic index before executing (default: true)
     #[schemars(
-        description = "If true, automatically index the project (single-model) when missing before building the context pack"
+        description = "Automatically build or refresh the semantic index before executing (default: true)."
     )]
     pub auto_index: Option<bool>,
+
+    /// Auto-index time budget in milliseconds (default: 3000)
+    #[schemars(description = "Auto-index time budget in milliseconds (default: 3000).")]
+    pub auto_index_budget_ms: Option<u64>,
 
     /// Include debug output (adds a second MCP content block with debug JSON)
     #[schemars(description = "Include debug output as an additional response block")]

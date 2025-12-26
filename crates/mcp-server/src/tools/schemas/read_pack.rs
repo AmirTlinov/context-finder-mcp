@@ -19,7 +19,9 @@ pub enum ReadPackIntent {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadPackRequest {
     /// Project directory path
-    #[schemars(description = "Project directory path")]
+    #[schemars(
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+    )]
     pub path: Option<String>,
 
     /// What kind of pack to build (default: auto)
@@ -81,6 +83,18 @@ pub struct ReadPackRequest {
     /// Include markdown docs when intent=query (default: true)
     #[schemars(description = "Whether to include docs in primary/related results")]
     pub include_docs: Option<bool>,
+
+    /// Automatically build or refresh the semantic index before intent=query (default: true)
+    #[schemars(
+        description = "Automatically build or refresh the semantic index before intent=query (default: true)."
+    )]
+    pub auto_index: Option<bool>,
+
+    /// Auto-index time budget in milliseconds for intent=query (default: 3000)
+    #[schemars(
+        description = "Auto-index time budget in milliseconds for intent=query (default: 3000)."
+    )]
+    pub auto_index_budget_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]

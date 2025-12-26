@@ -7,7 +7,9 @@ use crate::runtime_env;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DoctorRequest {
     /// Project directory path (optional)
-    #[schemars(description = "Project directory path (optional)")]
+    #[schemars(
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+    )]
     pub path: Option<String>,
 }
 

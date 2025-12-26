@@ -106,9 +106,6 @@ impl Chunker {
 
     /// Post-process chunks (filtering, merging, etc.)
     fn post_process_chunks(&self, mut chunks: Vec<CodeChunk>) -> Vec<CodeChunk> {
-        let min_tokens = self.config.min_chunk_tokens;
-        chunks.retain(|chunk| chunk.estimated_tokens() >= min_tokens);
-
         chunks.sort_by(|a, b| {
             a.file_path
                 .cmp(&b.file_path)
@@ -127,6 +124,11 @@ impl Chunker {
         chunks = self.merge_small_adjacent_chunks(chunks);
         chunks = Self::drop_shadowed_untyped_chunks(chunks);
         chunks = self.apply_overlap(chunks);
+
+        let min_tokens = self.config.min_chunk_tokens;
+        if min_tokens > 0 {
+            chunks.retain(|chunk| chunk.estimated_tokens() >= min_tokens);
+        }
 
         chunks
     }
@@ -218,17 +220,20 @@ impl Chunker {
                 contextual_imports::extract_imports_from_lines(language, &prefix_lines, 20);
             if !file_imports.is_empty() {
                 for chunk in &mut chunks[start..end] {
-                    if chunk.metadata.context_imports.is_empty() {
-                        let relevant = contextual_imports::filter_relevant_imports(
-                            language,
-                            &file_imports,
-                            &chunk.content,
-                            per_chunk_limit,
-                        );
-                        if !relevant.is_empty() {
-                            chunk.metadata.context_imports = relevant;
-                            self.normalize_chunk_metadata(chunk);
-                        }
+                    let remaining =
+                        per_chunk_limit.saturating_sub(chunk.metadata.context_imports.len());
+                    if remaining == 0 {
+                        continue;
+                    }
+                    let relevant = contextual_imports::filter_relevant_imports(
+                        language,
+                        &file_imports,
+                        &chunk.content,
+                        remaining,
+                    );
+                    if !relevant.is_empty() {
+                        chunk.metadata.context_imports.extend(relevant);
+                        self.normalize_chunk_metadata(chunk);
                     }
                 }
             }
@@ -682,6 +687,94 @@ impl Point {
         assert_eq!(out[0].end_line, 2);
         assert_eq!(out[0].content, "a\nb");
         assert!(out[0].metadata.symbol_name.is_none());
+    }
+
+    #[test]
+    fn post_process_merges_before_min_tokens_filter() {
+        let config = ChunkerConfig {
+            min_chunk_tokens: 10,
+            target_chunk_tokens: 20,
+            max_chunk_tokens: 1_000,
+            overlap: OverlapStrategy::None,
+            include_imports: false,
+            include_parent_context: false,
+            include_documentation: false,
+            max_imports_per_chunk: 0,
+            supported_languages: Vec::new(),
+            strategy: crate::config::ChunkingStrategy::LineCount,
+        };
+        let chunker = Chunker::new(config);
+
+        let content_a = "a".repeat(36);
+        let content_b = "b".repeat(36);
+
+        let mk_chunk = |start: usize, end: usize, content: &str| {
+            CodeChunk::new(
+                "test.rs".to_string(),
+                start,
+                end,
+                content.to_string(),
+                ChunkMetadata::default()
+                    .estimated_tokens(ChunkMetadata::estimate_tokens_from_content(content)),
+            )
+        };
+
+        let chunks = vec![mk_chunk(1, 1, &content_a), mk_chunk(2, 2, &content_b)];
+        let out = chunker.post_process_chunks(chunks);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].start_line, 1);
+        assert_eq!(out[0].end_line, 2);
+        assert!(out[0].estimated_tokens() >= 10);
+        assert!(out[0].content.contains(&content_a));
+        assert!(out[0].content.contains(&content_b));
+    }
+
+    #[test]
+    fn post_process_infers_imports_before_filtering_small_chunks() {
+        let config = ChunkerConfig {
+            min_chunk_tokens: 10,
+            target_chunk_tokens: 50,
+            max_chunk_tokens: 1_000,
+            overlap: OverlapStrategy::Contextual,
+            include_imports: true,
+            include_parent_context: false,
+            include_documentation: false,
+            max_imports_per_chunk: 10,
+            supported_languages: Vec::new(),
+            strategy: crate::config::ChunkingStrategy::LineCount,
+        };
+        let chunker = Chunker::new(config);
+
+        let import_content = "use std::collections::HashMap;";
+        let import_chunk = CodeChunk::new(
+            "test.rs".to_string(),
+            1,
+            1,
+            import_content.to_string(),
+            ChunkMetadata::default()
+                .estimated_tokens(ChunkMetadata::estimate_tokens_from_content(import_content)),
+        );
+        let func_content = "pub fn foo() -> HashMap<i32, i32> { HashMap::new() }";
+        let func_chunk = CodeChunk::new(
+            "test.rs".to_string(),
+            2,
+            4,
+            func_content.to_string(),
+            ChunkMetadata::default()
+                .estimated_tokens(ChunkMetadata::estimate_tokens_from_content(func_content)),
+        );
+
+        let out = chunker.post_process_chunks(vec![import_chunk, func_chunk]);
+
+        assert_eq!(out.len(), 1);
+        let chunk = &out[0];
+        assert!(chunk.content.contains("pub fn foo"));
+        assert!(chunk
+            .metadata
+            .context_imports
+            .iter()
+            .any(|imp| imp.contains("std::collections::HashMap")));
     }
 
     #[test]

@@ -1,13 +1,12 @@
 use super::super::{
-    CallToolResult, Content, ContextFinderService, ImpactRequest, ImpactResult, McpError,
-    SymbolLocation, UsageInfo,
+    AutoIndexPolicy, CallToolResult, Content, ContextFinderService, ImpactRequest, ImpactResult,
+    McpError, SymbolLocation, UsageInfo,
 };
 use crate::tools::util::path_has_extension_ignore_ascii_case;
 use context_code_chunker::CodeChunk;
 use context_graph::CodeGraph;
 use petgraph::graph::NodeIndex;
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 const MAX_DIRECT: usize = 200;
 const MAX_TRANSITIVE: usize = 200;
@@ -160,18 +159,16 @@ pub(in crate::tools::dispatch) async fn impact(
     service: &ContextFinderService,
     request: ImpactRequest,
 ) -> Result<CallToolResult, McpError> {
-    let path = PathBuf::from(request.path.unwrap_or_else(|| ".".to_string()));
     let depth = request.depth.unwrap_or(2).clamp(1, 3);
-    let root = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
-            ))]));
+    let root = match service.resolve_root(request.path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => {
+            return Ok(CallToolResult::error(vec![Content::text(message)]));
         }
     };
 
-    let mut engine = match service.lock_engine(&root).await {
+    let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);
+    let (mut engine, meta) = match service.prepare_semantic_engine(&root, policy).await {
         Ok(engine) => engine,
         Err(e) => {
             return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -258,6 +255,6 @@ pub(in crate::tools::dispatch) async fn impact(
     };
 
     drop(engine);
-    result.meta = Some(service.tool_meta(&root).await);
+    result.meta = Some(meta);
     Ok(success_payload(&result))
 }

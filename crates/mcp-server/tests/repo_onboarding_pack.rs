@@ -144,3 +144,75 @@ async fn repo_onboarding_pack_returns_map_docs_and_next_actions() -> Result<()> 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
 }
+
+#[tokio::test]
+async fn repo_onboarding_pack_clamps_tiny_budget_and_keeps_next_actions() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("src").join("main.rs"), "fn main() {}\n").context("write main.rs")?;
+    std::fs::write(root.join("README.md"), "# Hello\n").context("write README.md")?;
+
+    let args = serde_json::json!({
+        "path": root.to_string_lossy(),
+        "map_depth": 2,
+        "docs_limit": 3,
+        "doc_max_lines": 10,
+        "doc_max_chars": 200,
+        "max_chars": 5,
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "repo_onboarding_pack".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling repo_onboarding_pack")??;
+
+    assert_ne!(
+        result.is_error,
+        Some(true),
+        "repo_onboarding_pack returned error"
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("repo_onboarding_pack did not return text content")?;
+    let json: Value =
+        serde_json::from_str(text).context("repo_onboarding_pack output is not valid JSON")?;
+
+    let budget = json.get("budget").context("missing budget")?;
+    let max_chars = budget
+        .get("max_chars")
+        .and_then(Value::as_u64)
+        .context("budget.max_chars missing")?;
+    assert!(max_chars >= 1000, "expected min budget clamp");
+
+    let next_actions = json
+        .get("next_actions")
+        .and_then(Value::as_array)
+        .context("missing next_actions array")?;
+    assert!(!next_actions.is_empty(), "expected next_actions");
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}

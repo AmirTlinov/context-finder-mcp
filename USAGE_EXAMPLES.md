@@ -357,6 +357,7 @@ Batch `version: 2` lets item inputs reference previous item outputs via JSON Poi
 Notes:
 
 - `path` is canonical; `project` is accepted as an alias for consistency with the Command API.
+- `action/payload` are accepted as aliases for `tool/input` (canonical) to mirror Command API batch.
 - `$ref` must point to an earlier item’s `data` (JSON Pointer like `#/items/<id>/data/...`).
 - Batch `version: 2` requires unique `items[].id`.
 - `$ref` to a failed item is rejected; wrap with `$default` when you want a fallback value.

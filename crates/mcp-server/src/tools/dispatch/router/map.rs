@@ -2,27 +2,19 @@ use super::super::{
     compute_map_result, decode_map_cursor, CallToolResult, Content, ContextFinderService,
     MapRequest, McpError, CURSOR_VERSION,
 };
-use std::path::PathBuf;
 
 /// Get project structure overview
 pub(in crate::tools::dispatch) async fn map(
     service: &ContextFinderService,
     request: MapRequest,
 ) -> Result<CallToolResult, McpError> {
-    let path = PathBuf::from(request.path.unwrap_or_else(|| ".".to_string()));
     let depth = request.depth.unwrap_or(2).clamp(1, 4);
     let limit = request.limit.unwrap_or(10);
 
-    let root = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
-            ))]));
-        }
+    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+        Ok(value) => value,
+        Err(message) => return Ok(CallToolResult::error(vec![Content::text(message)])),
     };
-    ContextFinderService::touch_daemon_best_effort(&root);
-    let root_display = root.to_string_lossy().to_string();
 
     let offset = if let Some(cursor) = request
         .cursor

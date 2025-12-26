@@ -2,24 +2,16 @@ use super::super::{
     compute_repo_onboarding_pack_result, CallToolResult, Content, ContextFinderService, McpError,
     RepoOnboardingPackRequest,
 };
-use std::path::PathBuf;
 
 /// Repo onboarding pack (map + key docs slices + next actions).
 pub(in crate::tools::dispatch) async fn repo_onboarding_pack(
     service: &ContextFinderService,
     request: RepoOnboardingPackRequest,
 ) -> Result<CallToolResult, McpError> {
-    let root_path = PathBuf::from(request.path.as_deref().unwrap_or("."));
-    let root = match root_path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
-            ))]));
-        }
+    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+        Ok(value) => value,
+        Err(message) => return Ok(CallToolResult::error(vec![Content::text(message)])),
     };
-    ContextFinderService::touch_daemon_best_effort(&root);
-    let root_display = root.to_string_lossy().to_string();
     let mut result = match compute_repo_onboarding_pack_result(&root, &root_display, &request).await
     {
         Ok(result) => result,

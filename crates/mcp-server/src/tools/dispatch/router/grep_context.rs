@@ -3,20 +3,9 @@ use super::super::{
     GrepContextComputeOptions, GrepContextCursorV1, GrepContextRequest, McpError, CURSOR_VERSION,
 };
 use regex::RegexBuilder;
-use std::path::PathBuf;
 
 fn tool_error(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message.into())])
-}
-
-fn canonicalize_root(raw_path: Option<&str>) -> Result<(PathBuf, String), String> {
-    let root_path = PathBuf::from(raw_path.unwrap_or("."));
-    let root = root_path
-        .canonicalize()
-        .map_err(|e| format!("Invalid path: {e}"))?;
-    ContextFinderService::touch_daemon_best_effort(&root);
-    let root_display = root.to_string_lossy().to_string();
-    Ok((root, root_display))
 }
 
 fn build_regex(pattern: &str, case_sensitive: bool) -> Result<regex::Regex, String> {
@@ -88,9 +77,9 @@ pub(in crate::tools::dispatch) async fn grep_context(
     const DEFAULT_CONTEXT: usize = 20;
     const MAX_CONTEXT: usize = 5_000;
 
-    let (root, root_display) = match canonicalize_root(request.path.as_deref()) {
-        Ok(v) => v,
-        Err(msg) => return Ok(tool_error(msg)),
+    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+        Ok(value) => value,
+        Err(message) => return Ok(tool_error(message)),
     };
 
     request.pattern = request.pattern.trim().to_string();

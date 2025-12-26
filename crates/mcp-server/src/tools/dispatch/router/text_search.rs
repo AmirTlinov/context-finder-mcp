@@ -327,12 +327,10 @@ pub(in crate::tools::dispatch) async fn text_search(
     service: &ContextFinderService,
     request: TextSearchRequest,
 ) -> Result<CallToolResult, McpError> {
-    let path = PathBuf::from(request.path.as_deref().unwrap_or("."));
-    let root = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => return Ok(call_error(format!("Invalid path: {e}"))),
+    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+        Ok(value) => value,
+        Err(message) => return Ok(call_error(message)),
     };
-    ContextFinderService::touch_daemon_best_effort(&root);
 
     let pattern = request.pattern.trim();
     if pattern.is_empty() {
@@ -343,7 +341,6 @@ pub(in crate::tools::dispatch) async fn text_search(
     let max_results = request.max_results.unwrap_or(50).clamp(1, 1000);
     let case_sensitive = request.case_sensitive.unwrap_or(true);
     let whole_word = request.whole_word.unwrap_or(false);
-    let root_display = root.to_string_lossy().to_string();
     let normalized_file_pattern = file_pattern.map(str::to_string);
     let settings = TextSearchSettings {
         pattern,

@@ -2,7 +2,6 @@ use super::super::{
     compute_list_files_result, decode_list_files_cursor, CallToolResult, Content,
     ContextFinderService, ListFilesRequest, McpError, CURSOR_VERSION,
 };
-use std::path::PathBuf;
 
 /// List project files within the project root (safe file enumeration for agents).
 pub(in crate::tools::dispatch) async fn list_files(
@@ -14,17 +13,10 @@ pub(in crate::tools::dispatch) async fn list_files(
     const DEFAULT_MAX_CHARS: usize = 20_000;
     const MAX_MAX_CHARS: usize = 500_000;
 
-    let root_path = PathBuf::from(request.path.unwrap_or_else(|| ".".to_string()));
-    let root = match root_path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
-            ))]));
-        }
+    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+        Ok(value) => value,
+        Err(message) => return Ok(CallToolResult::error(vec![Content::text(message)])),
     };
-    ContextFinderService::touch_daemon_best_effort(&root);
-    let root_display = root.to_string_lossy().to_string();
 
     let limit = request.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let max_chars = request

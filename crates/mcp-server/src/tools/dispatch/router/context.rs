@@ -1,15 +1,13 @@
 use super::super::{
-    CallToolResult, Content, ContextFinderService, ContextHit, ContextRequest, ContextResult,
-    McpError, RelatedCode,
+    AutoIndexPolicy, CallToolResult, Content, ContextFinderService, ContextHit, ContextRequest,
+    ContextResult, McpError, RelatedCode,
 };
-use std::path::PathBuf;
 
 /// Search with graph context
 pub(in crate::tools::dispatch) async fn context(
     service: &ContextFinderService,
     request: ContextRequest,
 ) -> Result<CallToolResult, McpError> {
-    let path = PathBuf::from(request.path.unwrap_or_else(|| ".".to_string()));
     let limit = request.limit.unwrap_or(5).clamp(1, 20);
     let strategy = match request.strategy.as_deref() {
         Some("direct") => context_graph::AssemblyStrategy::Direct,
@@ -23,25 +21,24 @@ pub(in crate::tools::dispatch) async fn context(
         )]));
     }
 
-    let root = match path.canonicalize() {
-        Ok(p) => p,
+    let root = match service.resolve_root(request.path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => {
+            return Ok(CallToolResult::error(vec![Content::text(message)]));
+        }
+    };
+
+    let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);
+    let (mut engine, meta) = match service.prepare_semantic_engine(&root, policy).await {
+        Ok(engine) => engine,
         Err(e) => {
             return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
+                "Error: {e}"
             ))]));
         }
     };
 
     let enriched = {
-        let mut engine = match service.lock_engine(&root).await {
-            Ok(engine) => engine,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Error: {e}"
-                ))]));
-            }
-        };
-
         let language = request.language.as_deref().map_or_else(
             || {
                 ContextFinderService::detect_language(
@@ -71,6 +68,8 @@ pub(in crate::tools::dispatch) async fn context(
             }
         }
     };
+
+    drop(engine);
 
     let mut related_count = 0;
     let results: Vec<ContextHit> = enriched
@@ -104,12 +103,11 @@ pub(in crate::tools::dispatch) async fn context(
         })
         .collect();
 
-    let mut result = ContextResult {
+    let result = ContextResult {
         results,
         related_count,
-        meta: None,
+        meta: Some(meta),
     };
-    result.meta = Some(service.tool_meta(&root).await);
 
     Ok(CallToolResult::success(vec![Content::text(
         serde_json::to_string_pretty(&result).unwrap_or_default(),

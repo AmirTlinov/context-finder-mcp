@@ -110,7 +110,7 @@ Notes:
 - `$ref` is recognized only when the object contains exactly `$ref` (+ optional `$default`).
 - `$ref` pointers are resolved against an evaluation context keyed by item `id` (so `#/items/<id>/...`, not `#/items/<index>/...`).
 - `$ref` to a failed item’s `data` is rejected (use `$default` when you want a fallback).
-- The MCP server `batch` tool uses the same `$ref` wrapper resolver in **batch v2** (field names differ: `action/payload` vs `tool/input`).
+- The MCP server `batch` tool uses the same `$ref` wrapper resolver in **batch v2** (canonical fields `tool/input`; `action/payload` are accepted as aliases to mirror Command API).
 
 ### Request options (cross-cutting)
 

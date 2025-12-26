@@ -54,7 +54,8 @@ use context_graph::{
 };
 use context_indexer::{
     assess_staleness, compute_project_watermark, read_index_watermark, FileScanner, IndexSnapshot,
-    IndexState, PersistedIndexWatermark, ToolMeta, INDEX_STATE_SCHEMA_VERSION,
+    IndexState, IndexerError, PersistedIndexWatermark, ReindexAttempt, ReindexResult, ToolMeta,
+    INDEX_STATE_SCHEMA_VERSION,
 };
 use context_search::{
     ContextPackBudget, ContextPackItem, ContextPackOutput, MultiModelContextSearch,
@@ -70,9 +71,10 @@ use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, S
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::env;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::Mutex;
 
 /// Context Finder MCP Service
@@ -93,6 +95,38 @@ impl ContextFinderService {
             tool_router: Self::tool_router(),
             state: Arc::new(ServiceState::new()),
         }
+    }
+
+    pub(super) async fn resolve_root(
+        &self,
+        raw_path: Option<&str>,
+    ) -> Result<(PathBuf, String), String> {
+        let (root, root_display) = self.state.resolve_root(raw_path).await?;
+        Self::touch_daemon_best_effort(&root);
+        Ok((root, root_display))
+    }
+}
+
+const DEFAULT_AUTO_INDEX_BUDGET_MS: u64 = 3_000;
+const MIN_AUTO_INDEX_BUDGET_MS: u64 = 100;
+const MAX_AUTO_INDEX_BUDGET_MS: u64 = 120_000;
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::tools::dispatch) struct AutoIndexPolicy {
+    enabled: bool,
+    budget_ms: u64,
+}
+
+impl AutoIndexPolicy {
+    pub(in crate::tools::dispatch) fn from_request(
+        auto_index: Option<bool>,
+        auto_index_budget_ms: Option<u64>,
+    ) -> Self {
+        let enabled = auto_index.unwrap_or(true);
+        let budget_ms = auto_index_budget_ms
+            .unwrap_or(DEFAULT_AUTO_INDEX_BUDGET_MS)
+            .clamp(MIN_AUTO_INDEX_BUDGET_MS, MAX_AUTO_INDEX_BUDGET_MS);
+        Self { enabled, budget_ms }
     }
 }
 
@@ -160,6 +194,37 @@ impl ContextFinderService {
         }
     }
 
+    async fn prepare_semantic_engine(
+        &self,
+        root: &Path,
+        policy: AutoIndexPolicy,
+    ) -> Result<(EngineLock, ToolMeta)> {
+        let mut index_state = gather_index_state(root, &self.profile).await?;
+        let mut attempt: Option<ReindexAttempt> = None;
+
+        if policy.enabled && (index_state.stale || !index_state.index.exists) {
+            let reindex = self.attempt_reindex(root, policy.budget_ms).await;
+            attempt = Some(reindex.clone());
+            if let Ok(refreshed) = gather_index_state(root, &self.profile).await {
+                index_state = refreshed;
+            }
+            index_state.reindex = Some(reindex);
+        }
+
+        if !index_state.index.exists {
+            return Err(anyhow::anyhow!(missing_index_message(
+                &index_state,
+                attempt.as_ref()
+            )));
+        }
+
+        let engine = self.lock_engine(root).await?;
+        let meta = ToolMeta {
+            index_state: Some(index_state),
+        };
+        Ok((engine, meta))
+    }
+
     async fn lock_engine(&self, root: &Path) -> Result<EngineLock> {
         Self::touch_daemon_best_effort(root);
 
@@ -199,18 +264,50 @@ impl ContextFinderService {
         });
     }
 
-    async fn auto_index_project(&self, root: &Path) -> Result<()> {
+    async fn attempt_reindex(&self, root: &Path, budget_ms: u64) -> ReindexAttempt {
+        let start = Instant::now();
+        let mut attempt = ReindexAttempt {
+            attempted: true,
+            performed: false,
+            budget_ms: Some(budget_ms),
+            duration_ms: None,
+            result: None,
+            error: None,
+        };
+
         let templates = self.profile.embedding().clone();
         let indexer =
-            context_indexer::ProjectIndexer::new_with_embedding_templates(root, templates).await?;
-        match indexer.index().await {
-            Ok(_) => Ok(()),
+            match context_indexer::ProjectIndexer::new_with_embedding_templates(root, templates)
+                .await
+            {
+                Ok(indexer) => indexer,
+                Err(err) => {
+                    attempt.duration_ms = Some(start.elapsed().as_millis() as u64);
+                    attempt.result = Some(ReindexResult::Failed);
+                    attempt.error = Some(err.to_string());
+                    return attempt;
+                }
+            };
+
+        match indexer
+            .index_with_budget(Duration::from_millis(budget_ms))
+            .await
+        {
+            Ok(_) => {
+                attempt.performed = true;
+                attempt.result = Some(ReindexResult::Ok);
+            }
+            Err(IndexerError::BudgetExceeded) => {
+                attempt.result = Some(ReindexResult::BudgetExceeded);
+            }
             Err(err) => {
-                log::warn!("Auto-index failed, retrying full: {err:#}");
-                indexer.index_full().await?;
-                Ok(())
+                attempt.result = Some(ReindexResult::Failed);
+                attempt.error = Some(err.to_string());
             }
         }
+
+        attempt.duration_ms = Some(start.elapsed().as_millis() as u64);
+        attempt
     }
 }
 
@@ -311,6 +408,44 @@ async fn gather_index_state(root: &Path, profile: &SearchProfile) -> Result<Inde
     })
 }
 
+fn missing_index_message(state: &IndexState, attempt: Option<&ReindexAttempt>) -> String {
+    let path = state
+        .index
+        .path
+        .as_deref()
+        .unwrap_or("<unknown-index-path>");
+    let mut message = format!("Index not found at {path}. Run 'context-finder index' first.");
+    if let Some(attempt) = attempt {
+        message.push_str(" Auto-index attempt: ");
+        message.push_str(&format_reindex_attempt(attempt));
+        message.push('.');
+    }
+    message
+}
+
+fn format_reindex_attempt(attempt: &ReindexAttempt) -> String {
+    let budget = attempt
+        .budget_ms
+        .map(|v| format!("{v}ms"))
+        .unwrap_or_else(|| "unknown".to_string());
+    let duration = attempt
+        .duration_ms
+        .map(|v| format!("{v}ms"))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    match attempt.result {
+        Some(ReindexResult::Ok) => format!("ok in {duration} (budget {budget})"),
+        Some(ReindexResult::BudgetExceeded) => {
+            format!("budget exceeded (ran {duration}, budget {budget})")
+        }
+        Some(ReindexResult::Failed) => format!(
+            "failed in {duration} (budget {budget}): {}",
+            attempt.error.as_deref().unwrap_or("unknown error")
+        ),
+        Some(ReindexResult::Skipped) | None => "skipped".to_string(),
+    }
+}
+
 fn semantic_model_roster(profile: &SearchProfile) -> Vec<String> {
     let experts = profile.experts();
     let mut out = Vec::new();
@@ -388,12 +523,14 @@ type EngineHandle = Arc<Mutex<EngineSlot>>;
 
 struct ServiceState {
     engines: Mutex<EngineCache>,
+    session: Mutex<SessionDefaults>,
 }
 
 impl ServiceState {
     fn new() -> Self {
         Self {
             engines: Mutex::new(EngineCache::new(ENGINE_CACHE_CAPACITY)),
+            session: Mutex::new(SessionDefaults::default()),
         }
     }
 
@@ -401,6 +538,85 @@ impl ServiceState {
         let mut cache = self.engines.lock().await;
         cache.get_or_insert(root)
     }
+
+    async fn resolve_root(&self, raw_path: Option<&str>) -> Result<(PathBuf, String), String> {
+        if let Some(raw) = trimmed_non_empty(raw_path) {
+            let root = canonicalize_root(raw).map_err(|err| format!("Invalid path: {err}"))?;
+            let root_display = root.to_string_lossy().to_string();
+            let mut session = self.session.lock().await;
+            session.root = Some(root.clone());
+            session.root_display = Some(root_display.clone());
+            return Ok((root, root_display));
+        }
+
+        if let Some((root, root_display)) = self.session.lock().await.clone_root() {
+            return Ok((root, root_display));
+        }
+
+        if let Some((var, value)) = env_root_override() {
+            let root = canonicalize_root(&value)
+                .map_err(|err| format!("Invalid path from {var}: {err}"))?;
+            let root_display = root.to_string_lossy().to_string();
+            let mut session = self.session.lock().await;
+            session.root = Some(root.clone());
+            session.root_display = Some(root_display.clone());
+            return Ok((root, root_display));
+        }
+
+        let cwd = env::current_dir()
+            .map_err(|err| format!("Failed to determine current directory: {err}"))?;
+        let candidate = find_git_root(&cwd).unwrap_or(cwd);
+        let root =
+            canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
+        let root_display = root.to_string_lossy().to_string();
+        let mut session = self.session.lock().await;
+        session.root = Some(root.clone());
+        session.root_display = Some(root_display.clone());
+        Ok((root, root_display))
+    }
+}
+
+#[derive(Default)]
+struct SessionDefaults {
+    root: Option<PathBuf>,
+    root_display: Option<String>,
+}
+
+impl SessionDefaults {
+    fn clone_root(&self) -> Option<(PathBuf, String)> {
+        Some((self.root.clone()?, self.root_display.clone()?))
+    }
+}
+
+fn trimmed_non_empty(input: Option<&str>) -> Option<&str> {
+    input.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn env_root_override() -> Option<(String, String)> {
+    for key in ["CONTEXT_FINDER_ROOT", "CONTEXT_FINDER_PROJECT_ROOT"] {
+        if let Ok(value) = env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some((key.to_string(), trimmed.to_string()));
+            }
+        }
+    }
+    None
+}
+
+fn canonicalize_root(raw: &str) -> Result<PathBuf, String> {
+    canonicalize_root_path(Path::new(raw))
+}
+
+fn canonicalize_root_path(path: &Path) -> Result<PathBuf, String> {
+    path.canonicalize().map_err(|err| err.to_string())
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|candidate| candidate.join(".git").exists())
+        .map(PathBuf::from)
 }
 
 struct EngineCache {

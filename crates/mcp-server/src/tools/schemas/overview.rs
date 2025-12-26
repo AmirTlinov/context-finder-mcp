@@ -5,12 +5,24 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct OverviewRequest {
     /// Project directory path
-    #[schemars(description = "Project directory path")]
+    #[schemars(
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+    )]
     pub path: Option<String>,
 
     /// Programming language
     #[schemars(description = "Programming language: rust, python, javascript, typescript")]
     pub language: Option<String>,
+
+    /// Automatically build or refresh the semantic index before executing (default: true)
+    #[schemars(
+        description = "Automatically build or refresh the semantic index before executing (default: true)."
+    )]
+    pub auto_index: Option<bool>,
+
+    /// Auto-index time budget in milliseconds (default: 3000)
+    #[schemars(description = "Auto-index time budget in milliseconds (default: 3000).")]
+    pub auto_index_budget_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]

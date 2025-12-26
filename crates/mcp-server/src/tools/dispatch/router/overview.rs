@@ -1,12 +1,12 @@
 use super::super::{
-    CallToolResult, Content, ContextFinderService, GraphStats, KeyTypeInfo, LayerInfo, McpError,
-    OverviewRequest, OverviewResult, ProjectInfo,
+    AutoIndexPolicy, CallToolResult, Content, ContextFinderService, GraphStats, KeyTypeInfo,
+    LayerInfo, McpError, OverviewRequest, OverviewResult, ProjectInfo,
 };
 use crate::tools::util::path_has_extension_ignore_ascii_case;
 use context_code_chunker::CodeChunk;
 use context_graph::CodeGraph;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const MAX_ENTRY_POINTS: usize = 10;
 const MAX_KEY_TYPES: usize = 10;
@@ -127,18 +127,15 @@ pub(in crate::tools::dispatch) async fn overview(
     service: &ContextFinderService,
     request: OverviewRequest,
 ) -> Result<CallToolResult, McpError> {
-    let path = PathBuf::from(request.path.unwrap_or_else(|| ".".to_string()));
-
-    let root = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Invalid path: {e}"
-            ))]));
+    let root = match service.resolve_root(request.path.as_deref()).await {
+        Ok((root, _)) => root,
+        Err(message) => {
+            return Ok(CallToolResult::error(vec![Content::text(message)]));
         }
     };
 
-    let mut engine = match service.lock_engine(&root).await {
+    let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);
+    let (mut engine, meta) = match service.prepare_semantic_engine(&root, policy).await {
         Ok(engine) => engine,
         Err(e) => {
             return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -164,7 +161,7 @@ pub(in crate::tools::dispatch) async fn overview(
         ))]));
     }
 
-    let mut result = {
+    let result = {
         let engine_ref = engine.engine_mut();
         let chunks = engine_ref.context_search.hybrid().chunks();
         let Some(assembler) = engine_ref.context_search.assembler() else {
@@ -188,11 +185,10 @@ pub(in crate::tools::dispatch) async fn overview(
             entry_points,
             key_types,
             graph_stats,
-            meta: None,
+            meta: Some(meta),
         }
     };
 
     drop(engine);
-    result.meta = Some(service.tool_meta(&root).await);
     Ok(success_payload(&result))
 }

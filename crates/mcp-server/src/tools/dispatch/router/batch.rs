@@ -20,13 +20,6 @@ fn call_error(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message.into())])
 }
 
-fn trimmed_non_empty(input: Option<&str>) -> Option<String> {
-    input
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
 fn validate_batch_version(version: u32) -> Option<String> {
     if (MIN_SUPPORTED_VERSION..=LATEST_VERSION).contains(&version) {
         None
@@ -331,7 +324,10 @@ pub(in crate::tools::dispatch) async fn batch(
         return Ok(call_error(message));
     }
 
-    let inferred_path = trimmed_non_empty(request.path.as_deref());
+    let inferred_path = match service.resolve_root(request.path.as_deref()).await {
+        Ok((_, root_display)) => Some(root_display),
+        Err(message) => return Ok(call_error(message)),
+    };
     let mut runner = BatchRunner::new(service, version, max_chars, inferred_path)
         .with_stop_on_error(request.stop_on_error);
     runner.update_ref_context_path();

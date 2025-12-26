@@ -684,3 +684,50 @@ async fn read_pack_grep_supports_cursor_only_continuation() -> Result<()> {
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
 }
+
+#[tokio::test]
+async fn read_pack_clamps_tiny_budget_and_keeps_continuation() -> Result<()> {
+    let (tmp, service) = start_service().await?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    let mut content = String::new();
+    for idx in 1..=400usize {
+        writeln!(&mut content, "line {idx}").expect("write line");
+    }
+    std::fs::write(root.join("src").join("main.txt"), content).context("write main.txt")?;
+
+    let json = call_tool_json(
+        &service,
+        "read_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "intent": "file",
+            "file": "src/main.txt",
+            "max_lines": 400,
+            "max_chars": 1,
+        }),
+    )
+    .await?;
+
+    let budget = json.get("budget").context("missing budget")?;
+    let max_chars = budget
+        .get("max_chars")
+        .and_then(Value::as_u64)
+        .context("budget.max_chars missing")?;
+    assert!(max_chars >= 1000, "expected min budget clamp");
+    assert_eq!(
+        budget.get("truncated").and_then(Value::as_bool),
+        Some(true),
+        "expected truncated response"
+    );
+
+    let next_actions = json
+        .get("next_actions")
+        .and_then(Value::as_array)
+        .context("missing next_actions")?;
+    assert!(!next_actions.is_empty(), "expected continuation action");
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
