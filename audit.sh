@@ -131,7 +131,16 @@ echo -e "${BLUE}[6/${TOTAL_STEPS}] Security Audit (dependencies)${NC}"
 echo "────────────────────────────────────────"
 
 if command -v cargo-audit &> /dev/null; then
-    cargo audit 2>&1 | tee "$AUDIT_SECURITY_LOG"
+    AUDIT_IGNORE_ARGS=()
+    if [ -f "$PROJECT_ROOT/audit.toml" ]; then
+        while read -r advisory; do
+            if [ -n "$advisory" ]; then
+                AUDIT_IGNORE_ARGS+=(--ignore "$advisory")
+            fi
+        done < <(grep -Eo "RUSTSEC-[0-9]{4}-[0-9]{4}" "$PROJECT_ROOT/audit.toml" | sort -u)
+    fi
+
+    cargo audit "${AUDIT_IGNORE_ARGS[@]}" 2>&1 | tee "$AUDIT_SECURITY_LOG"
     rc=${PIPESTATUS[0]}
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}✓ Security Audit (dependencies)${NC}"
