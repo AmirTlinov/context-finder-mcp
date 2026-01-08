@@ -3,7 +3,9 @@ use crate::command::domain::{
 };
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use context_search::SearchProfile;
-use context_vector_store::{context_dir_for_project_root, current_model_id, LEGACY_CONTEXT_DIR_NAME};
+use context_vector_store::{
+    context_dir_for_project_root, current_model_id, LEGACY_CONTEXT_DIR_NAME,
+};
 use serde_json::Value;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -256,13 +258,12 @@ fn resolve_project_root(provided: Option<PathBuf>) -> Result<PathBuf> {
     }
 
     if let Some(path) = env_root_override() {
-        return canonicalize_root(path).with_context(|| {
-            "Project path from CONTEXT_ROOT/CONTEXT_PROJECT_ROOT is invalid"
-        });
+        return canonicalize_root(path)
+            .with_context(|| "Project path from CONTEXT_ROOT/CONTEXT_PROJECT_ROOT is invalid");
     }
 
     let cwd = env::current_dir().context("Failed to determine current directory")?;
-    let candidate = find_git_root(&cwd).unwrap_or(cwd);
+    let candidate = find_project_root(&cwd).unwrap_or(cwd);
     canonicalize_root(candidate)
 }
 
@@ -287,6 +288,30 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .find(|candidate| candidate.join(".git").exists())
+        .map(PathBuf::from)
+}
+
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    if let Some(root) = find_git_root(start) {
+        return Some(root);
+    }
+
+    const MARKERS: &[&str] = &[
+        "AGENTS.md",
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "CMakeLists.txt",
+        "Makefile",
+    ];
+
+    start
+        .ancestors()
+        .find(|candidate| MARKERS.iter().any(|marker| candidate.join(marker).exists()))
         .map(PathBuf::from)
 }
 

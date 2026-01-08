@@ -253,10 +253,34 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    if let Some(root) = find_git_root(start) {
+        return Some(root);
+    }
+
+    const MARKERS: &[&str] = &[
+        "AGENTS.md",
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "CMakeLists.txt",
+        "Makefile",
+    ];
+
+    start
+        .ancestors()
+        .find(|candidate| MARKERS.iter().any(|marker| candidate.join(marker).exists()))
+        .map(PathBuf::from)
+}
+
 fn compute_proxy_default_root() -> Option<String> {
     let root = env_root_override().or_else(|| {
         let cwd = std::env::current_dir().ok()?;
-        find_git_root(&cwd).or(Some(cwd))
+        find_project_root(&cwd).or(Some(cwd))
     })?;
     let canonical = root.canonicalize().unwrap_or(root);
     Some(canonical.to_string_lossy().to_string())
@@ -284,6 +308,17 @@ fn ensure_tool_call_has_path(value: &mut Value, root: &str) -> bool {
         return false;
     };
 
+    // Cursor continuation: many tools use cursor-only requests (no `path`) to resume pagination.
+    // Injecting a default root would shadow cursor decoding and break pagination semantics.
+    let has_cursor = args
+        .get("cursor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if has_cursor {
+        return true;
+    }
+
     let has_path = args
         .get("path")
         .and_then(Value::as_str)
@@ -293,7 +328,12 @@ fn ensure_tool_call_has_path(value: &mut Value, root: &str) -> bool {
         return true;
     }
 
-    args.insert("path".to_string(), Value::String(root.to_string()));
+    let trimmed_root = root.trim();
+    if trimmed_root.is_empty() {
+        return false;
+    }
+
+    args.insert("path".to_string(), Value::String(trimmed_root.to_string()));
     true
 }
 
@@ -346,8 +386,11 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
     //
     // The shared daemon has its own working directory, so "missing path" would otherwise fall back
     // to an unrelated root (often the daemon's launch cwd). The per-session proxy runs inside the
-    // agent session, so it can inject a correct default root once, and then rely on the daemon's
-    // per-connection session defaults.
+    // agent session, so it can inject a correct default root for the first tool call that omits
+    // `path`, establishing a per-connection session root inside the daemon.
+    //
+    // Important: cursor-only pagination calls must be left untouched, because tool routers decode
+    // the root from the cursor when `path` is missing.
     let default_root = compute_proxy_default_root();
 
     let mut client_closed = false;
@@ -447,6 +490,10 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
         }
 
         if method == Some("initialize") {
+            // Treat every initialize as a fresh logical MCP session (some clients reuse the same
+            // server process across multiple sessions). Reset per-session defaults so the first
+            // tool call can establish the correct root again.
+            session.reset_flags();
             session.initialize_seen = true;
             session.initialize_request_id = request_id.clone();
             session.client_supports_roots = value
@@ -535,9 +582,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
         if !session.root_established {
             let mut established = false;
             if let Some(root) = default_root {
-                if !root.trim().is_empty() {
-                    established = ensure_tool_call_has_path(value, root);
-                }
+                established = ensure_tool_call_has_path(value, root);
             }
             if established {
                 session.root_established = true;
@@ -771,6 +816,137 @@ async fn pid_looks_like_daemon(pid: i32) -> Option<bool> {
     {
         let _ = pid;
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_tool_call_has_path;
+    use serde_json::json;
+
+    #[test]
+    fn does_not_touch_non_tool_calls() {
+        let mut value = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {}
+        });
+        assert!(!ensure_tool_call_has_path(&mut value, "/tmp/root"));
+        assert!(value.get("params").and_then(|v| v.as_object()).is_some());
+        assert!(value
+            .get("params")
+            .and_then(|v| v.get("arguments"))
+            .is_none());
+    }
+
+    #[test]
+    fn injects_path_when_missing() {
+        let mut value = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "doctor",
+                "arguments": {}
+            }
+        });
+        assert!(ensure_tool_call_has_path(&mut value, "/tmp/root"));
+        let args = value
+            .get("params")
+            .and_then(|v| v.get("arguments"))
+            .and_then(|v| v.as_object())
+            .expect("arguments object");
+        assert_eq!(args.get("path").and_then(|v| v.as_str()), Some("/tmp/root"));
+    }
+
+    #[test]
+    fn does_not_override_existing_path() {
+        let mut value = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "doctor",
+                "arguments": {
+                    "path": "/tmp/explicit"
+                }
+            }
+        });
+        assert!(ensure_tool_call_has_path(&mut value, "/tmp/root"));
+        let args = value
+            .get("params")
+            .and_then(|v| v.get("arguments"))
+            .and_then(|v| v.as_object())
+            .expect("arguments object");
+        assert_eq!(
+            args.get("path").and_then(|v| v.as_str()),
+            Some("/tmp/explicit")
+        );
+    }
+
+    #[test]
+    fn does_not_inject_for_cursor_continuations() {
+        let mut value = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "list_files",
+                "arguments": {
+                    "cursor": "abcdef"
+                }
+            }
+        });
+        assert!(ensure_tool_call_has_path(&mut value, "/tmp/root"));
+        let args = value
+            .get("params")
+            .and_then(|v| v.get("arguments"))
+            .and_then(|v| v.as_object())
+            .expect("arguments object");
+        assert!(args.get("path").is_none());
+    }
+
+    #[test]
+    fn injects_when_cursor_is_empty() {
+        let mut value = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "list_files",
+                "arguments": {
+                    "cursor": "   "
+                }
+            }
+        });
+        assert!(ensure_tool_call_has_path(&mut value, "/tmp/root"));
+        let args = value
+            .get("params")
+            .and_then(|v| v.get("arguments"))
+            .and_then(|v| v.as_object())
+            .expect("arguments object");
+        assert_eq!(args.get("path").and_then(|v| v.as_str()), Some("/tmp/root"));
+    }
+
+    #[test]
+    fn normalizes_non_object_arguments() {
+        let mut value = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "doctor",
+                "arguments": "wat"
+            }
+        });
+        assert!(ensure_tool_call_has_path(&mut value, "/tmp/root"));
+        let args = value
+            .get("params")
+            .and_then(|v| v.get("arguments"))
+            .and_then(|v| v.as_object())
+            .expect("arguments object");
+        assert_eq!(args.get("path").and_then(|v| v.as_str()), Some("/tmp/root"));
     }
 }
 
@@ -1102,9 +1278,9 @@ async fn try_kill_daemon_from_pid_file(socket: &Path) {
                 .map(|p| String::from_utf8_lossy(p).to_string())
                 .collect::<Vec<_>>()
                 .join(" ");
-            let looks_like_daemon =
-                (joined.contains("context-mcp") || joined.contains("context-finder-mcp"))
-                    && joined.contains("daemon");
+            let looks_like_daemon = (joined.contains("context-mcp")
+                || joined.contains("context-finder-mcp"))
+                && joined.contains("daemon");
             if !looks_like_daemon {
                 return;
             }

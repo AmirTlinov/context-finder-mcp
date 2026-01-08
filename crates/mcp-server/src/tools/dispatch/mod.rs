@@ -113,7 +113,7 @@ impl ContextFinderService {
         // Shared daemon mode: never guess a root from the daemon process cwd. Require either:
         // - explicit `path` on a tool call, or
         // - MCP roots capability (via initialize -> roots/list), or
-        // - an explicit env override (CONTEXT_FINDER_ROOT / CONTEXT_FINDER_PROJECT_ROOT).
+        // - an explicit env override (CONTEXT_ROOT/CONTEXT_PROJECT_ROOT, legacy: CONTEXT_FINDER_ROOT).
         Self::new_with_policy(false)
     }
 
@@ -158,7 +158,8 @@ impl ContextFinderService {
         &self,
         raw_path: Option<&str>,
     ) -> Result<(PathBuf, String), String> {
-        self.resolve_root_with_hints_no_daemon_touch(raw_path, &[]).await
+        self.resolve_root_with_hints_no_daemon_touch(raw_path, &[])
+            .await
     }
 
     pub(super) async fn resolve_root_with_hints_no_daemon_touch(
@@ -241,14 +242,14 @@ impl ContextFinderService {
 
         if !self.allow_cwd_root_fallback {
             return Err(
-                "Missing project root: pass `path` (recommended) or enable MCP roots, or set CONTEXT_FINDER_ROOT."
+                "Missing project root: pass `path` (recommended) or enable MCP roots, or set CONTEXT_ROOT/CONTEXT_PROJECT_ROOT."
                     .to_string(),
             );
         }
 
         let cwd = env::current_dir()
             .map_err(|err| format!("Failed to determine current directory: {err}"))?;
-        let candidate = find_git_root(&cwd).unwrap_or(cwd);
+        let candidate = find_project_root(&cwd).unwrap_or(cwd);
         let root =
             canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
         let root_display = root.to_string_lossy().to_string();
@@ -2217,7 +2218,12 @@ fn looks_like_path_hint(value: &str) -> bool {
 }
 
 fn env_root_override() -> Option<(String, String)> {
-    for key in ["CONTEXT_FINDER_ROOT", "CONTEXT_FINDER_PROJECT_ROOT"] {
+    for key in [
+        "CONTEXT_ROOT",
+        "CONTEXT_PROJECT_ROOT",
+        "CONTEXT_FINDER_ROOT",
+        "CONTEXT_FINDER_PROJECT_ROOT",
+    ] {
         if let Ok(value) = env::var(key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
@@ -2250,8 +2256,8 @@ fn canonicalize_root_path(path: &Path) -> Result<PathBuf, String> {
     };
 
     if is_file {
-        if let Some(git_root) = find_git_root(&base) {
-            return Ok(git_root);
+        if let Some(project_root) = find_project_root(&base) {
+            return Ok(project_root);
         }
     }
 
@@ -2273,6 +2279,30 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .find(|candidate| candidate.join(".git").exists())
+        .map(PathBuf::from)
+}
+
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    if let Some(root) = find_git_root(start) {
+        return Some(root);
+    }
+
+    const MARKERS: &[&str] = &[
+        "AGENTS.md",
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "CMakeLists.txt",
+        "Makefile",
+    ];
+
+    start
+        .ancestors()
+        .find(|candidate| MARKERS.iter().any(|marker| candidate.join(marker).exists()))
         .map(PathBuf::from)
 }
 
