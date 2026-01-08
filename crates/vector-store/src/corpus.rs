@@ -1,5 +1,6 @@
 use crate::error::{Result, VectorStoreError};
 use context_code_chunker::CodeChunk;
+use crate::paths::context_dir_for_project_root;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -58,6 +59,10 @@ impl ChunkCorpus {
         self.files.insert(file_path, chunks);
     }
 
+    pub fn remove_file(&mut self, file_path: &str) -> bool {
+        self.files.remove(file_path).is_some()
+    }
+
     pub fn purge_missing_files(&mut self, live_files: &HashSet<String>) -> usize {
         let before = self.files.len();
         self.files.retain(|path, _| live_files.contains(path));
@@ -86,7 +91,7 @@ impl ChunkCorpus {
 
 #[must_use]
 pub fn corpus_path_for_project_root(root: &Path) -> PathBuf {
-    root.join(".context-finder").join("corpus.json")
+    context_dir_for_project_root(root).join("corpus.json")
 }
 
 fn parse_chunk_id(chunk_id: &str) -> Option<(String, usize, usize)> {

@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Context Finder HTTP API",
+    "title": "Context HTTP API",
     "version": "v1",
-    "description": "HTTP surface for `context-finder serve-http`.\n\nThis OpenAPI document is contract-first and references the canonical JSON Schemas under `contracts/command/v1/`."
+    "description": "HTTP surface for `context serve-http`.\n\nThis OpenAPI document is contract-first and references the canonical JSON Schemas under `contracts/command/v1/`."
   },
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "paths": {

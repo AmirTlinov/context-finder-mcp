@@ -10,10 +10,11 @@ use super::schemas::repo_onboarding_pack::{
     RepoOnboardingDocsReason, RepoOnboardingNextAction, RepoOnboardingPackBudget,
     RepoOnboardingPackRequest, RepoOnboardingPackResult, RepoOnboardingPackTruncation,
 };
+use super::schemas::response_mode::ResponseMode;
 use super::ContextFinderService;
 
 const VERSION: u32 = 1;
-const DEFAULT_MAX_CHARS: usize = 20_000;
+const DEFAULT_MAX_CHARS: usize = 2_000;
 const MIN_MAX_CHARS: usize = 1_000;
 const MAX_MAX_CHARS: usize = 500_000;
 const DEFAULT_MAP_DEPTH: usize = 2;
@@ -47,10 +48,12 @@ fn build_next_actions(root_display: &str, has_corpus: bool) -> Vec<RepoOnboardin
     let mut next_actions = Vec::new();
     if !has_corpus {
         next_actions.push(RepoOnboardingNextAction {
-            tool: "index".to_string(),
-            args: serde_json::json!({ "path": root_display }),
-            reason: "Build the semantic index (enables search/context/context_pack/impact/trace)."
-                .to_string(),
+            tool: "search".to_string(),
+            args: serde_json::json!({
+                "path": root_display,
+                "query": "what is the main entry point / architecture",
+            }),
+            reason: "Kick off semantic search; the index warms automatically (falls back to grep until ready).".to_string(),
         });
     }
 
@@ -203,6 +206,7 @@ pub(super) async fn compute_repo_onboarding_pack_result(
     root_display: &str,
     request: &RepoOnboardingPackRequest,
 ) -> Result<RepoOnboardingPackResult> {
+    let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
     let max_chars = request
         .max_chars
         .unwrap_or(DEFAULT_MAX_CHARS)
@@ -228,7 +232,11 @@ pub(super) async fn compute_repo_onboarding_pack_result(
         .await
         .is_ok_and(|v| v.is_some());
 
-    let next_actions = build_next_actions(root_display, has_corpus);
+    let next_actions = if response_mode == ResponseMode::Full {
+        build_next_actions(root_display, has_corpus)
+    } else {
+        Vec::new()
+    };
     let doc_candidates = collect_doc_candidates(request);
 
     let mut result = RepoOnboardingPackResult {
@@ -244,7 +252,7 @@ pub(super) async fn compute_repo_onboarding_pack_result(
             truncated: false,
             truncation: None,
         },
-        meta: ToolMeta { index_state: None },
+        meta: ToolMeta::default(),
     };
 
     add_docs_best_effort(

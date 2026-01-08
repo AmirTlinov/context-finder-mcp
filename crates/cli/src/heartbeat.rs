@@ -3,11 +3,13 @@ use context_indexer::{
     ModelIndexSpec, MultiModelProjectIndexer, MultiModelStreamingIndexer, StreamingIndexerConfig,
 };
 use context_search::SearchProfile;
-use context_vector_store::{current_model_id, QueryKind};
+use context_vector_store::{
+    current_model_id, QueryKind, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{watch, Mutex};
@@ -59,11 +61,15 @@ fn duration_from_env_ms(var: &str) -> Option<Duration> {
 }
 
 fn daemon_ttl() -> Duration {
-    duration_from_env_ms("CONTEXT_FINDER_DAEMON_TTL_MS").unwrap_or(DEFAULT_TTL)
+    duration_from_env_ms("CONTEXT_DAEMON_TTL_MS")
+        .or_else(|| duration_from_env_ms("CONTEXT_FINDER_DAEMON_TTL_MS"))
+        .unwrap_or(DEFAULT_TTL)
 }
 
 fn daemon_cleanup_interval() -> Duration {
-    duration_from_env_ms("CONTEXT_FINDER_DAEMON_CLEANUP_MS").unwrap_or(DEFAULT_CLEANUP_INTERVAL)
+    duration_from_env_ms("CONTEXT_DAEMON_CLEANUP_MS")
+        .or_else(|| duration_from_env_ms("CONTEXT_FINDER_DAEMON_CLEANUP_MS"))
+        .unwrap_or(DEFAULT_CLEANUP_INTERVAL)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,6 +78,8 @@ struct PingRequest {
     project: String,
     #[serde(default)]
     ttl_ms: Option<u64>,
+    #[serde(default)]
+    models: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -111,10 +119,37 @@ struct ModelManifestAsset {
 }
 
 fn default_socket_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".context-finder")
-        .join("daemon.sock")
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let preferred = home.join(CONTEXT_DIR_NAME);
+    let base = if preferred.exists() {
+        preferred
+    } else {
+        let legacy = home.join(LEGACY_CONTEXT_DIR_NAME);
+        if legacy.exists() {
+            legacy
+        } else {
+            preferred
+        }
+    };
+    base.join(format!("daemon.{}.sock", exe_build_id_best_effort()))
+}
+
+fn exe_build_id_best_effort() -> String {
+    let exe = std::env::current_exe().ok();
+    let build_id = exe.as_deref().and_then(exe_build_id_from_path_best_effort);
+    build_id.unwrap_or_else(|| "default".to_string())
+}
+
+fn exe_build_id_from_path_best_effort(exe: &Path) -> Option<String> {
+    let meta = std::fs::metadata(exe).ok()?;
+    let len = meta.len();
+    let modified = meta.modified().ok()?;
+    let modified_ms = modified
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let modified_ms = u64::try_from(modified_ms).unwrap_or(u64::MAX);
+    Some(format!("{len:x}-{modified_ms:x}"))
 }
 
 pub async fn run_daemon(socket: Option<PathBuf>) -> Result<()> {
@@ -208,30 +243,95 @@ async fn handle_conn(
                 .unwrap_or_else(daemon_ttl);
             let project = PathBuf::from(req.project);
 
+            let requested_models = req
+                .models
+                .as_ref()
+                .map(|v| {
+                    v.iter()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .filter(|v| !v.is_empty());
+
+            let (primary_spec, full_specs) = shared.specs_for_request(requested_models.as_deref());
+            let desired_model_ids: Vec<String> = full_specs
+                .iter()
+                .map(|spec| spec.model_id.clone())
+                .collect();
+
+            let mut existing_streamer: Option<MultiModelStreamingIndexer> = None;
+            let mut existing_models: Option<Vec<String>> = None;
+
             {
                 let mut guard = state.lock().await;
                 if let Some(w) = guard.get_mut(&project) {
-                    w.last_ping = Instant::now();
-                    // already running
-                } else {
-                    let indexer = MultiModelProjectIndexer::new(&project).await?;
-                    let cfg = StreamingIndexerConfig {
-                        max_batch_wait: Duration::from_secs(2),
-                        ..Default::default()
-                    };
-                    let streamer = MultiModelStreamingIndexer::start(
-                        std::sync::Arc::new(indexer),
-                        shared.model_specs.clone(),
-                        cfg,
-                    )?;
-                    let worker = Worker::new(streamer);
-                    // trigger immediate incremental index to warm
-                    let _ = worker.streamer.trigger("bootstrap").await;
-                    guard.insert(project.clone(), worker);
-                }
-                if let Some(w) = guard.get_mut(&project) {
                     w.ttl = ttl;
                     w.last_ping = Instant::now();
+                    existing_streamer = Some(w.streamer.clone());
+                    existing_models = Some(w.models.clone());
+                }
+            }
+
+            if let Some(streamer) = existing_streamer {
+                let should_update_models = requested_models.is_some()
+                    && existing_models
+                        .as_ref()
+                        .is_none_or(|m| m != &desired_model_ids);
+                if should_update_models && streamer.set_models(full_specs.clone()).await.is_ok() {
+                    let _ = streamer.trigger("models_changed").await;
+                    let mut guard = state.lock().await;
+                    if let Some(w) = guard.get_mut(&project) {
+                        w.models = desired_model_ids;
+                    }
+                }
+            } else {
+                let indexer = MultiModelProjectIndexer::new(&project).await?;
+                let cfg = StreamingIndexerConfig {
+                    max_batch_wait: Duration::from_secs(2),
+                    ..Default::default()
+                };
+
+                // Cold-start optimization: index only the primary model first to get a usable
+                // semantic index ASAP, then expand to the full roster in the background.
+                let initial_specs = vec![primary_spec.clone()];
+                let streamer = MultiModelStreamingIndexer::start(
+                    std::sync::Arc::new(indexer),
+                    initial_specs,
+                    cfg,
+                )?;
+                let mut worker = Worker::new(streamer.clone(), desired_model_ids.clone());
+                worker.ttl = ttl;
+                worker.last_ping = Instant::now();
+                {
+                    let mut guard = state.lock().await;
+                    guard.insert(project.clone(), worker);
+                }
+
+                // Trigger immediate incremental index to warm.
+                let _ = streamer.trigger("bootstrap").await;
+
+                if full_specs.len() > 1 {
+                    let streamer = streamer.clone();
+                    tokio::spawn(async move {
+                        let mut updates = streamer.subscribe_updates();
+                        loop {
+                            match updates.recv().await {
+                                Ok(update) => {
+                                    if update.success {
+                                        break;
+                                    }
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                    continue;
+                                }
+                                Err(_) => return,
+                            }
+                        }
+                        if streamer.set_models(full_specs).await.is_ok() {
+                            let _ = streamer.trigger("upgrade_models").await;
+                        }
+                    });
                 }
             }
 
@@ -275,14 +375,16 @@ async fn handle_conn(
 
 struct Worker {
     streamer: MultiModelStreamingIndexer,
+    models: Vec<String>,
     ttl: Duration,
     last_ping: Instant,
 }
 
 impl Worker {
-    fn new(streamer: MultiModelStreamingIndexer) -> Self {
+    fn new(streamer: MultiModelStreamingIndexer, models: Vec<String>) -> Self {
         Self {
             streamer,
+            models,
             ttl: daemon_ttl(),
             last_ping: Instant::now(),
         }
@@ -290,7 +392,9 @@ impl Worker {
 }
 
 struct DaemonShared {
-    model_specs: Vec<ModelIndexSpec>,
+    primary_spec: ModelIndexSpec,
+    full_specs: Vec<ModelIndexSpec>,
+    installed_model_ids: Option<HashSet<String>>,
 }
 
 impl DaemonShared {
@@ -327,12 +431,68 @@ impl DaemonShared {
             model_ids.push("bge-small".to_string());
         }
 
-        let specs = model_ids
+        let full_specs: Vec<ModelIndexSpec> = model_ids
             .into_iter()
             .map(|model_id| ModelIndexSpec::new(model_id, templates.clone()))
             .collect();
 
-        Ok(Self { model_specs: specs })
+        let primary_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
+        let primary_spec = full_specs
+            .iter()
+            .find(|spec| spec.model_id == primary_id)
+            .cloned()
+            .unwrap_or_else(|| full_specs.first().cloned().unwrap());
+
+        Ok(Self {
+            primary_spec,
+            full_specs,
+            installed_model_ids: installed,
+        })
+    }
+
+    fn specs_for_request(
+        &self,
+        requested_models: Option<&[String]>,
+    ) -> (ModelIndexSpec, Vec<ModelIndexSpec>) {
+        let templates = self.primary_spec.templates.clone();
+
+        let mut ids: Vec<String> = if let Some(requested) = requested_models {
+            let mut set = HashSet::new();
+            for id in requested {
+                let trimmed = id.trim().to_string();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                set.insert(trimmed);
+            }
+            set.insert(self.primary_spec.model_id.clone());
+            let mut out: Vec<String> = set.into_iter().collect();
+            out.sort();
+            out
+        } else {
+            self.full_specs.iter().map(|s| s.model_id.clone()).collect()
+        };
+
+        if let Some(installed) = self.installed_model_ids.as_ref() {
+            ids.retain(|id| installed.contains(id));
+        }
+
+        if ids.is_empty() {
+            ids.push(self.primary_spec.model_id.clone());
+        }
+
+        let full_specs: Vec<ModelIndexSpec> = ids
+            .iter()
+            .map(|model_id| ModelIndexSpec::new(model_id.clone(), templates.clone()))
+            .collect();
+
+        let primary_spec = full_specs
+            .iter()
+            .find(|spec| spec.model_id == self.primary_spec.model_id)
+            .cloned()
+            .unwrap_or_else(|| full_specs.first().cloned().unwrap());
+
+        (primary_spec, full_specs)
     }
 }
 
@@ -341,7 +501,8 @@ pub async fn ping(project: &Path) -> Result<()> {
     // (used heavily in CI and tests). The background daemon is a performance
     // optimization and can introduce nondeterminism / flakiness in constrained
     // environments, so we skip it.
-    if std::env::var("CONTEXT_FINDER_EMBEDDING_MODE")
+    if std::env::var("CONTEXT_EMBEDDING_MODE")
+        .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
         .ok()
         .map(|v| v.trim().eq_ignore_ascii_case("stub"))
         .unwrap_or(false)
@@ -352,10 +513,12 @@ pub async fn ping(project: &Path) -> Result<()> {
     let socket = default_socket_path();
     ensure_daemon(&socket).await?;
     let ttl = daemon_ttl();
+    let models = desired_model_ids_from_env();
     let payload = PingRequest {
         cmd: "ping".to_string(),
         project: project.to_string_lossy().to_string(),
         ttl_ms: Some(ttl.as_millis() as u64),
+        models: Some(models),
     };
     let resp = send_ping(&socket, &payload).await;
     match resp {
@@ -367,6 +530,29 @@ pub async fn ping(project: &Path) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn desired_model_ids_from_env() -> Vec<String> {
+    let profile = load_profile_from_env();
+    let mut models = HashSet::new();
+
+    let primary = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
+    models.insert(primary);
+
+    let experts = profile.experts();
+    for kind in [
+        QueryKind::Identifier,
+        QueryKind::Path,
+        QueryKind::Conceptual,
+    ] {
+        for model_id in experts.semantic_models(kind) {
+            models.insert(model_id.clone());
+        }
+    }
+
+    let mut out: Vec<String> = models.into_iter().collect();
+    out.sort();
+    out
 }
 
 async fn send_ping(socket: &Path, payload: &PingRequest) -> Result<()> {
@@ -439,7 +625,8 @@ async fn bind_single_instance(socket_path: &Path) -> Result<Option<UnixListener>
 }
 
 fn load_profile_from_env() -> SearchProfile {
-    let profile_name = std::env::var("CONTEXT_FINDER_PROFILE")
+    let profile_name = std::env::var("CONTEXT_PROFILE")
+        .or_else(|_| std::env::var("CONTEXT_FINDER_PROFILE"))
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())

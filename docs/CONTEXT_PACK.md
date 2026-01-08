@@ -4,7 +4,8 @@
 
 The Command API (CLI/HTTP/gRPC JSON envelope) returns `ContextPackOutput` under `CommandResponse.data`.
 
-The MCP tool `context_pack` returns the same `ContextPackOutput` as the tool result JSON (and may include an extra trace block when `trace=true`).
+The MCP tool `context_pack` returns an agent-facing `.context` text document (high signal, low noise).
+For machine-readable workflows (automation / batching / `$ref` fan-out), use the Command API.
 
 Canonical schema (source of truth):
 
@@ -14,8 +15,13 @@ Canonical schema (source of truth):
 
 For agent workloads, reduce noise early by filtering paths at the request level:
 
-- `options.include_paths` / `options.exclude_paths` (prefix match on relative paths)
-- `options.file_pattern` (substring match, or `glob` when it contains `*` / `?`)
+- Command API: `options.include_paths` / `options.exclude_paths` / `options.file_pattern`
+- MCP tool: `include_paths` / `exclude_paths` / `file_pattern`
+
+Semantics:
+
+- `include_paths` / `exclude_paths`: prefix match on relative paths
+- `file_pattern`: substring match, or `glob` when it contains `*` / `?`
 
 These filters are applied during pack assembly (so they affect `budget` deterministically).
 
@@ -83,13 +89,22 @@ may be null or omitted by the caller.
 The MCP tool `context_pack` can auto-build or refresh the semantic index:
 
 - `auto_index` (default: true)
-- `auto_index_budget_ms` (default: 3000, clamped 100..120000)
+- `auto_index_budget_ms` (default: 15000, clamped 100..120000)
 
 When enabled, missing or stale indexes trigger a best-effort reindex before search. The outcome
 is reported under `meta.index_state.reindex`. Set `auto_index=false` to fail fast when no index
 is available.
 
 For the Command API, use `options.stale_policy` and `options.max_reindex_ms` instead.
+
+## Response mode (MCP tool)
+
+For agent workflows that need the smallest possible payload (maximum signal per token),
+the MCP tool supports a noise-reduction switch:
+
+- `response_mode: "facts"` (default): keeps freshness `meta.index_state` but stays low-noise
+- `response_mode: "full"`: includes `meta.index_state` plus extra diagnostics
+- `response_mode: "minimal"`: strips `meta.index_state`; `trace` is ignored
 
 ## Examples
 

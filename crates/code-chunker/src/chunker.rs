@@ -127,7 +127,13 @@ impl Chunker {
 
         let min_tokens = self.config.min_chunk_tokens;
         if min_tokens > 0 {
-            chunks.retain(|chunk| chunk.estimated_tokens() >= min_tokens);
+            // Agent-first retrieval: typed AST chunks (functions, structs, consts, etc.) can be
+            // extremely small (e.g. one-line `struct Foo;`). Dropping them makes symbol search
+            // brittle and breaks "find by name" workflows. Keep typed chunks regardless of size
+            // and apply `min_chunk_tokens` only to untyped fallback chunks.
+            chunks.retain(|chunk| {
+                chunk.estimated_tokens() >= min_tokens || chunk.metadata.chunk_type.is_some()
+            });
         }
 
         chunks
@@ -822,6 +828,53 @@ impl Point {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].metadata.chunk_type, Some(ChunkType::Function));
         assert_eq!(out[0].metadata.symbol_name.as_deref(), Some("foo"));
+    }
+
+    #[test]
+    fn post_process_min_tokens_applies_only_to_untyped_chunks() {
+        let config = ChunkerConfig {
+            min_chunk_tokens: 10,
+            target_chunk_tokens: 50,
+            max_chunk_tokens: 1_000,
+            overlap: OverlapStrategy::None,
+            include_imports: false,
+            include_parent_context: false,
+            include_documentation: false,
+            max_imports_per_chunk: 0,
+            supported_languages: Vec::new(),
+            strategy: crate::config::ChunkingStrategy::Semantic,
+        };
+        let chunker = Chunker::new(config);
+
+        let typed = CodeChunk::new(
+            "test.rs".to_string(),
+            1,
+            1,
+            "pub struct X;".to_string(),
+            ChunkMetadata {
+                chunk_type: Some(ChunkType::Struct),
+                symbol_name: Some("X".to_string()),
+                estimated_tokens: 1,
+                ..Default::default()
+            },
+        );
+
+        let untyped = CodeChunk::new(
+            "test.rs".to_string(),
+            2,
+            2,
+            "x".to_string(),
+            ChunkMetadata {
+                estimated_tokens: 1,
+                ..Default::default()
+            },
+        );
+
+        let out = chunker.post_process_chunks(vec![typed, untyped]);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].metadata.chunk_type, Some(ChunkType::Struct));
+        assert_eq!(out[0].metadata.symbol_name.as_deref(), Some("X"));
     }
 }
 

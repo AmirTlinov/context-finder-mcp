@@ -10,7 +10,8 @@ use crate::command::domain::{
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use context_search::{MultiModelHybridSearch, SearchProfile};
 use context_vector_store::{
-    corpus_path_for_project_root, current_model_id, ChunkCorpus, QueryKind, VectorIndex,
+    context_dir_for_project_root, corpus_path_for_project_root, current_model_id, ChunkCorpus,
+    QueryKind, VectorIndex, LEGACY_CONTEXT_DIR_NAME,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -195,12 +196,23 @@ async fn load_dataset(path: &Path) -> Result<EvalDatasetFile> {
 }
 
 fn profile_candidates(root: &Path, profile: &str) -> Vec<PathBuf> {
-    let base = root.join(".context-finder").join("profiles").join(profile);
-    if base.extension().is_none() {
-        vec![base.with_extension("json"), base.with_extension("toml")]
-    } else {
-        vec![base]
+    let mut dirs = vec![context_dir_for_project_root(root)];
+    let legacy_dir = root.join(LEGACY_CONTEXT_DIR_NAME);
+    if legacy_dir != dirs[0] {
+        dirs.push(legacy_dir);
     }
+
+    let mut candidates = Vec::new();
+    for dir in dirs {
+        let base = dir.join("profiles").join(profile);
+        if base.extension().is_none() {
+            candidates.push(base.with_extension("json"));
+            candidates.push(base.with_extension("toml"));
+        } else {
+            candidates.push(base);
+        }
+    }
+    candidates
 }
 
 fn load_profile(root: &Path, profile_name: &str) -> Result<SearchProfile> {
@@ -227,7 +239,7 @@ fn load_profile(root: &Path, profile_name: &str) -> Result<SearchProfile> {
     }
 
     anyhow::bail!(
-        "Profile '{}' not found. Expected .context-finder/profiles/{}.json|toml",
+        "Profile '{}' not found. Expected .context/profiles/{}.json|toml",
         profile_name,
         profile_name
     )
@@ -316,7 +328,7 @@ async fn load_semantic_indexes_for_models(
 
     if !models_filter.is_empty() && !missing.is_empty() {
         anyhow::bail!(
-            "Missing requested indices: {}. Run `context-finder index --models ...` first.",
+            "Missing requested indices: {}. Run `context index --models ...` first.",
             missing.join(", ")
         );
     }

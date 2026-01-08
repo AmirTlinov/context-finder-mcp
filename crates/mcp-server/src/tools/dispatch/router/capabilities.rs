@@ -1,20 +1,24 @@
 use super::super::{CallToolResult, Content, ContextFinderService};
+use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::schemas::capabilities::{CapabilitiesRequest, CapabilitiesResult};
 use context_indexer::INDEX_STATE_SCHEMA_VERSION;
 use context_protocol::{
-    Capabilities, CapabilitiesServer, CapabilitiesVersions, DefaultBudgets, ToolNextAction,
+    Capabilities, CapabilitiesServer, CapabilitiesVersions, ToolNextAction,
     CAPABILITIES_SCHEMA_VERSION,
 };
 use serde_json::json;
 
-use super::error::{invalid_request_with_meta, meta_for_request};
+use super::error::{attach_structured_content, invalid_request_with_meta, meta_for_request};
 
 /// Return tool capabilities and default budgets for self-directed clients.
 pub(in crate::tools::dispatch) async fn capabilities(
     service: &ContextFinderService,
     request: CapabilitiesRequest,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
-    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+    let (root, root_display) = match service
+        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
             let meta = meta_for_request(service, request.path.as_deref()).await;
@@ -22,20 +26,21 @@ pub(in crate::tools::dispatch) async fn capabilities(
         }
     };
 
-    let budgets = DefaultBudgets::default();
+    let budgets = super::super::mcp_default_budgets();
     let start_route = ToolNextAction {
-        tool: "repo_onboarding_pack".to_string(),
+        tool: "read_pack".to_string(),
         args: json!({
             "path": root_display,
-            "max_chars": budgets.repo_onboarding_pack_max_chars
+            "max_chars": budgets.read_pack_max_chars
         }),
-        reason: "Start with a compact repo map + key docs (onboarding pack).".to_string(),
+        reason: "Start with a bounded project memory pack (facts + key snippets) via read_pack."
+            .to_string(),
     };
 
     let output = Capabilities {
         schema_version: CAPABILITIES_SCHEMA_VERSION,
         server: CapabilitiesServer {
-            name: "context-finder-mcp".to_string(),
+            name: "context-mcp".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
         versions: CapabilitiesVersions {
@@ -52,7 +57,30 @@ pub(in crate::tools::dispatch) async fn capabilities(
         meta: service.tool_meta(&root).await,
     };
 
-    Ok(CallToolResult::success(vec![Content::text(
-        context_protocol::serialize_json(&result).unwrap_or_default(),
-    )]))
+    let mut doc = ContextDocBuilder::new();
+    doc.push_answer("capabilities: default budgets + start route");
+    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    doc.push_note(&format!(
+        "server: context-mcp {}",
+        env!("CARGO_PKG_VERSION")
+    ));
+    doc.push_note(&format!(
+        "versions: mcp=v2 command_api=v1 index_state=v{}",
+        INDEX_STATE_SCHEMA_VERSION
+    ));
+    doc.push_note(&format!(
+        "default_budgets.max_chars: {}",
+        result.capabilities.default_budgets.max_chars
+    ));
+    doc.push_note(&format!(
+        "start: tool={}",
+        result.capabilities.start_route.tool
+    ));
+    let output = CallToolResult::success(vec![Content::text(doc.finish())]);
+    Ok(attach_structured_content(
+        output,
+        &result,
+        result.meta.clone(),
+        "capabilities",
+    ))
 }

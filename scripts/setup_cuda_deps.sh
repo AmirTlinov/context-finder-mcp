@@ -116,5 +116,21 @@ ls -1 "${DEPS_DIR}"
 echo "[setup_cuda_deps] removing TensorRT provider (no local TensorRT runtime)"
 rm -f "${DEPS_DIR}/libonnxruntime_providers_tensorrt.so" || true
 
+# Also install into a global, repo-independent location so MCP/CLI runs from *other* repos can
+# still find the CUDA provider + runtime libs without relying on the current working directory.
+if [[ -n "${HOME:-}" ]]; then
+  GLOBAL_DIR="${HOME}/.context-finder/deps/ort_cuda"
+  echo "[setup_cuda_deps] installing to global cache: ${GLOBAL_DIR}"
+  mkdir -p "${GLOBAL_DIR}"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "${DEPS_DIR}/" "${GLOBAL_DIR}/"
+  else
+    rm -rf "${GLOBAL_DIR}"
+    mkdir -p "${GLOBAL_DIR}"
+    cp -a "${DEPS_DIR}/." "${GLOBAL_DIR}/"
+  fi
+  echo "[setup_cuda_deps] global cache ready"
+fi
+
 rm -rf "${WHEEL_DIR}"
 echo "[setup_cuda_deps] complete"

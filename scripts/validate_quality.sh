@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+scripts/validate_contracts.sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
+
+tmp_json="$(mktemp)"
+CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-finder-cli -- eval . \
+  --dataset datasets/golden_stub_smoke.json \
+  --json --quiet > "${tmp_json}"
+
+TMP_JSON="${tmp_json}" python3 - <<'PY'
+import json, sys, os
+
+path = os.environ.get("TMP_JSON") or ""
+if not path:
+    # shell passes via heredoc env below; fallback to fixed path if needed
+    path = sys.argv[1] if len(sys.argv) > 1 else ""
+if not path:
+    print("ERROR: missing eval json path", file=sys.stderr)
+    sys.exit(2)
+
+with open(path) as f:
+    data = json.load(f)
+
+run = data["data"]["runs"][0]
+summary = run["summary"]
+
+mean_recall = float(summary["mean_recall"])
+mean_mrr = float(summary["mean_mrr"])
+
+min_recall = 0.95
+min_mrr = 0.80
+
+if mean_recall < min_recall or mean_mrr < min_mrr:
+    print("ERROR: eval regression on datasets/golden_stub_smoke.json", file=sys.stderr)
+    print(f"mean_recall={mean_recall:.4f} (min {min_recall})", file=sys.stderr)
+    print(f"mean_mrr={mean_mrr:.4f} (min {min_mrr})", file=sys.stderr)
+    sys.exit(1)
+
+print(f"OK: eval stub smoke mean_recall={mean_recall:.4f} mean_mrr={mean_mrr:.4f}")
+PY

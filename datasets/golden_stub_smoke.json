@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "name": "stub_smoke (identifier/path anchored)",
+  "cases": [
+    {
+      "id": "path_context_pack_router",
+      "query": "crates/mcp-server/src/tools/dispatch/router/context_pack.rs",
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/router/context_pack.rs"],
+      "intent": "path"
+    },
+    {
+      "id": "path_query_classifier",
+      "query": "crates/search/src/query_classifier.rs",
+      "expected_paths": ["crates/search/src/query_classifier.rs"],
+      "intent": "path"
+    },
+    {
+      "id": "id_resolve_project_root",
+      "query": "resolve_project_root",
+      "expected_paths": ["crates/cli/src/command/context.rs"],
+      "expected_symbols": ["resolve_project_root"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_auto_index_policy",
+      "query": "AutoIndexPolicy",
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/mod.rs"],
+      "expected_symbols": ["AutoIndexPolicy"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_root_fingerprint",
+      "query": "root_fingerprint",
+      "expected_paths": ["crates/indexer/src/index_state.rs"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_grep_fallback_hunks",
+      "query": "grep_fallback_hunks",
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/router/semantic_fallback.rs"],
+      "expected_symbols": ["grep_fallback_hunks"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_find_best_effort_text_match",
+      "query": "find_best_effort_text_match",
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/router/explain.rs"],
+      "expected_symbols": ["find_best_effort_text_match"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_context_doc_builder",
+      "query": "ContextDocBuilder",
+      "expected_paths": ["crates/mcp-server/src/tools/context_doc.rs"],
+      "expected_symbols": ["ContextDocBuilder"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_cursor_alias",
+      "query": "cursor_alias",
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/router/cursor_alias.rs"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_tool_instructions",
+      "query": "tool_instructions",
+      "expected_paths": ["crates/mcp-server/src/tools/catalog.rs"],
+      "expected_symbols": ["tool_instructions"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_is_semantic_unavailable_error",
+      "query": "is_semantic_unavailable_error",
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/router/semantic_fallback.rs"],
+      "expected_symbols": ["is_semantic_unavailable_error"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_maybe_warm_graph_nodes_store",
+      "query": "maybe_warm_graph_nodes_store",
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/mod.rs"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_enforce_max_chars",
+      "query": "enforce_max_chars",
+      "expected_paths": ["crates/protocol/src/lib.rs"],
+      "expected_symbols": ["enforce_max_chars"],
+      "intent": "identifier"
+    },
+    {
+      "id": "id_tool_meta",
+      "query": "ToolMeta",
+      "expected_paths": ["crates/indexer/src/index_state.rs"],
+      "expected_symbols": ["ToolMeta"],
+      "intent": "identifier"
+    },
+    {
+      "id": "doc_quality_charter",
+      "query": "Quality Charter (Premium Daily Driver)",
+      "expected_paths": ["docs/QUALITY_CHARTER.md"],
+      "intent": "conceptual"
+    }
+  ]
+}

@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
@@ -49,6 +48,7 @@ async fn list_files_uses_env_root_when_path_missing() -> Result<()> {
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
     cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
     cmd.env("CONTEXT_FINDER_ROOT", root);
@@ -79,14 +79,9 @@ async fn list_files_uses_env_root_when_path_missing() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("list_files did not return text content")?;
-    let json: Value = serde_json::from_str(text).context("list_files output is not valid JSON")?;
-    let files = json
-        .get("files")
-        .and_then(Value::as_array)
-        .context("missing files array")?;
+        .context("list_files missing text output")?;
     assert!(
-        files.iter().any(|v| v.as_str() == Some("src/a.rs")),
+        text.contains("src/a.rs"),
         "expected src/a.rs in list_files output"
     );
 

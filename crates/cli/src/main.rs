@@ -16,11 +16,10 @@ use command::{
     SymbolsOutput,
 };
 use context_protocol::{serialize_json, ErrorEnvelope};
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 use tonic::transport::Server;
 
@@ -34,8 +33,25 @@ mod heartbeat;
 mod models;
 mod report;
 
+fn print_stdout(text: &str) -> Result<()> {
+    use std::io::Write;
+
+    let mut stdout = io::stdout().lock();
+    if let Err(err) = stdout
+        .write_all(text.as_bytes())
+        .and_then(|_| stdout.write_all(b"\n"))
+        .and_then(|_| stdout.flush())
+    {
+        if err.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(err.into());
+    }
+    Ok(())
+}
+
 #[derive(Parser)]
-#[command(name = "context-finder")]
+#[command(name = "context")]
 #[command(about = "Semantic code search for AI agents", long_about = None)]
 #[command(version)]
 struct Cli {
@@ -58,7 +74,7 @@ struct Cli {
     #[arg(long, global = true)]
     embed_model: Option<String>,
 
-    /// Model cache directory (overrides CONTEXT_FINDER_MODEL_DIR)
+    /// Model cache directory (overrides CONTEXT_MODEL_DIR)
     #[arg(long, global = true)]
     model_dir: Option<PathBuf>,
 
@@ -71,7 +87,7 @@ struct Cli {
     cuda_mem_limit_mb: Option<usize>,
 
     /// Cache directory for compare_search and heavy ops
-    #[arg(long, global = true, default_value = ".context-finder/cache")]
+    #[arg(long, global = true, default_value = ".context/cache")]
     cache_dir: String,
 
     /// Cache TTL in seconds
@@ -520,6 +536,21 @@ fn parse_cache_backend(value: &str) -> Result<CacheBackend> {
     }
 }
 
+fn resolve_cache_dir(raw: &str) -> PathBuf {
+    if raw == ".context/cache" {
+        let preferred = PathBuf::from(raw);
+        if preferred.exists() {
+            return preferred;
+        }
+        let legacy = PathBuf::from(".context-finder/cache");
+        if legacy.exists() {
+            return legacy;
+        }
+        return preferred;
+    }
+    PathBuf::from(raw)
+}
+
 fn env_truthy(var: &str) -> bool {
     env::var(var)
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -537,7 +568,8 @@ fn cuda_disabled_by_env() -> bool {
 }
 
 fn embed_mode_is_stub() -> bool {
-    env::var("CONTEXT_FINDER_EMBEDDING_MODE")
+    env::var("CONTEXT_EMBEDDING_MODE")
+        .or_else(|_| env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
         .map(|v| v.eq_ignore_ascii_case("stub"))
         .unwrap_or(false)
 }
@@ -562,27 +594,28 @@ async fn main() -> Result<()> {
     let mut cli = Cli::parse();
 
     if let Some(model) = &cli.embed_model {
-        env::set_var("CONTEXT_FINDER_EMBEDDING_MODEL", model);
+        env::set_var("CONTEXT_EMBEDDING_MODEL", model);
     }
     if let Some(dir) = &cli.model_dir {
-        env::set_var("CONTEXT_FINDER_MODEL_DIR", dir);
+        env::set_var("CONTEXT_MODEL_DIR", dir);
     }
     if let Some(device) = cli.cuda_device {
-        env::set_var("CONTEXT_FINDER_CUDA_DEVICE", device.to_string());
+        env::set_var("CONTEXT_CUDA_DEVICE", device.to_string());
     }
     if let Some(limit_mb) = cli.cuda_mem_limit_mb {
-        env::set_var("CONTEXT_FINDER_CUDA_MEM_LIMIT_MB", limit_mb.to_string());
+        env::set_var("CONTEXT_CUDA_MEM_LIMIT_MB", limit_mb.to_string());
     }
     if let Some(mode) = cli.embed_mode {
-        env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", mode.as_str());
+        env::set_var("CONTEXT_EMBEDDING_MODE", mode.as_str());
     }
 
     let profile = cli
         .profile
         .clone()
+        .or_else(|| env::var("CONTEXT_PROFILE").ok())
         .or_else(|| env::var("CONTEXT_FINDER_PROFILE").ok())
         .unwrap_or_else(|| "quality".to_string());
-    env::set_var("CONTEXT_FINDER_PROFILE", &profile);
+    env::set_var("CONTEXT_PROFILE", &profile);
 
     let needs_ort_bootstrap = match &cli.command {
         Commands::InstallModels(_) => false,
@@ -590,7 +623,7 @@ async fn main() -> Result<()> {
         _ => true,
     };
     if needs_ort_bootstrap && !embed_mode_is_stub() && !cuda_disabled_by_env() {
-        let allow_cpu = env_truthy("CONTEXT_FINDER_ALLOW_CPU");
+        let allow_cpu = env_truthy("CONTEXT_ALLOW_CPU") || env_truthy("CONTEXT_FINDER_ALLOW_CPU");
         if let Err(err) = bootstrap_gpu_env() {
             if matches!(cli.command, Commands::Doctor(_)) || allow_cpu {
                 // Best-effort: allow `doctor` to report GPU/runtime issues and allow CPU fallback
@@ -641,7 +674,7 @@ async fn main() -> Result<()> {
     builder.target(env_logger::Target::Stderr).init();
 
     let cache_cfg = CacheConfig {
-        dir: PathBuf::from(&cli.cache_dir),
+        dir: resolve_cache_dir(&cli.cache_dir),
         ttl: Duration::from_secs(cli.cache_ttl_seconds),
         backend: parse_cache_backend(&cli.cache_backend)?,
         capacity: 32,
@@ -719,7 +752,7 @@ async fn run_eval(args: EvalArgs, cache_cfg: CacheConfig) -> Result<()> {
     }
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -803,7 +836,7 @@ async fn run_eval_compare(args: EvalCompareArgs, cache_cfg: CacheConfig) -> Resu
     }
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -836,7 +869,7 @@ async fn run_command(args: CommandArgs, cache_cfg: CacheConfig) -> Result<()> {
         && !embed_mode_is_stub()
         && !cuda_disabled_by_env()
     {
-        let allow_cpu = env_truthy("CONTEXT_FINDER_ALLOW_CPU");
+        let allow_cpu = env_truthy("CONTEXT_ALLOW_CPU") || env_truthy("CONTEXT_FINDER_ALLOW_CPU");
         if let Err(err) = bootstrap_gpu_env() {
             if !allow_cpu {
                 return Err(err).context("Failed to configure CUDA runtime paths");
@@ -851,7 +884,7 @@ async fn run_command(args: CommandArgs, cache_cfg: CacheConfig) -> Result<()> {
     } else {
         serialize_json(&response)?
     };
-    println!("{output}");
+    print_stdout(&output)?;
 
     if response.is_error() {
         std::process::exit(1);
@@ -899,7 +932,7 @@ async fn run_index(args: IndexArgs, cache_cfg: CacheConfig) -> Result<()> {
     let response = command::execute(request, cache_cfg).await;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -934,7 +967,7 @@ async fn run_search(args: SearchArgs, cache_cfg: CacheConfig) -> Result<()> {
     let response = command::execute(request, cache_cfg).await;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -943,12 +976,20 @@ async fn run_search(args: SearchArgs, cache_cfg: CacheConfig) -> Result<()> {
         std::process::exit(1);
     } else if let Ok(search_out) = serde_json::from_value::<SearchOutput>(response.data) {
         for (i, result) in search_out.results.iter().enumerate() {
-            println!("{}. {} (score: {:.3})", i + 1, result.file, result.score);
+            print_stdout(&format!(
+                "{}. {} (score: {:.3})",
+                i + 1,
+                result.file,
+                result.score
+            ))?;
             if let Some(symbol) = &result.symbol {
-                println!("   Symbol: {}", symbol);
+                print_stdout(&format!("   Symbol: {}", symbol))?;
             }
-            println!("   Lines: {}-{}", result.start_line, result.end_line);
-            println!();
+            print_stdout(&format!(
+                "   Lines: {}-{}",
+                result.start_line, result.end_line
+            ))?;
+            print_stdout("")?;
         }
     }
     Ok(())
@@ -991,7 +1032,7 @@ async fn run_get_context(args: GetContextArgs, cache_cfg: CacheConfig) -> Result
     }
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&all_results)?);
+        print_stdout(&serde_json::to_string_pretty(&all_results)?)?;
     } else {
         eprintln!(
             "Found {} results for {} queries",
@@ -1005,7 +1046,7 @@ async fn run_get_context(args: GetContextArgs, cache_cfg: CacheConfig) -> Result
                 (Some(sym), None) => format!(" [{}]", sym),
                 _ => String::new(),
             };
-            println!(
+            print_stdout(&format!(
                 "# {} {} lines {}-{} (score: {:.3}){}",
                 i + 1,
                 result.file,
@@ -1013,9 +1054,9 @@ async fn run_get_context(args: GetContextArgs, cache_cfg: CacheConfig) -> Result
                 result.end_line,
                 result.score,
                 symbol_info
-            );
-            println!("{}", result.content);
-            println!();
+            ))?;
+            print_stdout(&result.content)?;
+            print_stdout("")?;
         }
     }
     Ok(())
@@ -1039,7 +1080,7 @@ async fn run_list_symbols(args: ListSymbolsArgs, cache_cfg: CacheConfig) -> Resu
     let response = command::execute(request, cache_cfg).await;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -1064,10 +1105,10 @@ async fn run_list_symbols(args: ListSymbolsArgs, cache_cfg: CacheConfig) -> Resu
         for symbol in &symbols_out.symbols {
             if type_filter.is_none_or(|t| symbol.symbol_type.eq_ignore_ascii_case(t)) {
                 let file_display = symbol.file.as_deref().unwrap_or(&symbols_out.file);
-                println!(
+                print_stdout(&format!(
                     "{} {} ({}:{})",
                     symbol.symbol_type, symbol.name, file_display, symbol.line
-                );
+                ))?;
             }
         }
     }
@@ -1092,7 +1133,7 @@ async fn run_map(args: MapArgs, cache_cfg: CacheConfig) -> Result<()> {
     let response = command::execute(request, cache_cfg).await;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -1113,10 +1154,10 @@ async fn run_map(args: MapArgs, cache_cfg: CacheConfig) -> Result<()> {
                 .coverage_lines_pct
                 .map(|p| format!("{:.1}%", p))
                 .unwrap_or_else(|| "-".to_string());
-            println!(
+            print_stdout(&format!(
                 "{:<40} {:>4} files {:>5} chunks ({} of code)",
                 node.path, node.files, node.chunks, coverage
-            );
+            ))?;
 
             if let Some(symbols) = &node.top_symbols {
                 for sym in symbols.iter().take(3) {
@@ -1125,7 +1166,7 @@ async fn run_map(args: MapArgs, cache_cfg: CacheConfig) -> Result<()> {
                         .as_deref()
                         .map(|p| format!(" in {}", p))
                         .unwrap_or_default();
-                    println!("  - {} {}{}", sym.symbol_type, sym.name, parent);
+                    print_stdout(&format!("  - {} {}{}", sym.symbol_type, sym.name, parent))?;
                 }
             }
         }
@@ -1157,7 +1198,7 @@ async fn run_context(args: ContextArgs, cache_cfg: CacheConfig) -> Result<()> {
     let response = command::execute(request, cache_cfg).await;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -1178,7 +1219,7 @@ async fn run_context(args: ContextArgs, cache_cfg: CacheConfig) -> Result<()> {
                 (Some(sym), None) => format!(" [{}]", sym),
                 _ => String::new(),
             };
-            println!(
+            print_stdout(&format!(
                 "# {} {} lines {}-{} (score: {:.3}){}",
                 i + 1,
                 result.file,
@@ -1186,32 +1227,32 @@ async fn run_context(args: ContextArgs, cache_cfg: CacheConfig) -> Result<()> {
                 result.end_line,
                 result.score,
                 symbol_info
-            );
-            println!("{}", result.content);
+            ))?;
+            print_stdout(&result.content)?;
 
             // Show related code from graph
             if let Some(related) = &result.related {
                 if !related.is_empty() {
-                    println!();
-                    println!("  Related ({}):", related.len());
+                    print_stdout("")?;
+                    print_stdout(&format!("  Related ({}):", related.len()))?;
                     for rel in related.iter().take(5) {
                         let rel_sym = rel
                             .symbol
                             .as_deref()
                             .map(|s| format!(" [{}]", s))
                             .unwrap_or_default();
-                        println!(
+                        print_stdout(&format!(
                             "    - {} lines {}-{}{} ({})",
                             rel.file,
                             rel.start_line,
                             rel.end_line,
                             rel_sym,
                             rel.relationship.join(" -> ")
-                        );
+                        ))?;
                     }
                 }
             }
-            println!();
+            print_stdout("")?;
         }
     }
     Ok(())
@@ -1252,7 +1293,7 @@ async fn run_context_pack(args: ContextPackArgs, cache_cfg: CacheConfig) -> Resu
     let response = command::execute(request, cache_cfg).await;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        print_stdout(&serde_json::to_string_pretty(&response)?)?;
     } else if response.is_error() {
         eprintln!(
             "Error: {}",
@@ -1277,7 +1318,7 @@ async fn run_install_models(args: InstallModelsArgs) -> Result<()> {
     let report = models::install_models(&model_dir, &args.models, args.force, args.dry_run).await?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        print_stdout(&serde_json::to_string_pretty(&report)?)?;
     } else {
         eprintln!("Model dir: {}", report.model_dir);
         if !report.selected_models.is_empty() {
@@ -1303,7 +1344,7 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
         && (report.gpu_ok || report.gpu_error.is_none());
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        print_stdout(&serde_json::to_string_pretty(&report)?)?;
     } else {
         eprintln!("Model dir: {}", report.model_dir);
         eprintln!("Profile: {}", report.profile);
@@ -1374,7 +1415,10 @@ async fn serve_http(args: ServeArgs, cache_cfg: CacheConfig) -> Result<()> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
-    println!("Serving Command API on http://{}/command", args.bind);
+    print_stdout(&format!(
+        "Serving Command API on http://{}/command",
+        args.bind
+    ))?;
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -1382,7 +1426,7 @@ async fn serve_http(args: ServeArgs, cache_cfg: CacheConfig) -> Result<()> {
 async fn serve_grpc(args: ServeGrpcArgs, cache_cfg: CacheConfig) -> Result<()> {
     let addr = args.bind.parse()?;
     let server = grpc::GrpcServer::new(cache_cfg);
-    println!("Serving gRPC Command API on {addr}");
+    print_stdout(&format!("Serving gRPC Command API on {addr}"))?;
     Server::builder()
         .add_service(server.into_server())
         .serve(addr)
@@ -1454,104 +1498,20 @@ async fn http_health(state: std::sync::Arc<HttpState>) -> Result<Response, Statu
 }
 
 fn bootstrap_gpu_env() -> Result<()> {
-    let ort_lib =
-        resolve_ort_lib().context("ONNX Runtime CUDA libraries not found in default locations")?;
-    env::set_var("ORT_LIB_LOCATION", &ort_lib);
-
-    let mut paths = vec![ort_lib];
-    paths.extend(nvidia_cuda_libs());
-    prepend_ld_library_path(paths);
+    let report = context_vector_store::gpu_env::bootstrap_cuda_env_best_effort();
+    // This is a best-effort bootstrap. Presence checks are heuristic and can false-negative when
+    // the dynamic loader resolves libs via ldconfig or non-standard vendor paths.
+    //
+    // Failures will still surface when we actually try to build the CUDA EP (with a richer error),
+    // so we avoid blocking startup here.
     log::debug!(
-        "ORT_LIB_LOCATION={} LD_LIBRARY_PATH={}",
+        "CUDA bootstrap: provider_present={} cublas_present={} ORT_LIB_LOCATION={} LD_LIBRARY_PATH={}",
+        report.provider_present,
+        report.cublas_present,
         env::var("ORT_LIB_LOCATION").unwrap_or_default(),
         env::var("LD_LIBRARY_PATH").unwrap_or_default()
     );
     Ok(())
-}
-
-fn resolve_ort_lib() -> Option<PathBuf> {
-    if let Ok(path) = env::var("ORT_LIB_LOCATION") {
-        let candidate = PathBuf::from(path);
-        if has_cuda_provider(&candidate) {
-            return Some(candidate);
-        }
-    }
-
-    let home = env::var("HOME").ok()?;
-    let root = Path::new(&home)
-        .join(".cache")
-        .join("ort.pyke.io")
-        .join("dfbin")
-        .join("x86_64-unknown-linux-gnu");
-
-    let entries = fs::read_dir(root).ok()?;
-    for entry in entries.flatten() {
-        let candidate = entry.path().join("onnxruntime").join("lib");
-        if has_cuda_provider(&candidate) {
-            return Some(candidate);
-        }
-    }
-
-    None
-}
-
-fn has_cuda_provider(dir: &Path) -> bool {
-    dir.join("libonnxruntime_providers_cuda.so").exists()
-}
-
-fn nvidia_cuda_libs() -> Vec<PathBuf> {
-    let mut libs = Vec::new();
-    let home = env::var("HOME").unwrap_or_default();
-    let base = Path::new(&home)
-        .join(".local")
-        .join("lib")
-        .join("python3.12")
-        .join("site-packages")
-        .join("nvidia");
-    let names = ["cublas", "cuda_runtime", "curand", "cufft", "cudnn"];
-    for name in names {
-        let dir = base.join(name).join("lib");
-        if dir.exists() {
-            libs.push(dir);
-        }
-    }
-    let system_cuda = [
-        Path::new("/usr/local/cuda/lib64"),
-        Path::new("/usr/local/cuda/targets/x86_64-linux/lib"),
-    ];
-    for dir in system_cuda {
-        if dir.exists() {
-            libs.push(dir.to_path_buf());
-        }
-    }
-    libs
-}
-
-fn prepend_ld_library_path(paths: Vec<PathBuf>) {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut ordered: Vec<String> = Vec::new();
-
-    for path in paths {
-        if !path.exists() {
-            continue;
-        }
-        let value = path.to_string_lossy().into_owned();
-        if seen.insert(value.clone()) {
-            ordered.push(value);
-        }
-    }
-
-    if let Ok(existing) = env::var("LD_LIBRARY_PATH") {
-        for part in existing.split(':').filter(|p| !p.is_empty()) {
-            if seen.insert(part.to_string()) {
-                ordered.push(part.to_string());
-            }
-        }
-    }
-
-    if !ordered.is_empty() {
-        env::set_var("LD_LIBRARY_PATH", ordered.join(":"));
-    }
 }
 
 #[derive(Clone)]

@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const INDEX_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -11,6 +12,8 @@ pub enum Watermark {
         computed_at_unix_ms: Option<u64>,
         git_head: String,
         git_dirty: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dirty_hash: Option<u64>,
     },
     Filesystem {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +97,26 @@ pub struct StaleAssessment {
 pub struct ToolMeta {
     #[serde(default)]
     pub index_state: Option<IndexState>,
+    /// Stable fingerprint for the resolved project root.
+    ///
+    /// This allows multi-session clients to detect accidental cross-project context mixups
+    /// without exposing filesystem paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_fingerprint: Option<u64>,
+}
+
+/// Stable 64-bit fingerprint for root identification fields.
+///
+/// This is used in `ToolMeta` so clients can detect accidental cross-project context mixups
+/// without embedding raw filesystem paths in responses.
+#[must_use]
+pub fn root_fingerprint(root_display: &str) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(root_display.as_bytes());
+    let digest = hasher.finalize();
+    u64::from_be_bytes([
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+    ])
 }
 
 #[must_use]
@@ -123,11 +146,13 @@ pub fn assess_staleness(
                 Watermark::Git {
                     git_head: idx_head,
                     git_dirty: idx_dirty,
+                    dirty_hash: idx_hash,
                     ..
                 },
                 Watermark::Git {
                     git_head: cur_head,
                     git_dirty: cur_dirty,
+                    dirty_hash: cur_hash,
                     ..
                 },
             ) => {
@@ -136,6 +161,9 @@ pub fn assess_staleness(
                 }
                 if idx_dirty != cur_dirty {
                     reasons.push(StaleReason::GitDirtyMismatch);
+                }
+                if idx_hash != cur_hash {
+                    reasons.push(StaleReason::FilesystemChanged);
                 }
             }
             (
@@ -174,6 +202,16 @@ mod tests {
             computed_at_unix_ms: None,
             git_head: head.to_string(),
             git_dirty: dirty,
+            dirty_hash: None,
+        }
+    }
+
+    fn git_with_hash(head: &str, dirty: bool, dirty_hash: Option<u64>) -> Watermark {
+        Watermark::Git {
+            computed_at_unix_ms: None,
+            git_head: head.to_string(),
+            git_dirty: dirty,
+            dirty_hash,
         }
     }
 
@@ -219,6 +257,18 @@ mod tests {
         let out = assess_staleness(&git("aaa", true), true, false, Some(&git("aaa", false)));
         assert_eq!(out.stale, true);
         assert_eq!(out.reasons, vec![StaleReason::GitDirtyMismatch]);
+    }
+
+    #[test]
+    fn stale_when_git_dirty_hash_mismatch() {
+        let out = assess_staleness(
+            &git_with_hash("aaa", true, Some(1)),
+            true,
+            false,
+            Some(&git_with_hash("aaa", true, Some(2))),
+        );
+        assert_eq!(out.stale, true);
+        assert_eq!(out.reasons, vec![StaleReason::FilesystemChanged]);
     }
 
     #[test]

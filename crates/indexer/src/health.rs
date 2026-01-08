@@ -1,5 +1,5 @@
 use crate::{IndexStats, Result};
-use context_vector_store::current_model_id;
+use context_vector_store::{context_dir_for_project_root, current_model_id};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,7 +7,7 @@ use tokio::fs;
 
 const MAX_FAILURES: usize = 5;
 
-/// Snapshot persisted to `.context-finder/health.json` so other processes can
+/// Snapshot persisted to `.context/health.json` so other processes can
 /// report the last successful indexing run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthSnapshot {
@@ -47,17 +47,17 @@ pub async fn write_health_snapshot(
     pending_events: Option<usize>,
 ) -> Result<HealthSnapshot> {
     let model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
-    let index_path = root
-        .join(".context-finder")
+    let index_path = context_dir_for_project_root(root)
         .join("indexes")
         .join(model_id_dir_name(&model_id))
         .join("index.json");
     let index_size_bytes = tokio::fs::metadata(index_path).await.ok().map(|m| m.len());
-    let graph_cache_size_bytes =
-        tokio::fs::metadata(root.join(".context-finder").join("graph_cache.json"))
-            .await
-            .ok()
-            .map(|m| m.len());
+    let graph_cache_size_bytes = tokio::fs::metadata(
+        context_dir_for_project_root(root).join("graph_cache.json"),
+    )
+    .await
+    .ok()
+    .map(|m| m.len());
     let files_per_sec = if stats.time_ms > 0 {
         #[allow(clippy::cast_precision_loss)]
         Some(stats.files as f32 / (stats.time_ms as f32 / 1000.0))
@@ -158,7 +158,7 @@ pub async fn read_health_snapshot(root: &Path) -> Result<Option<HealthSnapshot>>
 
 #[must_use]
 pub fn health_file_path(root: &Path) -> PathBuf {
-    root.join(".context-finder").join("health.json")
+    context_dir_for_project_root(root).join("health.json")
 }
 
 fn current_unix_ms() -> u64 {

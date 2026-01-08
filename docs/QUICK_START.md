@@ -2,7 +2,9 @@
 
 ## What is Context Finder MCP?
 
-Context Finder MCP is a semantic code navigation tool designed for AI agents and coding assistants. It indexes codebases using tree-sitter AST parsing and ONNX embeddings, enabling fast semantic search and bounded context packs.
+Context Finder MCP is a semantic code navigation tool designed for AI agents and coding assistants.
+
+Its core UX goal is **not** “yet another search command” — it is to feel like an agent’s **always fresh, bounded project memory**, so daily context gathering does *not* degrade into `rg/cat/grep` loops.
 
 ## Installation
 
@@ -12,7 +14,7 @@ Context Finder MCP is a semantic code navigation tool designed for AI agents and
 git clone https://github.com/AmirTlinov/context-finder-mcp.git
 cd context-finder-mcp
 cargo build --release
-cargo install --path crates/cli
+cargo install --path crates/cli --locked
 ```
 
 ### Requirements
@@ -35,7 +37,35 @@ context-finder doctor
 
 ## Basic Usage
 
-### 1. Index a Project
+### MCP (recommended for AI agents)
+
+**You do not need to manually index projects when using MCP.**
+
+Context Finder keeps an **incremental index in the background** and self-heals on semantic tool calls. If semantic search is unavailable (e.g., first warmup or embeddings temporarily unavailable), tools degrade to **filesystem-first fallbacks** so the agent can keep moving.
+
+Start with one of these:
+
+- `read_pack` — daily “project memory”: stable repo facts + key snippets under one `max_chars` budget.
+- `repo_onboarding_pack` — onboarding: map + a few key docs under one budget.
+
+### Multi-session safety
+
+When you have multiple agent sessions (or multiple repos open at once), prefer explicit roots:
+
+- Always pass `path` on tool calls when your client can.
+- If `path` is omitted, Context Finder resolves roots in this order:
+  1) per-connection session root (from MCP `roots/list`), then
+  2) `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`, then
+  3) (non-daemon only) server process cwd fallback.
+- Every tool response includes a `root_fingerprint` in tool meta so clients can detect cross-project mixups without exposing filesystem paths.
+- For human debugging, `response_mode=full` also prints `N: root_fingerprint=...` in the `.context` text output so you can eyeball provenance quickly.
+- Error responses also include this note when a root is known, so provenance is visible even when a call fails.
+
+### CLI (optional; debugging/automation)
+
+The CLI still exposes `index` for explicit rebuilds (useful for automation, debugging, or when you want deterministic “do it now” behavior).
+
+#### 1) Index a Project (manual)
 
 ```bash
 cd ~/my-project
@@ -54,7 +84,7 @@ context-finder index . --experts --json
 context-finder index . --experts --models embeddinggemma-300m --json
 ```
 
-### 2. Search for Code
+#### 2) Search for Code
 
 ```bash
 # Simple search
@@ -70,7 +100,7 @@ context-finder search "authentication" --with-graph
 context-finder search "api endpoint" --json
 ```
 
-### 3. Build a Bounded Context Pack (agent default)
+#### 3) Build a Bounded Context Pack (JSON)
 
 `context-pack` is a single-call, bounded JSON for agent context: primary hits + related halo under a strict character budget.
 
@@ -190,9 +220,30 @@ context-finder daemon-loop
 Install and run the MCP server:
 
 ```bash
-cargo install --path crates/mcp-server
+cargo install --path crates/mcp-server --locked
 context-finder-mcp
 ```
+
+#### Multi-agent mode (shared backend)
+
+If you have many agent sessions open, the MCP server defaults to a shared backend daemon so you don’t pay the cost of a cold start in every session and cursor-only continuation stays stable.
+
+If you need an isolated in-process server per session (mostly useful in tests), disable shared mode:
+
+```text
+CONTEXT_FINDER_MCP_SHARED=0
+```
+
+In shared mode, each session runs a lightweight stdio proxy that connects to a single long-lived daemon process (`context-finder-mcp daemon`) behind the scenes.
+
+Optional:
+
+- `CONTEXT_FINDER_MCP_SOCKET` overrides the Unix socket path for the daemon.
+- Keep the indexing daemon enabled (avoid `CONTEXT_FINDER_DISABLE_DAEMON=1`) if you want indexes to stay warm while you work.
+- `CONTEXT_FINDER_INDEX_CONCURRENCY` caps how many projects can be indexed in parallel in shared daemon mode (default: auto; range: 1–32). Requires restarting the daemon to take effect.
+- `CONTEXT_FINDER_WARM_WORKER_CAPACITY` caps how many hot project warm workers are kept in the daemon warm-indexer LRU (default: auto). Requires restarting the daemon to take effect.
+- `CONTEXT_FINDER_WARM_WORKER_TTL_SECS` sets idle eviction TTL for warm workers (default: auto). Requires restarting the daemon to take effect.
+- `CONTEXT_FINDER_ENGINE_SEMANTIC_INDEX_CAPACITY` caps how many semantic indices are kept loaded per project engine (default: auto; minimum: 1). Lower values reduce RAM but may increase on-demand index loads. Requires restarting the daemon to take effect.
 
 Self-audit tool inventory (no MCP client required):
 
@@ -200,43 +251,148 @@ Self-audit tool inventory (no MCP client required):
 context-finder-mcp --print-tools
 ```
 
-Repo onboarding pack tool (best default for agents; one call → `map` + key docs + `next_actions`):
+#### Codex CLI (MCP) integration
 
-```jsonc
-{
-  "path": "/path/to/project",
-  "map_depth": 2,
-  "docs_limit": 6,
-  "max_chars": 20000,
-  "auto_index": true
-}
+Example `~/.codex/config.toml` snippet:
+
+```toml
+[mcp_servers.context-finder]
+command = "context-finder-mcp"
+args = []
+
+[mcp_servers.context-finder.env]
+CONTEXT_FINDER_PROFILE = "quality"
+# Shared backend is enabled by default (agent-native multi-session UX).
+# Set to "0" only if you need an isolated in-process server per session:
+# CONTEXT_FINDER_MCP_SHARED = "0"
+
+# Default output is agent-native `.context` plain text (no JSON in agent chat).
+# For machine-readable automation / `$ref` fan-out, use the Command API.
 ```
 
-If no docs were included, `docs_reason` explains why (e.g. `docs_limit_zero`, `max_chars`).
-Under tight budgets, the pack reserves space for at least one doc slice by trimming the map first.
+Tip: point `command` at an installed binary (release) rather than `cargo run` — otherwise the first
+compile can exceed MCP client startup timeouts. If your client still times out on cold start, raise
+`startup_timeout_sec` in the MCP config (Codex defaults to ~10s).
+
+Daily “project memory” tool (best default for agents; one call → stable repo facts + key docs):
+
+```jsonc
+{ "path": "/path/to/project" }
+```
+
+If your agent session is already “inside” the repo (common case), you can omit `path` and let the
+shared-backend proxy inject the project root from its current working directory:
+
+```jsonc
+{}
+```
+
+If you are using Context Finder as a daily navigation/memory tool, start with the playbook:
+
+- `docs/AGENT_MEMORY.md` — `read_pack` as the “apply_patch of context”
+
+This calls `read_pack` with defaults (see the full schema via `context-finder-mcp --print-tools` or the MCP tool schema in `crates/mcp-server/src/tools/schemas/read_pack.rs`):
+- `intent: "memory"` (returns a memory pack)
+- `response_mode: "facts"` (low-noise daily mode: returns mostly project content; avoids diagnostic meta and helper guidance)
+- `auto_index: false` for `memory`/`onboarding` (no `.context-finder` side effects unless you ask)
+- `auto_index: false` by default for `recall`, but per-question `deep` is an explicit opt-in and may auto-index unless you explicitly disable it
+- `auto_index: true` for `query` (so semantic packs work out of the box)
+
+To include a graph-based architecture overview (slower, index-backed), request `response_mode: "full"`.
 
 Capabilities tool (`capabilities`): one call returns versions, default budgets, and a recommended
 start route for zero-guess onboarding.
 
-One-call reading pack tool (`read_pack`; a single entry point for file/grep/query/onboarding, with cursor-only continuation).
-All MCP tool errors return structured JSON under `structured_content.error` (code/message/details/hint/next_actions) plus a matching text message. When recovery is obvious (missing index, budget too small), errors include `next_actions` that point to `index`/`doctor` or a tuned retry. `read_pack` strictly honors `max_chars`; `meta.index_state` is always present when available, and `next_actions` are trimmed only if required to fit the budget:
+One-call reading pack tool (`read_pack`; a single entry point for file/grep/query/onboarding/memory/recall, with cursor-only continuation).
+All MCP tool errors are reported in `.context` text (`A: error: <code>` + a short human hint). `read_pack` strictly honors `max_chars`; it is optimized for agent UX:
+- the default pack starts with a compact `project_facts` section (stable repo facts)
+- defaults to `response_mode: "facts"` for low-noise daily use
+- supports `response_mode: "full"` when you explicitly want extra diagnostics / helper guidance
+- supports `response_mode: "minimal"` when you want the smallest possible response
+- supports one-call recall via `questions` (preferred) or `ask` (single prompt), returning `recall` sections with compact `snippet` payloads
+- is **secret-safe by default**: read tools refuse or skip common secret locations unless you explicitly set `allow_secrets: true`
+- has a **freshness-safe fallback**: when the semantic index is stale and `auto_index=false`, `read_pack` (query/recall deep) deterministically switches to filesystem strategies instead of returning silently stale semantic results
+- can include an **external memory overlay** (e.g., BranchMind) when a project-scoped cache file is present (returned as an `external_memory` section, bounded + low-noise)
+
+External memory overlay (default convention):
+
+- BranchMind context pack file: `.context-finder/branchmind/context_pack.json` (the `context_pack` *result* JSON).
+- Codex CLI worklog cache: stored under your Codex home (e.g. `~/.codex/.context-finder/external_memory/codex_cli/*`, keyed by project root), derived from `~/.codex/sessions` / `$CODEX_HOME/sessions` (project-scoped via session cwd prefix; deduped + bounded; never written into the repo).
+
+### Recall mini-language (per question)
+
+To keep the request contract simple (no “semantic sugar knobs” in the schema), `read_pack` supports a tiny *per-question* directive syntax inside `questions[]` strings.
+These directives are optional and are **not** part of the JSON schema — they are parsed from each question line.
+
+Common directives:
+
+- Routing: `fast` (grep/file-first), `deep` (semantic allowed; can auto-index per question)
+- Scoping: `in:<prefix>`, `not:<prefix>` (path prefixes relative to project root)
+- File filter: `glob:<pattern>` / `fp:<pattern>`
+- File jump: `file:<path[:line]>` / `open:<path[:line]>`
+- Grep intent: `re:<regex>` / `regex:<regex>`, `lit:<text>` / `literal:<text>`
+- Output control: `k:<N>` (snippets per question), `ctx:<N>` (grep context lines)
+- Deep indexing budget: `index:5s`, `deep:8000ms` (auto-index time budget per question)
+
+If a cursor is returned and looks unusually compact, it may rely on short-lived server-side continuation state (agent-friendly, avoids cursor bloat).
+
+If it expires, simply repeat the original call that produced it. In shared-backend mode (the default), cursor aliases are persisted best-effort on disk, so compact `cfcs1:…` cursors typically survive process restarts as long as their TTL has not expired.
 
 ```jsonc
+// Daily long-memory pack (defaults; stable repo facts + key configs/docs under one budget)
+{
+  "path": "/path/to/project"
+}
+
+// One-call recall ("remember" anything about the repo in one call)
+// - `questions` is preferred for deterministic, multi-part asks
+// - `ask` is a convenience for single free-form questions
+{
+  "path": "/path/to/project",
+  "questions": [
+    "Where is the HTTP /command route implemented?",
+    "How do I run tests in this repo?",
+    "re: cargo test", // optional: explicit grep directive (Rust regex syntax)
+    "lit: cargo test", // optional: literal grep directive (no regex)
+    "fast in:src lit: cursor_fingerprint", // optional: per-question scoping + force fast path
+    "deep index:8s k:5 ctx:20 How does auto-index decide the project root? in:crates" // deep mode + knobs
+  ],
+  "max_chars": 6000
+}
+
 // Read a file window (internally calls file_slice)
 {
   "path": "/path/to/project",
   "intent": "file",
   "file": "src/lib.rs",
-  "start_line": 120,
-  "max_lines": 80,
-  "max_chars": 20000,
-  "timeout_ms": 55000
+  "offset": 120,
+  "limit": 80,
+  "max_chars": 2000,
+  "response_mode": "facts",
+  "timeout_ms": 12000
 }
 
 // Continue without repeating inputs
 {
+  "cursor": "<cursor>"
+}
+```
+
+Repo onboarding pack tool (`repo_onboarding_pack`) is still available when you want a richer map-first onboarding view.
+
+Semantic context pack tool (`context_pack`; bounded output; supports path filters):
+
+```jsonc
+{
   "path": "/path/to/project",
-  "cursor": "<next_cursor>"
+  "query": "rate limiter",
+  "include_paths": ["src"],
+  "exclude_paths": ["src/generated"],
+  "prefer_code": true,
+  "include_docs": false,
+  "related_mode": "focus",
+  "response_mode": "facts",
+  "max_chars": 2000
 }
 ```
 
@@ -246,32 +402,43 @@ Regex context reads tool (`grep_context`; grep `-B/-A/-C` style, merged hunks, b
 {
   "path": "/path/to/project",
   "pattern": "stale_policy",
+  // Optional: treat pattern as a literal string (like `rg -F`)
+  // "literal": true,
   "file_pattern": "crates/*/src/*",
   "before": 50,
   "after": 50,
   "max_hunks": 40,
-  "max_chars": 20000
+  "max_chars": 2000,
+  // Optional: "numbered" prefixes each line with "<line>: " and marks match lines as "<line>:* ".
+  // Default in low-noise modes is "plain" (more payload under max_chars); line ranges + match_lines are still provided.
+  // "format": "numbered",
+  "response_mode": "facts"
 }
 ```
 
-Pagination (cursor): when a tool returns `truncated: true` and `next_cursor`, call it again with the same inputs + `cursor: "<next_cursor>"`.
-Tools also provide `next_actions` — ready-to-run tool + args payloads (including the cursor) for direct continuation.
+Pagination (cursor): when the `.context` output includes an `M: <cursor>` line near the end, call it again with `cursor: "<cursor>"`.
+In `response_mode: "full"`, tools include extra diagnostics; error responses may also include compact `next:` hints.
 
 Cursor tokens are opaque and bound to the original query/options (changing them will be rejected).
+For some tight-loop tools (notably `file_slice` and `grep_context`), the cursor contains enough info for cursor-only continuation — you do not need to resend the original options.
 
-All MCP tools include `meta.index_state` (best-effort) on both success and error responses to expose index freshness.
+Most *semantic* MCP tools default to `response_mode: "facts"` and include `meta.index_state` (best-effort) on both success and error responses to expose index freshness.
+Some tight-loop read tools (`file_slice`, `grep_context`, `list_files`, `text_search`, `map`) default to `response_mode: "minimal"` to keep output almost entirely project content.
+For these tools, `response_mode: "facts"` stays low-noise by design (it strips helper guidance but still avoids heavy diagnostics). Use `response_mode: "full"` when you explicitly want diagnostics / freshness details (including `meta.index_state`).
+For example, `map` in `"minimal"` returns mostly directory paths (low noise), while `"full"` can include richer diagnostics.
+Use `response_mode: "minimal"` for the smallest possible response. Use `response_mode: "full"` when debugging tool behavior or investigating index freshness.
 For semantic tools (`context_pack`, `context`, `impact`, `trace`, `explain`, `overview`),
 `auto_index` defaults to true; use `auto_index=false` or `auto_index_budget_ms` to control the
 reindex budget. The attempt is reported under `meta.index_state.reindex`.
 
-Batch tool (one MCP call → many tools, bounded output). Output is compact JSON and strictly capped by `max_chars`.
+Batch tool (one MCP call → many tools, bounded output). Output is `.context` text only and strictly capped by `max_chars`.
 In `version: 2`, item inputs can depend on earlier outputs via `$ref` (JSON Pointer):
 
 ```jsonc
 {
   "version": 2,
   "path": "/path/to/project",
-  "max_chars": 20000,
+  "max_chars": 2000,
   "items": [
     { "id": "hits", "tool": "text_search", "input": { "pattern": "stale_policy", "max_results": 1 } },
     {
@@ -304,21 +471,17 @@ File slice tool (bounded, root-locked file read; designed to replace ad-hoc `cat
 {
   "path": "/path/to/project",
   "file": "src/lib.rs",
-  "start_line": 120,
-  "max_lines": 80,
-  "max_chars": 8000
+  "offset": 120,
+  "limit": 80,
+  "max_chars": 2000
 }
 ```
 
-If the response is truncated, continue with `cursor` (keep the same limits):
+If the response is truncated, continue with `cursor` (cursor-only continuation):
 
 ```jsonc
 {
-  "path": "/path/to/project",
-  "file": "src/lib.rs",
-  "cursor": "<next_cursor>",
-  "max_lines": 80,
-  "max_chars": 8000
+  "cursor": "<cursor>"
 }
 ```
 
@@ -329,8 +492,14 @@ List files tool (bounded file enumeration; designed to replace `ls/find/rg --fil
   "path": "/path/to/project",
   "file_pattern": "src/*",
   "limit": 200,
-  "max_chars": 8000
+  "max_chars": 2000
 }
+```
+
+Note: by default, `list_files` omits common secret paths (e.g. `.env`). To include them, set:
+
+```jsonc
+{ "allow_secrets": true }
 ```
 
 ## JSON Command API
@@ -407,7 +576,7 @@ Notes:
 | `search_with_context` | Search with surrounding context |
 | `context_pack` | Build a single bounded context pack (best default for agents) |
 | `task_pack` | Task-oriented pack: context pack + `why` + `next_actions` |
-| `text_search` | Bounded literal search (corpus-first; filesystem fallback optional) |
+| `text_search` | Bounded literal search (filesystem-first; cursor-only continuation) |
 | `compare_search` | Compare multiple search strategies |
 | `get_context` | Extract a window around a file + line (symbol-aware) |
 | `list_symbols` | List symbols in a file |
@@ -587,11 +756,12 @@ cargo install --path crates/mcp-server --locked --force
 CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test -p context-finder-mcp --test mcp_smoke
 ```
 
-Expected MCP tool names (17):
+Expected MCP tool names (18):
 
+- `capabilities`, `help`
 - `map`, `repo_onboarding_pack`, `read_pack`
 - `file_slice`, `list_files`, `grep_context`, `batch`
-- `doctor`, `index`, `search`, `context`, `context_pack`
+- `doctor`, `search`, `context`, `context_pack`
 - `text_search`, `explain`, `impact`, `trace`, `overview`
 
 ## Development checks

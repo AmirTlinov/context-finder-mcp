@@ -71,6 +71,11 @@
         "index_state": {
           "anyOf": [{ "type": "null" }, { "$ref": "./index_state.schema.json" }],
           "description": "Best-effort snapshot of the semantic index and freshness."
+        },
+        "root_fingerprint": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Stable fingerprint of the resolved project root (useful to detect cross-project context mixups without exposing paths)."
         }
       }
     }

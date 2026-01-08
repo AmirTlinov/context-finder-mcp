@@ -61,6 +61,11 @@
         "index_chunks": { "type": "integer", "minimum": 0 },
         "index_size_bytes": { "type": "integer", "minimum": 0 },
         "graph_cache_size_bytes": { "type": "integer", "minimum": 0 },
+        "root_fingerprint": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Stable fingerprint of the resolved project root (useful to detect cross-project context mixups without exposing paths)."
+        },
         "health_last_success_ms": { "type": "integer", "minimum": 0 },
         "health_last_failure_reason": { "type": "string" },
         "warm": { "type": "boolean" },

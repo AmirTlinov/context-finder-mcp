@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
-use context_vector_store::{EmbeddingTemplates, ModelRegistry, QueryKind};
+use context_vector_store::{EmbeddingTemplates, QueryKind};
 use globset::{GlobBuilder, GlobMatcher};
 use serde::Deserialize;
 
@@ -105,25 +105,11 @@ impl ExpertsConfig {
     }
 
     fn validate(&self) -> Result<()> {
-        let registry = ModelRegistry::from_env()?;
-
-        validate_model_list(
-            &registry,
-            "experts.semantic.default",
-            &self.semantic.default,
-        )?;
-        validate_model_list(
-            &registry,
-            "experts.semantic.identifier",
-            &self.semantic.identifier,
-        )?;
-        validate_model_list(&registry, "experts.semantic.path", &self.semantic.path)?;
-        validate_model_list(
-            &registry,
-            "experts.semantic.conceptual",
-            &self.semantic.conceptual,
-        )?;
-        validate_model_list(&registry, "experts.graph_nodes.default", &self.graph_nodes)?;
+        validate_model_list("experts.semantic.default", &self.semantic.default)?;
+        validate_model_list("experts.semantic.identifier", &self.semantic.identifier)?;
+        validate_model_list("experts.semantic.path", &self.semantic.path)?;
+        validate_model_list("experts.semantic.conceptual", &self.semantic.conceptual)?;
+        validate_model_list("experts.graph_nodes.default", &self.graph_nodes)?;
 
         Ok(())
     }
@@ -609,7 +595,7 @@ impl SearchProfile {
     }
 }
 
-fn validate_model_list(registry: &ModelRegistry, path: &str, models: &[String]) -> Result<()> {
+fn validate_model_list(path: &str, models: &[String]) -> Result<()> {
     if models.is_empty() {
         return Err(anyhow!("{path} must not be empty"));
     }
@@ -618,9 +604,6 @@ fn validate_model_list(registry: &ModelRegistry, path: &str, models: &[String]) 
         if model_id.trim().is_empty() {
             return Err(anyhow!("{path}[{idx}] must not be empty"));
         }
-        registry
-            .dimension(model_id)
-            .with_context(|| format!("{path}[{idx}] unknown model_id '{model_id}'"))?;
     }
     Ok(())
 }

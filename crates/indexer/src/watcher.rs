@@ -1,18 +1,37 @@
 use crate::{
-    health::write_health_snapshot, IndexStats, IndexerError, ModelIndexSpec,
-    MultiModelProjectIndexer, ProjectIndexer, Result,
+    health::write_health_snapshot,
+    scanner::{FileScanner, IGNORED_SCOPES},
+    IndexStats, IndexerError, ModelIndexSpec, MultiModelProjectIndexer, ProjectIndexer, Result,
 };
+use context_vector_store::{context_dir_for_project_root, current_model_id};
+use ignore::WalkBuilder;
 use log::{error, info, warn};
 use notify::{Config as NotifyConfig, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{broadcast, mpsc, watch, Mutex as TokioMutex};
 use tokio::time;
 
 const DEFAULT_ALERT_REASON: &str = "fs_event";
+const REFRESH_MODELS_REASON_PREFIX: &str = "refresh_models:";
+
+fn parse_refresh_models_reason(reason: &str) -> Option<Vec<String>> {
+    let tail = reason.strip_prefix(REFRESH_MODELS_REASON_PREFIX)?;
+    let (csv, _) = tail.split_once(':').unwrap_or((tail, ""));
+    let mut ids = Vec::new();
+    for raw in csv.split(',') {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        ids.push(trimmed.to_string());
+    }
+    (!ids.is_empty()).then_some(ids)
+}
 
 #[derive(Debug, Clone)]
 pub struct IndexUpdate {
@@ -84,6 +103,7 @@ struct StreamingIndexerInner {
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
     _watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    _watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
     _health_guard: TokioMutex<watch::Receiver<IndexerHealth>>,
 }
 
@@ -99,7 +119,8 @@ impl StreamingIndexer {
         let (health_tx, health_rx) = watch::channel(IndexerHealth::initial());
         let (update_tx, _) = broadcast::channel(32);
 
-        let watcher = create_fs_watcher(indexer.root(), event_tx, config.notify_poll_interval)?;
+        let (watcher, watch_state) =
+            create_fs_watcher(indexer.root(), event_tx, config.notify_poll_interval)?;
         let watcher = Arc::new(std::sync::Mutex::new(Some(watcher)));
 
         spawn_index_loop(
@@ -109,6 +130,8 @@ impl StreamingIndexer {
             command_rx,
             update_tx.clone(),
             health_tx.clone(),
+            watcher.clone(),
+            watch_state.clone(),
         );
 
         Ok(Self {
@@ -117,6 +140,7 @@ impl StreamingIndexer {
                 update_tx,
                 health_tx,
                 _watcher: watcher,
+                _watch_state: watch_state,
                 _health_guard: TokioMutex::new(health_rx),
             }),
         })
@@ -167,6 +191,7 @@ struct MultiModelStreamingIndexerInner {
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
     _watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    _watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
     _health_guard: TokioMutex<watch::Receiver<IndexerHealth>>,
     models: Arc<TokioMutex<Vec<ModelIndexSpec>>>,
 }
@@ -188,7 +213,8 @@ impl MultiModelStreamingIndexer {
         let (health_tx, health_rx) = watch::channel(IndexerHealth::initial());
         let (update_tx, _) = broadcast::channel(32);
 
-        let watcher = create_fs_watcher(indexer.root(), event_tx, config.notify_poll_interval)?;
+        let (watcher, watch_state) =
+            create_fs_watcher(indexer.root(), event_tx, config.notify_poll_interval)?;
         let watcher = Arc::new(std::sync::Mutex::new(Some(watcher)));
 
         let models = Arc::new(TokioMutex::new(models));
@@ -201,6 +227,8 @@ impl MultiModelStreamingIndexer {
             update_tx.clone(),
             health_tx.clone(),
             models.clone(),
+            watcher.clone(),
+            watch_state.clone(),
         );
 
         Ok(Self {
@@ -209,6 +237,7 @@ impl MultiModelStreamingIndexer {
                 update_tx,
                 health_tx,
                 _watcher: watcher,
+                _watch_state: watch_state,
                 _health_guard: TokioMutex::new(health_rx),
                 models,
             }),
@@ -267,7 +296,7 @@ fn create_fs_watcher(
     root: &Path,
     sender: mpsc::Sender<notify::Result<Event>>,
     poll_interval: Duration,
-) -> Result<RecommendedWatcher> {
+) -> Result<(RecommendedWatcher, Arc<std::sync::Mutex<HashSet<PathBuf>>>)> {
     let root = root.to_path_buf();
     let mut watcher = RecommendedWatcher::new(
         move |res| {
@@ -276,10 +305,180 @@ fn create_fs_watcher(
         NotifyConfig::default().with_poll_interval(poll_interval),
     )
     .map_err(|e| IndexerError::Other(format!("watcher init failed: {e}")))?;
-    watcher
-        .watch(&root, RecursiveMode::Recursive)
-        .map_err(|e| IndexerError::Other(format!("failed to watch {}: {e}", root.display())))?;
-    Ok(watcher)
+    let watch_state = Arc::new(std::sync::Mutex::new(HashSet::new()));
+    let watch_dirs = build_watch_list(&root);
+    {
+        let mut guard = watch_state
+            .lock()
+            .map_err(|_| IndexerError::Other("watch state lock poisoned".to_string()))?;
+        for dir in watch_dirs {
+            if let Err(err) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
+                warn!("failed to watch {}: {err}", dir.display());
+                continue;
+            }
+            guard.insert(dir);
+        }
+    }
+    Ok((watcher, watch_state))
+}
+
+fn build_watch_list(root: &Path) -> Vec<PathBuf> {
+    let mut out: HashSet<PathBuf> = HashSet::new();
+    out.insert(root.to_path_buf());
+
+    let root_owned = root.to_path_buf();
+    let mut builder = WalkBuilder::new(&root_owned);
+    builder
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true);
+    builder.filter_entry(move |entry| is_watchable_dir(&root_owned, entry.path()));
+
+    for entry in builder.build() {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Some(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        if is_watchable_dir(root, path) {
+            out.insert(path.to_path_buf());
+        }
+    }
+
+    out.into_iter().collect()
+}
+
+fn maybe_add_watches(
+    root: &Path,
+    evt: &Event,
+    watcher: &Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watch_state: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+) {
+    if evt.paths.is_empty() {
+        return;
+    }
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for path in &evt.paths {
+        let Ok(meta) = std::fs::metadata(path) else {
+            continue;
+        };
+        if !meta.is_dir() {
+            continue;
+        }
+        if !is_watchable_dir(root, path) {
+            continue;
+        }
+        candidates.push(path.to_path_buf());
+    }
+
+    for path in candidates {
+        add_watch_tree(root, &path, watcher, watch_state);
+    }
+}
+
+fn add_watch_tree(
+    root: &Path,
+    start: &Path,
+    watcher: &Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watch_state: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+) {
+    let mut builder = WalkBuilder::new(start);
+    builder
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true);
+    let root_owned = root.to_path_buf();
+    builder.filter_entry(move |entry| is_watchable_dir(&root_owned, entry.path()));
+
+    let mut to_add: Vec<PathBuf> = Vec::new();
+    for entry in builder.build() {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Some(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        if is_watchable_dir(root, path) {
+            to_add.push(path.to_path_buf());
+        }
+    }
+
+    if to_add.is_empty() {
+        return;
+    }
+
+    let mut new_dirs: Vec<PathBuf> = Vec::new();
+    {
+        let mut guard = match watch_state.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                warn!("watch state lock poisoned");
+                return;
+            }
+        };
+        for dir in to_add {
+            if guard.insert(dir.clone()) {
+                new_dirs.push(dir);
+            }
+        }
+    }
+
+    if new_dirs.is_empty() {
+        return;
+    }
+
+    let mut watcher_guard = match watcher.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            warn!("watcher lock poisoned");
+            return;
+        }
+    };
+    let Some(watcher) = watcher_guard.as_mut() else {
+        return;
+    };
+    for dir in new_dirs {
+        if let Err(err) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
+            warn!("failed to watch {}: {err}", dir.display());
+            if let Ok(mut guard) = watch_state.lock() {
+                guard.remove(&dir);
+            }
+        }
+    }
+}
+
+fn is_watchable_dir(root: &Path, path: &Path) -> bool {
+    if path == root {
+        return true;
+    }
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+
+    for component in relative.components() {
+        if let std::path::Component::Normal(name) = component {
+            let lowered = name.to_string_lossy().to_lowercase();
+            if IGNORED_SCOPES.iter().any(|ignored| ignored == &lowered) {
+                return false;
+            }
+            if lowered.starts_with('.') && !FileScanner::is_allowlisted_hidden(&lowered) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 #[allow(clippy::too_many_lines)]
@@ -290,6 +489,8 @@ fn spawn_index_loop(
     mut command_rx: mpsc::Receiver<WatcherCommand>,
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
+    watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) {
     tokio::spawn(async move {
         let mut state = DebounceState::new(config.debounce, config.max_batch_wait);
@@ -302,7 +503,7 @@ fn spawn_index_loop(
 
             tokio::select! {
                 Some(event) = event_rx.recv() => {
-                    if handle_event(indexer.root(), event, &mut state) {
+                    if handle_event(indexer.root(), event, &mut state, &watcher, &watch_state) {
                         health.pending_events = state.pending();
                         let _ = health_tx.send(health.clone());
                     }
@@ -325,7 +526,16 @@ fn spawn_index_loop(
                     health.indexing = true;
                     let _ = health_tx.send(health.clone());
 
-                    match run_index_cycle(indexer.clone(), state.take_reason().unwrap_or_else(|| DEFAULT_ALERT_REASON.to_string())).await {
+                    let pending_before_run = state.pending();
+                    let paths_hint = state.take_paths_hint();
+                    match run_index_cycle(
+                        indexer.clone(),
+                        state
+                            .take_reason()
+                            .unwrap_or_else(|| DEFAULT_ALERT_REASON.to_string()),
+                        paths_hint,
+                    )
+                    .await {
                         Ok((cycle_stats, duration, reason, store_size)) => {
                             health.last_success = Some(SystemTime::now());
                             health.last_duration_ms = Some(duration);
@@ -344,6 +554,7 @@ fn spawn_index_loop(
                             health.p95_duration_ms = compute_p95(&duration_history);
                             health.alert_log_json = serialize_alerts(&alert_log);
                             health.alert_log_len = alert_log.len();
+                            state.tune_after_cycle(duration, health.p95_duration_ms, pending_before_run, true);
                             if let Err(err) = write_health_snapshot(
                                 indexer.root(),
                                 &cycle_stats,
@@ -372,6 +583,7 @@ fn spawn_index_loop(
                             health.last_duration_ms = Some(duration);
                             health.indexing = false;
                             health.pending_events = 0;
+                            state.tune_after_cycle(duration, health.p95_duration_ms, pending_before_run, false);
                             if let Err(e) = crate::append_failure_reason(
                                 indexer.root(),
                                 &reason,
@@ -413,6 +625,8 @@ fn spawn_multi_model_index_loop(
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
     models: Arc<TokioMutex<Vec<ModelIndexSpec>>>,
+    watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) {
     tokio::spawn(async move {
         let mut state = DebounceState::new(config.debounce, config.max_batch_wait);
@@ -425,7 +639,7 @@ fn spawn_multi_model_index_loop(
 
             tokio::select! {
                 Some(event) = event_rx.recv() => {
-                    if handle_event(indexer.root(), event, &mut state) {
+                    if handle_event(indexer.root(), event, &mut state, &watcher, &watch_state) {
                         health.pending_events = state.pending();
                         let _ = health_tx.send(health.clone());
                     }
@@ -462,11 +676,17 @@ fn spawn_multi_model_index_loop(
                         continue;
                     }
 
+                    let pending_before_run = state.pending();
+                    let paths_hint = state.take_paths_hint();
                     match run_multi_model_index_cycle(
                         indexer.clone(),
                         snapshot_models,
-                        state.take_reason().unwrap_or_else(|| DEFAULT_ALERT_REASON.to_string()),
-                    ).await {
+                        state
+                            .take_reason()
+                            .unwrap_or_else(|| DEFAULT_ALERT_REASON.to_string()),
+                        paths_hint,
+                    )
+                    .await {
                         Ok((cycle_stats, duration, reason, store_size)) => {
                             health.last_success = Some(SystemTime::now());
                             health.last_duration_ms = Some(duration);
@@ -485,6 +705,7 @@ fn spawn_multi_model_index_loop(
                             health.p95_duration_ms = compute_p95(&duration_history);
                             health.alert_log_json = serialize_alerts(&alert_log);
                             health.alert_log_len = alert_log.len();
+                            state.tune_after_cycle(duration, health.p95_duration_ms, pending_before_run, true);
                             if let Err(err) = write_health_snapshot(
                                 indexer.root(),
                                 &cycle_stats,
@@ -513,6 +734,7 @@ fn spawn_multi_model_index_loop(
                             health.last_duration_ms = Some(duration);
                             health.indexing = false;
                             health.pending_events = 0;
+                            state.tune_after_cycle(duration, health.p95_duration_ms, pending_before_run, false);
                             if let Err(e) = crate::append_failure_reason(
                                 indexer.root(),
                                 &reason,
@@ -548,9 +770,14 @@ fn spawn_multi_model_index_loop(
 async fn run_index_cycle(
     indexer: Arc<ProjectIndexer>,
     reason: String,
+    paths_hint: Option<Vec<PathBuf>>,
 ) -> std::result::Result<(IndexStats, u64, String, Option<u64>), (String, u64, String)> {
     let started = Instant::now();
-    match indexer.index().await {
+    let outcome = match paths_hint {
+        Some(paths) => indexer.index_changed_paths(&paths).await,
+        None => indexer.index().await,
+    };
+    match outcome {
         Ok(stats) => {
             #[allow(clippy::cast_possible_truncation)]
             let duration = started.elapsed().as_millis() as u64;
@@ -573,14 +800,53 @@ async fn run_multi_model_index_cycle(
     indexer: Arc<MultiModelProjectIndexer>,
     models: Vec<ModelIndexSpec>,
     reason: String,
+    paths_hint: Option<Vec<PathBuf>>,
 ) -> std::result::Result<(IndexStats, u64, String, Option<u64>), (String, u64, String)> {
     let started = Instant::now();
-    match indexer.index_models(&models, false).await {
+    let all_models = models;
+    let mut active_models: Vec<ModelIndexSpec> = Vec::new();
+    let refresh_models = parse_refresh_models_reason(&reason);
+    let active_models_slice: &[ModelIndexSpec] = if let Some(refresh_models) = refresh_models {
+        let refresh_set: HashSet<String> = refresh_models.into_iter().collect();
+        for spec in &all_models {
+            if refresh_set.contains(&spec.model_id) {
+                active_models.push(spec.clone());
+            }
+        }
+        if active_models.is_empty() {
+            &all_models
+        } else {
+            &active_models
+        }
+    } else if reason == DEFAULT_ALERT_REASON && all_models.len() > 1 {
+        let primary_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
+        if let Some(primary) = all_models
+            .iter()
+            .find(|spec| spec.model_id == primary_id)
+            .cloned()
+            .or_else(|| all_models.first().cloned())
+        {
+            active_models.push(primary);
+        }
+        &active_models
+    } else {
+        &all_models
+    };
+
+    let outcome = match paths_hint {
+        Some(paths) => {
+            indexer
+                .index_models_changed_paths(active_models_slice, &paths)
+                .await
+        }
+        None => indexer.index_models(active_models_slice, false).await,
+    };
+    match outcome {
         Ok(stats) => {
             #[allow(clippy::cast_possible_truncation)]
             let duration = started.elapsed().as_millis() as u64;
             info!("Incremental multi-model index finished in {duration}ms");
-            let store_size = sum_model_store_sizes(indexer.root(), &models).await;
+            let store_size = sum_model_store_sizes(indexer.root(), &all_models).await;
             Ok((stats, duration, reason, store_size))
         }
         Err(e) => {
@@ -595,8 +861,7 @@ async fn sum_model_store_sizes(root: &Path, models: &[ModelIndexSpec]) -> Option
     let mut sum = 0u64;
     let mut any = false;
     for spec in models {
-        let path = root
-            .join(".context-finder")
+        let path = context_dir_for_project_root(root)
             .join("indexes")
             .join(model_id_dir_name(&spec.model_id))
             .join("index.json");
@@ -618,22 +883,33 @@ fn model_id_dir_name(model_id: &str) -> String {
         .collect()
 }
 
-fn handle_event(root: &Path, event: notify::Result<Event>, state: &mut DebounceState) -> bool {
+fn handle_event(
+    root: &Path,
+    event: notify::Result<Event>,
+    state: &mut DebounceState,
+    watcher: &Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watch_state: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+) -> bool {
     match event {
         Ok(evt) => {
+            maybe_add_watches(root, &evt, watcher, watch_state);
             if evt.paths.is_empty() {
                 state.record_event(1, DEFAULT_ALERT_REASON);
                 return true;
             }
 
-            let mut relevant = 0;
+            let mut relevant_new = 0usize;
+            let mut saw_relevant = false;
             for path in evt.paths {
-                if is_relevant_path(root, &path) && state.record_path_if_new(&path) {
-                    relevant += 1;
+                if is_relevant_path(root, &path) {
+                    saw_relevant = true;
+                    if state.record_path_if_new(&path) {
+                        relevant_new = relevant_new.saturating_add(1);
+                    }
                 }
             }
-            if relevant > 0 {
-                state.record_event(relevant, DEFAULT_ALERT_REASON);
+            if saw_relevant {
+                state.record_event(relevant_new, DEFAULT_ALERT_REASON);
                 return true;
             }
             false
@@ -646,47 +922,71 @@ fn handle_event(root: &Path, event: notify::Result<Event>, state: &mut DebounceS
 }
 
 fn is_relevant_path(root: &Path, path: &Path) -> bool {
-    const IGNORED: &[&str] = &[
-        ".git",
-        ".hg",
-        ".svn",
-        ".context-finder",
-        "target",
-        "node_modules",
-        "dist",
-        "build",
-        "out",
-        "datasets",
-    ];
-
     if let Ok(relative) = path.strip_prefix(root) {
-        let mut components = relative.components();
-        if let Some(first) = components.next() {
-            let first = first.as_os_str().to_string_lossy().to_lowercase();
-            if IGNORED.iter().any(|ignore| first.starts_with(ignore)) {
-                return false;
-            }
-            // bench/logs/*.json noise
-            if first == "bench" {
-                if let Some(seg2) = components.next() {
-                    let s2 = seg2.as_os_str().to_string_lossy().to_lowercase();
-                    if s2 == "logs" && path.extension().is_some_and(|e| e == "json") {
+        for component in relative.components() {
+            if let std::path::Component::Normal(name) = component {
+                let name = name.to_string_lossy();
+                if IGNORED_SCOPES
+                    .iter()
+                    .any(|ignored| name.eq_ignore_ascii_case(ignored))
+                {
+                    return false;
+                }
+
+                if name.starts_with('.') {
+                    let lowered = name.to_lowercase();
+                    if lowered != ".gitignore" && !FileScanner::is_allowlisted_hidden(&lowered) {
                         return false;
                     }
                 }
             }
         }
 
-        // ignore .gitignore anywhere
-        if relative
-            .file_name()
-            .is_some_and(|f| f.to_string_lossy() == ".gitignore")
-        {
+        if is_bench_logs_json(path) {
             return false;
+        }
+
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            let lowered = name.to_lowercase();
+            if lowered != ".gitignore" {
+                if FileScanner::is_noise_file(path) {
+                    return false;
+                }
+                if FileScanner::is_secret_file(path) {
+                    return false;
+                }
+            }
         }
     }
 
     true
+}
+
+fn is_bench_logs_json(path: &Path) -> bool {
+    let is_json = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+    if !is_json {
+        return false;
+    }
+
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if !path_component_matches(parent, "logs") {
+        return false;
+    }
+
+    parent
+        .parent()
+        .is_some_and(|grand| path_component_matches(grand, "bench"))
+}
+
+fn path_component_matches(path: &Path, target: &str) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(target))
 }
 
 #[derive(Debug, Serialize)]
@@ -706,12 +1006,15 @@ struct DebounceState {
     first_event: Option<Instant>,
     reason: Option<String>,
     force_immediate: bool,
+    force_full_scan: bool,
     recent_paths: VecDeque<(String, Instant)>,
+    pending_paths: HashSet<PathBuf>,
     dedup_window: Duration,
+    tune_stable_cycles: u8,
 }
 
 impl DebounceState {
-    const fn new(debounce: Duration, max_batch: Duration) -> Self {
+    fn new(debounce: Duration, max_batch: Duration) -> Self {
         Self {
             debounce,
             max_batch,
@@ -721,8 +1024,11 @@ impl DebounceState {
             first_event: None,
             reason: None,
             force_immediate: false,
+            force_full_scan: false,
             recent_paths: VecDeque::new(),
+            pending_paths: HashSet::new(),
             dedup_window: Duration::from_millis(750),
+            tune_stable_cycles: 0,
         }
     }
 
@@ -777,6 +1083,16 @@ impl DebounceState {
         self.reason.take()
     }
 
+    fn take_paths_hint(&mut self) -> Option<Vec<PathBuf>> {
+        if self.force_full_scan {
+            return None;
+        }
+        if self.pending_paths.is_empty() {
+            return None;
+        }
+        Some(self.pending_paths.drain().collect())
+    }
+
     fn reset(&mut self) {
         self.dirty = false;
         self.pending = 0;
@@ -784,7 +1100,9 @@ impl DebounceState {
         self.first_event = None;
         self.reason = None;
         self.force_immediate = false;
+        self.force_full_scan = false;
         self.recent_paths.clear();
+        self.pending_paths.clear();
     }
 
     #[cfg(test)]
@@ -793,6 +1111,10 @@ impl DebounceState {
     }
 
     fn record_path_if_new(&mut self, path: &Path) -> bool {
+        if self.force_full_scan {
+            return true;
+        }
+
         let now = Instant::now();
         let key = path.to_string_lossy().to_string();
         self.recent_paths
@@ -802,8 +1124,142 @@ impl DebounceState {
             false
         } else {
             self.recent_paths.push_back((key, now));
+            const MAX_DELTA_PATHS: usize = 512;
+            if self.pending_paths.len() >= MAX_DELTA_PATHS {
+                self.force_full_scan = true;
+                self.pending_paths.clear();
+            } else {
+                self.pending_paths.insert(path.to_path_buf());
+            }
             true
         }
+    }
+
+    fn tune_after_cycle(
+        &mut self,
+        duration_ms: u64,
+        p95_duration_ms: Option<u64>,
+        pending_events: usize,
+        success: bool,
+    ) {
+        const DEBOUNCE_LEVELS_MS: &[u64] = &[500, 750, 1_000, 2_000, 3_000, 4_000, 5_000];
+        const MAX_BATCH_LEVELS_MS: &[u64] = &[3_000, 5_000, 10_000, 20_000, 30_000];
+
+        fn duration_to_ms(d: Duration) -> u64 {
+            u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+        }
+
+        fn snap_up(ms: u64, levels: &[u64]) -> u64 {
+            for &level in levels {
+                if ms <= level {
+                    return level;
+                }
+            }
+            *levels.last().expect("levels non-empty")
+        }
+
+        fn idx_of(level_ms: u64, levels: &[u64]) -> usize {
+            levels
+                .iter()
+                .position(|&v| v == level_ms)
+                .unwrap_or_else(|| levels.len().saturating_sub(1))
+        }
+
+        fn step_down(current_ms: u64, target_ms: u64, levels: &[u64]) -> u64 {
+            if current_ms <= target_ms {
+                return current_ms;
+            }
+            let current_idx = idx_of(current_ms, levels);
+            if current_idx == 0 {
+                return current_ms;
+            }
+            let next = levels[current_idx - 1];
+            next.max(target_ms)
+        }
+
+        let load_ms = p95_duration_ms.unwrap_or(duration_ms).max(1);
+
+        let mut target_debounce_ms: u64 = if load_ms <= 250 {
+            500
+        } else if load_ms <= 500 {
+            750
+        } else if load_ms <= 1_000 {
+            1_000
+        } else if load_ms <= 2_000 {
+            2_000
+        } else if load_ms <= 4_000 {
+            3_000
+        } else {
+            4_000
+        };
+
+        if pending_events >= 512 {
+            target_debounce_ms = target_debounce_ms.saturating_add(2_000);
+        } else if pending_events >= 256 {
+            target_debounce_ms = target_debounce_ms.saturating_add(1_000);
+        } else if pending_events >= 128 {
+            target_debounce_ms = target_debounce_ms.saturating_add(500);
+        } else if pending_events >= 64 {
+            target_debounce_ms = target_debounce_ms.saturating_add(250);
+        }
+
+        if !success {
+            target_debounce_ms = target_debounce_ms.max(2_000);
+        }
+        target_debounce_ms = target_debounce_ms.min(5_000);
+        target_debounce_ms = snap_up(target_debounce_ms, DEBOUNCE_LEVELS_MS);
+
+        let mut target_max_batch_ms = load_ms.saturating_mul(4).clamp(3_000, 30_000);
+        if pending_events >= 512 {
+            target_max_batch_ms = target_max_batch_ms.saturating_add(20_000);
+        } else if pending_events >= 256 {
+            target_max_batch_ms = target_max_batch_ms.saturating_add(10_000);
+        } else if pending_events >= 128 {
+            target_max_batch_ms = target_max_batch_ms.saturating_add(5_000);
+        } else if pending_events >= 64 {
+            target_max_batch_ms = target_max_batch_ms.saturating_add(2_000);
+        }
+
+        let min_batch_ms = target_debounce_ms.saturating_mul(5);
+        target_max_batch_ms = target_max_batch_ms.max(min_batch_ms).min(30_000);
+        if !success {
+            target_max_batch_ms = target_max_batch_ms.max(10_000);
+        }
+        target_max_batch_ms = snap_up(target_max_batch_ms, MAX_BATCH_LEVELS_MS);
+
+        let current_debounce_ms = snap_up(duration_to_ms(self.debounce), DEBOUNCE_LEVELS_MS);
+        let current_max_batch_ms = snap_up(duration_to_ms(self.max_batch), MAX_BATCH_LEVELS_MS);
+
+        let upshift =
+            target_debounce_ms > current_debounce_ms || target_max_batch_ms > current_max_batch_ms;
+        if upshift {
+            self.debounce = Duration::from_millis(target_debounce_ms);
+            self.max_batch = Duration::from_millis(target_max_batch_ms);
+            self.tune_stable_cycles = 0;
+            return;
+        }
+
+        let stable_churn = pending_events <= 8;
+        if stable_churn {
+            self.tune_stable_cycles = self.tune_stable_cycles.saturating_add(1);
+        } else {
+            self.tune_stable_cycles = 0;
+        }
+
+        if self.tune_stable_cycles < 3 {
+            return;
+        }
+        self.tune_stable_cycles = 0;
+
+        let next_debounce_ms =
+            step_down(current_debounce_ms, target_debounce_ms, DEBOUNCE_LEVELS_MS);
+        let next_max_batch_ms = step_down(
+            current_max_batch_ms,
+            target_max_batch_ms,
+            MAX_BATCH_LEVELS_MS,
+        );
+        self.debounce = Duration::from_millis(next_debounce_ms);
+        self.max_batch = Duration::from_millis(next_max_batch_ms);
     }
 }
 
@@ -853,7 +1309,9 @@ fn current_unix_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::is_relevant_path;
     use super::DebounceState;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     #[test]
@@ -871,5 +1329,95 @@ mod tests {
         assert!(state.should_run());
         assert!(state.force_flag());
         assert!(state.next_deadline().is_some());
+    }
+
+    #[test]
+    fn watcher_relevance_ignores_nested_scopes() {
+        let root = PathBuf::from("repo");
+
+        let nested_node_modules = root.join("packages/web/node_modules/react/index.js");
+        assert!(!is_relevant_path(&root, &nested_node_modules));
+
+        let nested_next_cache = root.join("apps/site/.next/cache/webpack/stats.json");
+        assert!(!is_relevant_path(&root, &nested_next_cache));
+
+        let nested_bench_logs = root.join("tools/bench/logs/run.json");
+        assert!(!is_relevant_path(&root, &nested_bench_logs));
+    }
+
+    #[test]
+    fn watcher_relevance_ignores_non_allowlisted_hidden_scopes() {
+        let root = PathBuf::from("repo");
+
+        let pytest_cache = root.join(".pytest_cache/v/cache/lastfailed");
+        assert!(!is_relevant_path(&root, &pytest_cache));
+    }
+
+    #[test]
+    fn watcher_relevance_keeps_allowlisted_hidden_files() {
+        let root = PathBuf::from("repo");
+
+        let gitlab_ci = root.join(".gitlab-ci.yml");
+        assert!(is_relevant_path(&root, &gitlab_ci));
+    }
+
+    #[test]
+    fn watcher_relevance_treats_gitignore_as_relevant() {
+        let root = PathBuf::from("repo");
+
+        assert!(is_relevant_path(&root, &root.join(".gitignore")));
+        assert!(is_relevant_path(&root, &root.join("src/.gitignore")));
+    }
+
+    #[test]
+    fn watcher_relevance_ignores_known_noise_files() {
+        let root = PathBuf::from("repo");
+
+        assert!(!is_relevant_path(&root, &root.join("package-lock.json")));
+        assert!(!is_relevant_path(&root, &root.join("pnpm-lock.yaml")));
+        assert!(!is_relevant_path(&root, &root.join("yarn.lock")));
+        assert!(!is_relevant_path(&root, &root.join("docker-compose.yml")));
+        assert!(!is_relevant_path(&root, &root.join("Makefile")));
+    }
+
+    #[test]
+    fn watcher_relevance_ignores_secret_files() {
+        let root = PathBuf::from("repo");
+
+        assert!(!is_relevant_path(&root, &root.join(".env")));
+        assert!(!is_relevant_path(&root, &root.join(".npmrc")));
+        assert!(!is_relevant_path(
+            &root,
+            &root.join(".cargo/credentials.toml")
+        ));
+
+        // Safe templates must stay relevant (agents often rely on them).
+        assert!(is_relevant_path(&root, &root.join(".env.example")));
+    }
+
+    #[test]
+    fn adaptive_tuning_upshifts_when_cycles_are_slow() {
+        let mut state = DebounceState::new(Duration::from_millis(500), Duration::from_secs(3));
+        state.tune_after_cycle(6_000, Some(6_000), 1, true);
+        assert!(state.debounce >= Duration::from_secs(2));
+        assert!(state.max_batch >= state.debounce);
+    }
+
+    #[test]
+    fn adaptive_tuning_downshifts_slowly_when_quiet() {
+        let mut state = DebounceState::new(Duration::from_secs(4), Duration::from_secs(20));
+        for _ in 0..3 {
+            state.tune_after_cycle(100, Some(100), 1, true);
+        }
+        assert!(state.debounce < Duration::from_secs(4));
+        assert!(state.max_batch < Duration::from_secs(20));
+    }
+
+    #[test]
+    fn adaptive_tuning_is_conservative_after_failure() {
+        let mut state = DebounceState::new(Duration::from_millis(500), Duration::from_secs(3));
+        state.tune_after_cycle(100, Some(100), 1, false);
+        assert!(state.debounce >= Duration::from_secs(2));
+        assert!(state.max_batch >= Duration::from_secs(10));
     }
 }

@@ -34,8 +34,10 @@
 
 mod error;
 mod health;
+mod index_lock;
 mod index_state;
 mod indexer;
+mod limits;
 mod scanner;
 mod stats;
 mod watcher;
@@ -44,12 +46,14 @@ mod watermark_io;
 pub use error::{IndexerError, Result};
 pub use health::append_failure_reason;
 pub use health::{health_file_path, read_health_snapshot, write_health_snapshot, HealthSnapshot};
+pub use index_lock::{index_write_lock_wait_ms_last, index_write_lock_wait_ms_max};
 pub use index_state::{
-    assess_staleness, IndexSnapshot, IndexState, ReindexAttempt, ReindexResult, StaleAssessment,
-    StaleReason, ToolMeta, Watermark, INDEX_STATE_SCHEMA_VERSION,
+    assess_staleness, root_fingerprint, IndexSnapshot, IndexState, ReindexAttempt, ReindexResult,
+    StaleAssessment, StaleReason, ToolMeta, Watermark, INDEX_STATE_SCHEMA_VERSION,
 };
 pub use indexer::{ModelIndexSpec, MultiModelProjectIndexer, ProjectIndexer};
-pub use scanner::FileScanner;
+pub use limits::{index_concurrency_snapshot, IndexConcurrencySnapshot};
+pub use scanner::{FileScanner, ScanOptions};
 pub use stats::IndexStats;
 pub use watcher::{
     IndexUpdate, IndexerHealth, MultiModelStreamingIndexer, StreamingIndexer,

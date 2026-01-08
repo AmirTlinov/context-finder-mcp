@@ -216,7 +216,7 @@ fn default_true() -> bool {
 }
 
 fn default_max_reindex_ms() -> u64 {
-    3000
+    15000
 }
 
 #[derive(Debug, Deserialize, Copy, Clone, PartialEq, Eq, Default)]
@@ -1059,7 +1059,7 @@ pub fn classify_error(
         code = "index_corrupt".to_string();
         hints.push(Hint {
             kind: HintKind::Action,
-            text: "Index file looks corrupted — delete .context-finder/indexes/<model_id>/index.json and rerun the index action.".to_string(),
+            text: "Index file looks corrupted — delete .context/indexes/<model_id>/index.json and rerun the index action.".to_string(),
         });
     }
 
@@ -1084,7 +1084,7 @@ pub fn classify_error(
         code = "config_error".to_string();
         hints.push(Hint {
             kind: HintKind::Warn,
-            text: "Config issue detected — verify .context-finder/config.json or remove it."
+            text: "Config issue detected — verify .context/config.json or remove it."
                 .to_string(),
         });
     }

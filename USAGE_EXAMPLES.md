@@ -1,6 +1,6 @@
 # Context Finder — Usage Examples (agent-first)
 
-This document focuses on agent-friendly workflows: index once, then request bounded context in a single call.
+This document focuses on agent-friendly workflows. In MCP mode, **indexing is automatic and incremental** (no manual “index step” for the agent). The CLI examples below keep `index` because it’s useful for automation/debugging and “force rebuild” scenarios.
 
 ## Quick start
 
@@ -8,7 +8,7 @@ This document focuses on agent-friendly workflows: index once, then request boun
 
 ```bash
 cargo build --release
-cargo install --path crates/cli
+cargo install --path crates/cli --locked
 
 # (optional) local alias instead of install
 alias context-finder='./target/release/context-finder'
@@ -233,21 +233,27 @@ The MCP server is designed to replace ad-hoc repo probing (`ls`, `rg`, `sed`) wi
 
 ### 1) Repo onboarding in one call: `repo_onboarding_pack`
 
-Use this as the default first step when dropped into a new repository:
+Use this when you want a richer **map-first onboarding** view (as opposed to `read_pack`, which is the daily default “project memory” entry point).
+Set `response_mode: "full"` if you want helper `next_actions` for guided continuation.
 
 ```jsonc
 {
   "path": "/path/to/project",
   "map_depth": 2,
   "docs_limit": 6,
+  "response_mode": "full",
   "max_chars": 20000
 }
 ```
 
 ### 2) One-call reading pack (file/grep/query): `read_pack`
 
-Use `read_pack` when you want a single entry point and cursor-only continuation.
-It returns `sections[]` where each section has `{ "type": "...", "result": { ... } }` (the underlying tool output).
+Use `read_pack` as the **daily default** when you want “project memory” instead of shell probing.
+It’s intended to make `rg/cat/grep` feel unnecessary by bundling the common loops into one bounded response:
+stable `project_facts` first, then relevant snippets — and pagination via `cursor` when needed.
+
+For the exact request/response fields, treat the MCP schema as the source of truth:
+`crates/mcp-server/src/tools/schemas/read_pack.rs`.
 
 Read a file window (internally calls `file_slice`):
 
@@ -270,6 +276,34 @@ Continue without repeating inputs:
   "cursor": "<next_cursor>"
 }
 ```
+
+#### One-call recall (“remember what I need”)
+
+Recall mode is where `read_pack` starts to feel like an agent’s memory: you ask multiple focused questions
+in one call, and it returns a small set of relevant `snippet`s per question under a shared budget.
+
+```jsonc
+{
+  "path": "/path/to/project",
+  "max_chars": 20000,
+  "questions": [
+    "Where is the main entrypoint? in:src k:3",
+    "How do I run tests? not:target k:2 ctx:12",
+    "lit: cargo test ctx:20",
+    "deep index:8s in:crates k:5 How does auto-index and root resolution work?"
+  ]
+}
+```
+
+Recall supports a tiny per-question directive syntax inside `questions[]` strings (these are **not** schema fields):
+- `fast` / `deep` — force fast grep/file routing vs allow semantic + index
+- `in:<prefix>` / `not:<prefix>` — scope candidate paths
+- `glob:<pattern>` / `fp:<pattern>` — file pattern hint
+- `file:<path[:line]>` / `open:<path[:line]>` — jump to a specific file (optionally with `:line`)
+- `re:<regex>` / `lit:<text>` — explicit grep intent (regex vs literal)
+- `k:<N>` — snippets per question (bounded)
+- `ctx:<N>` — grep context lines per snippet (bounded)
+- `index:5s` / `deep:8000ms` — per-question auto-index budget (deep mode)
 
 Read all regex matches with N lines of context (internally calls `grep_context`):
 
@@ -306,21 +340,26 @@ This is the “grep -B/-A/-C, but bounded and merge-aware” tool for agents:
 {
   "path": "/path/to/project",
   "pattern": "stale_policy",
+  // Optional: treat `pattern` as a literal string (like `rg -F`)
+  // "literal": true,
   "file_pattern": "crates/*/src/*",
   "before": 50,
   "after": 50,
   "max_hunks": 40,
-  "max_chars": 20000
+  "max_chars": 20000,
+  // Optional: "numbered" (default) prefixes each line with "<line>: " and marks match lines as "<line>:* "
+  // "format": "numbered"
 }
 ```
 
 ### 4) Pagination (cursor)
 
-When a tool response includes `truncated: true` and `next_cursor`, continue by repeating the call with the same options + `cursor: "<next_cursor>"`.
+When a tool response includes `truncated: true` and `next_cursor`, continue with a cursor call.
 
-This works for: `map`, `list_files`, `text_search`, `grep_context`, `file_slice`.
+- Most tools require the original options (cursor is bound to them).
+- `file_slice` and `grep_context` support cursor-only continuation (cursor carries the needed options), so the follow-up call can be just `{ "path": "...", "cursor": "<next_cursor>" }`.
 
-For `read_pack`, take the cursor from `sections[0].result.next_cursor` and continue with a cursor-only call:
+For `read_pack`, take `next_cursor` (top-level) and continue with a cursor-only call (defaults keep output low-noise; `response_mode: "full"` can include per-section cursors when applicable):
 
 ```jsonc
 {

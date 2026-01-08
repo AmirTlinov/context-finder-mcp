@@ -1,4 +1,6 @@
 use crate::error::{Result, VectorStoreError};
+use crate::gpu_env;
+use crate::paths::{CONTEXT_CACHE_DIR_NAME, LEGACY_CONTEXT_CACHE_DIR_NAME};
 use ndarray::{Array, Axis, Dimension, Ix2, Ix3};
 use once_cell::sync::OnceCell;
 use ort::execution_providers::{
@@ -27,14 +29,15 @@ enum EmbeddingMode {
 
 impl EmbeddingMode {
     fn from_env() -> Result<Self> {
-        let raw = env::var("CONTEXT_FINDER_EMBEDDING_MODE")
+        let raw = env::var("CONTEXT_EMBEDDING_MODE")
+            .or_else(|_| env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
             .unwrap_or_else(|_| "fast".to_string())
             .to_ascii_lowercase();
         match raw.as_str() {
             "fast" => Ok(Self::Fast),
             "stub" => Ok(Self::Stub),
             other => Err(VectorStoreError::EmbeddingError(format!(
-                "Unsupported CONTEXT_FINDER_EMBEDDING_MODE '{other}' (expected 'fast' or 'stub')"
+                "Unsupported CONTEXT_EMBEDDING_MODE '{other}' (expected 'fast' or 'stub')"
             ))),
         }
     }
@@ -336,19 +339,64 @@ impl<B> BackendCache<B> {
 }
 
 fn backend_cache_capacity_from_env() -> usize {
-    std::env::var("CONTEXT_FINDER_MODEL_REGISTRY_CAPACITY")
+    std::env::var("CONTEXT_MODEL_REGISTRY_CAPACITY")
+        .or_else(|_| std::env::var("CONTEXT_FINDER_MODEL_REGISTRY_CAPACITY"))
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(2)
+        .unwrap_or_else(default_backend_cache_capacity)
+        .max(1)
+}
+
+fn default_backend_cache_capacity() -> usize {
+    let Some(mem_gib) = total_memory_gib_linux_best_effort() else {
+        return 2;
+    };
+
+    if mem_gib <= 8 {
+        1
+    } else if mem_gib <= 16 {
+        2
+    } else if mem_gib <= 32 {
+        3
+    } else {
+        4
+    }
+}
+
+fn total_memory_gib_linux_best_effort() -> Option<u64> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+        for line in contents.lines() {
+            let line = line.trim_start();
+            if !line.starts_with("MemTotal:") {
+                continue;
+            }
+            let kb = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse::<u64>().ok())?;
+            return Some(kb / 1024 / 1024);
+        }
+        None
+    }
 }
 
 pub fn model_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("CONTEXT_MODEL_DIR") {
+        return PathBuf::from(path);
+    }
     if let Ok(path) = std::env::var("CONTEXT_FINDER_MODEL_DIR") {
         return PathBuf::from(path);
     }
 
     // Prefer a repo-local `models/manifest.json` near the executable (agent-friendly, no hidden
-    // caches). This allows running `context-finder` from an arbitrary project directory while
+    // caches). This allows running `context` from an arbitrary project directory while
     // still resolving the tool's own `./models/` folder.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(mut dir) = exe.parent().map(std::path::Path::to_path_buf) {
@@ -379,14 +427,30 @@ pub fn model_dir() -> PathBuf {
     }
 
     if let Ok(path) = std::env::var("XDG_CACHE_HOME") {
-        return PathBuf::from(path).join("context-finder").join("models");
+        let base = PathBuf::from(path);
+        let preferred = base.join(CONTEXT_CACHE_DIR_NAME).join("models");
+        if preferred.exists() {
+            return preferred;
+        }
+        let legacy = base.join(LEGACY_CONTEXT_CACHE_DIR_NAME).join("models");
+        if legacy.exists() {
+            return legacy;
+        }
+        return preferred;
     }
 
-    std::env::var("HOME")
+    let base = std::env::var("HOME")
         .map_or_else(|_| PathBuf::from("."), PathBuf::from)
-        .join(".cache")
-        .join("context-finder")
-        .join("models")
+        .join(".cache");
+    let preferred = base.join(CONTEXT_CACHE_DIR_NAME).join("models");
+    if preferred.exists() {
+        return preferred;
+    }
+    let legacy = base.join(LEGACY_CONTEXT_CACHE_DIR_NAME).join("models");
+    if legacy.exists() {
+        return legacy;
+    }
+    preferred
 }
 
 impl ModelId {
@@ -396,7 +460,8 @@ impl ModelId {
     }
 
     fn from_env() -> Self {
-        let model_name = std::env::var("CONTEXT_FINDER_EMBEDDING_MODEL")
+        let model_name = std::env::var("CONTEXT_EMBEDDING_MODEL")
+            .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODEL"))
             .unwrap_or_else(|_| "bge-small".to_string());
         Self::from_raw(&model_name)
     }
@@ -534,10 +599,17 @@ struct ManifestAsset {
 
 impl OrtBackend {
     fn new(spec: &ModelSpec, model_dir: &Path) -> Result<Self> {
+        // Tokenization can be a surprisingly large CPU tax during large indexing runs. By default,
+        // prefer deterministic, low-contention behavior (single-threaded) unless the user opted
+        // into parallel tokenization explicitly.
+        if !tokenizers::utils::parallelism::is_parallelism_configured() {
+            tokenizers::utils::parallelism::set_parallelism(false);
+        }
+
         let assets = spec.assets_in(model_dir);
         if !assets.model_path.exists() || !assets.tokenizer_path.exists() {
             return Err(VectorStoreError::EmbeddingError(format!(
-                "Model files for '{}' are missing. Expected ONNX at {} and tokenizer at {}. Run `context-finder install-models` to download them into ./models (or set CONTEXT_FINDER_MODEL_DIR).",
+                "Model files for '{}' are missing. Expected ONNX at {} and tokenizer at {}. Run `context install-models` to download them into ./models (or set CONTEXT_MODEL_DIR).",
                 spec.id,
                 assets.model_path.display(),
                 assets.tokenizer_path.display(),
@@ -560,9 +632,28 @@ impl OrtBackend {
             })?;
 
         let providers = build_execution_providers()?;
+        let (intra_threads, inter_threads) = default_ort_threads();
         let session_builder =
             Session::builder().map_err(|e| VectorStoreError::EmbeddingError(format!("{e}")))?;
         let session = session_builder
+            // Keep inference "polite": cap thread usage and disable busy-spinning so background
+            // indexing doesn't steal CPU from interactive work.
+            .with_intra_threads(intra_threads)
+            .map_err(|e| {
+                VectorStoreError::EmbeddingError(format!("Failed to set ORT intra threads: {e}"))
+            })?
+            .with_inter_threads(inter_threads)
+            .map_err(|e| {
+                VectorStoreError::EmbeddingError(format!("Failed to set ORT inter threads: {e}"))
+            })?
+            .with_intra_op_spinning(false)
+            .map_err(|e| {
+                VectorStoreError::EmbeddingError(format!("Failed to set ORT intra spinning: {e}"))
+            })?
+            .with_inter_op_spinning(false)
+            .map_err(|e| {
+                VectorStoreError::EmbeddingError(format!("Failed to set ORT inter spinning: {e}"))
+            })?
             .with_execution_providers(providers)
             .map_err(|e| {
                 VectorStoreError::EmbeddingError(format!(
@@ -696,6 +787,27 @@ impl OrtBackend {
 
         Ok(results)
     }
+}
+
+fn default_ort_threads() -> (usize, usize) {
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
+    // Inference parallelism is a throughput knob. For agent workflows, tail latency and "polite"
+    // coexistence matter more than max throughput, especially in the shared daemon.
+    let intra_threads = if cpus <= 4 {
+        1
+    } else if cpus <= 12 {
+        2
+    } else if cpus <= 24 {
+        3
+    } else {
+        4
+    };
+
+    // Default is sequential execution mode; keep inter-op conservative.
+    (intra_threads.max(1), 1)
 }
 
 const fn ensure_dimension(vec: &[f32], expected: usize) -> Result<()> {
@@ -872,7 +984,8 @@ fn is_cuda_disabled() -> bool {
 }
 
 fn allow_cpu_fallback() -> bool {
-    env::var("CONTEXT_FINDER_ALLOW_CPU")
+    env::var("CONTEXT_ALLOW_CPU")
+        .or_else(|_| env::var("CONTEXT_FINDER_ALLOW_CPU"))
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }
@@ -883,7 +996,7 @@ fn build_execution_providers() -> Result<Vec<ExecutionProviderDispatch>> {
             return Ok(vec![CPUExecutionProvider::default().build()]);
         }
         return Err(VectorStoreError::EmbeddingError(
-            "CUDA is disabled (ORT_DISABLE_CUDA/ORT_USE_CUDA), but CPU fallback is not allowed. Set CONTEXT_FINDER_ALLOW_CPU=1 to allow CPU embeddings."
+            "CUDA is disabled (ORT_DISABLE_CUDA/ORT_USE_CUDA), but CPU fallback is not allowed. Set CONTEXT_ALLOW_CPU=1 to allow CPU embeddings."
                 .to_string(),
         ));
     }
@@ -896,7 +1009,7 @@ fn build_execution_providers() -> Result<Vec<ExecutionProviderDispatch>> {
                 Ok(vec![CPUExecutionProvider::default().build()])
             } else {
                 Err(VectorStoreError::EmbeddingError(format!(
-                    "CUDA execution provider is unavailable: {err}. Run with CONTEXT_FINDER_ALLOW_CPU=1 to allow CPU embeddings."
+                    "CUDA execution provider is unavailable: {err}. Run with CONTEXT_ALLOW_CPU=1 to allow CPU embeddings."
                 )))
             }
         }
@@ -904,66 +1017,50 @@ fn build_execution_providers() -> Result<Vec<ExecutionProviderDispatch>> {
 }
 
 fn build_cuda_ep() -> Result<ort::execution_providers::ExecutionProviderDispatch> {
-    ensure_gpu_libraries_present()?;
+    let report = gpu_env::bootstrap_cuda_env_best_effort();
     let mut cuda = CUDAExecutionProvider::default();
 
-    if let Ok(device) = env::var("CONTEXT_FINDER_CUDA_DEVICE") {
+    if let Ok(device) = env::var("CONTEXT_CUDA_DEVICE")
+        .or_else(|_| env::var("CONTEXT_FINDER_CUDA_DEVICE"))
+    {
         let parsed: i32 = device.parse().map_err(|e| {
             VectorStoreError::EmbeddingError(format!(
-                "Invalid CONTEXT_FINDER_CUDA_DEVICE '{device}': {e}"
+                "Invalid CONTEXT_CUDA_DEVICE '{device}': {e}"
             ))
         })?;
         cuda = cuda.with_device_id(parsed);
     }
 
-    if let Ok(limit_mb) = env::var("CONTEXT_FINDER_CUDA_MEM_LIMIT_MB") {
+    if let Ok(limit_mb) = env::var("CONTEXT_CUDA_MEM_LIMIT_MB")
+        .or_else(|_| env::var("CONTEXT_FINDER_CUDA_MEM_LIMIT_MB"))
+    {
         let parsed: usize = limit_mb.parse().map_err(|e| {
             VectorStoreError::EmbeddingError(format!(
-                "Invalid CONTEXT_FINDER_CUDA_MEM_LIMIT_MB '{limit_mb}': {e}"
+                "Invalid CONTEXT_CUDA_MEM_LIMIT_MB '{limit_mb}': {e}"
             ))
         })?;
         cuda = cuda.with_memory_limit(parsed * 1024 * 1024);
     }
 
-    if !cuda.is_available().unwrap_or(false) {
-        return Err(VectorStoreError::EmbeddingError(
-            "CUDA execution provider is not available. Install CUDA toolkit/drivers and ensure ORT GPU binaries are present.".to_string(),
-        ));
+    match cuda.is_available() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(VectorStoreError::EmbeddingError(
+                format!(
+                    "CUDA execution provider is not available (provider_present={} cublas_present={}). Install CUDA toolkit/drivers and ensure ORT GPU binaries are present. If you want CPU fallback, set CONTEXT_ALLOW_CPU=1.",
+                    report.provider_present, report.cublas_present
+                ),
+            ));
+        }
+        Err(err) => {
+            return Err(VectorStoreError::EmbeddingError(format!(
+                "CUDA execution provider check failed (provider_present={} cublas_present={}): {err}. Run `bash scripts/setup_cuda_deps.sh` (repo checkout) or set ORT_LIB_LOCATION/LD_LIBRARY_PATH. If you want CPU fallback, set CONTEXT_ALLOW_CPU=1.",
+                report.provider_present, report.cublas_present
+            )));
+        }
     }
 
     Ok(cuda.build())
-}
-
-fn ensure_gpu_libraries_present() -> Result<()> {
-    let mut paths: Vec<PathBuf> = Vec::new();
-    if let Ok(path) = env::var("ORT_LIB_LOCATION") {
-        paths.push(PathBuf::from(path));
-    }
-    if let Ok(ld) = env::var("LD_LIBRARY_PATH") {
-        paths.extend(ld.split(':').filter(|p| !p.is_empty()).map(PathBuf::from));
-    }
-
-    let mut has_provider = false;
-    let mut has_cublas = false;
-    for dir in &paths {
-        if dir.join("libonnxruntime_providers_cuda.so").exists() {
-            has_provider = true;
-        }
-        if dir.join("libcublasLt.so.12").exists() || dir.join("libcublasLt.so.13").exists() {
-            has_cublas = true;
-        }
-        if dir.join("libcublas.so.12").exists() || dir.join("libcublas.so.13").exists() {
-            has_cublas = true;
-        }
-    }
-
-    if !has_provider || !has_cublas {
-        return Err(VectorStoreError::EmbeddingError(format!(
-            "CUDA libraries missing: provider={has_provider} cublasLt={has_cublas}. Configure ORT_LIB_LOCATION/LD_LIBRARY_PATH to point to onnxruntime GPU libs and NVIDIA cuBLAS."
-        )));
-    }
-
-    Ok(())
 }
 
 fn zero_tensor(shape: &ndarray::IxDyn, input: &Input) -> Result<DynTensor> {

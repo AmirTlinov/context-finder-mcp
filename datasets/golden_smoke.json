@@ -17,7 +17,7 @@
     {
       "id": "mcp_load_chunks",
       "query": "how does the MCP server load chunks for map and search",
-      "expected_paths": ["crates/mcp-server/src/tools.rs"],
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/mod.rs"],
       "intent": "conceptual"
     },
     {

@@ -1,36 +1,85 @@
 use super::super::{
     compute_repo_onboarding_pack_result, AutoIndexPolicy, CallToolResult, Content,
-    ContextFinderService, McpError, RepoOnboardingPackRequest,
+    ContextFinderService, McpError, RepoOnboardingPackRequest, ResponseMode, ToolMeta,
 };
+use crate::tools::context_doc::ContextDocBuilder;
 
-use super::error::{internal_error_with_meta, invalid_request_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, internal_error_with_meta, invalid_request_with_meta,
+    meta_for_request,
+};
 /// Repo onboarding pack (map + key docs slices + next actions).
 pub(in crate::tools::dispatch) async fn repo_onboarding_pack(
     service: &ContextFinderService,
     request: RepoOnboardingPackRequest,
 ) -> Result<CallToolResult, McpError> {
-    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+    let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
+    let (root, root_display) = match service
+        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
-            let meta = meta_for_request(service, request.path.as_deref()).await;
+            let meta = if response_mode == ResponseMode::Minimal {
+                ToolMeta::default()
+            } else {
+                meta_for_request(service, request.path.as_deref()).await
+            };
             return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
         }
     };
     let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);
     let meta = service.tool_meta_with_auto_index(&root, policy).await;
+    let meta_for_output = if response_mode == ResponseMode::Minimal {
+        ToolMeta {
+            root_fingerprint: meta.root_fingerprint,
+            ..ToolMeta::default()
+        }
+    } else {
+        meta.clone()
+    };
     let mut result = match compute_repo_onboarding_pack_result(&root, &root_display, &request).await
     {
         Ok(result) => result,
         Err(err) => {
             return Ok(internal_error_with_meta(
                 format!("Error: {err:#}"),
-                meta.clone(),
+                meta_for_output.clone(),
             ));
         }
     };
-    result.meta = meta;
+    result.meta = meta_for_output.clone();
 
-    Ok(CallToolResult::success(vec![Content::text(
-        context_protocol::serialize_json(&result).unwrap_or_default(),
-    )]))
+    let mut doc = ContextDocBuilder::new();
+    doc.push_answer(&format!(
+        "repo_onboarding_pack: dirs={} docs={}",
+        result.map.directories.len(),
+        result.docs.len()
+    ));
+    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    doc.push_note("map:");
+    for dir in &result.map.directories {
+        doc.push_line(&dir.path);
+    }
+    doc.push_blank();
+    doc.push_note("docs:");
+    for slice in &result.docs {
+        doc.push_ref_header(&slice.file, slice.start_line, Some("doc"));
+        doc.push_block_smart(&slice.content);
+        doc.push_blank();
+    }
+    if result.budget.truncated {
+        if let Some(truncation) = result.budget.truncation.as_ref() {
+            doc.push_note(&format!("truncated=true ({truncation:?})"));
+        } else {
+            doc.push_note("truncated=true");
+        }
+    }
+    let output = CallToolResult::success(vec![Content::text(doc.finish())]);
+    Ok(attach_structured_content(
+        output,
+        &result,
+        meta_for_output,
+        "repo_onboarding_pack",
+    ))
 }

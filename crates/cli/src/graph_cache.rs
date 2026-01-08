@@ -3,6 +3,7 @@ use context_code_chunker::CodeChunk;
 use context_graph::GraphEdge;
 use context_graph::GraphNode;
 use context_graph::{CodeGraph, ContextAssembler, GraphLanguage, RelationshipType, Symbol};
+use context_vector_store::context_dir_for_project_root;
 use log::{debug, warn};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -18,9 +19,7 @@ pub struct GraphCache {
 
 impl GraphCache {
     pub fn new(project_root: &Path) -> Self {
-        let path = project_root
-            .join(".context-finder")
-            .join("graph_cache.json");
+        let path = context_dir_for_project_root(project_root).join("graph_cache.json");
         Self { path }
     }
 

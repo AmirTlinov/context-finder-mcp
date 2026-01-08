@@ -488,27 +488,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "context-code-chunker"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "log",
- "pretty_assertions",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tree-sitter",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "context-finder-cli"
+name = "context-cli"
 version = "0.1.1"
 dependencies = [
  "anyhow",
@@ -544,31 +524,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "context-finder-mcp"
+name = "context-code-chunker"
 version = "0.1.1"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
- "context-batch-ref",
- "context-code-chunker",
- "context-graph",
- "context-indexer",
- "context-protocol",
- "context-search",
- "context-vector-store",
- "dirs",
- "env_logger",
  "log",
- "petgraph",
+ "pretty_assertions",
  "regex",
- "rmcp",
- "schemars",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "thiserror 1.0.69",
- "tokio",
+ "tree-sitter",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -597,6 +569,7 @@ dependencies = [
  "anyhow",
  "context-code-chunker",
  "context-vector-store",
+ "fs2",
  "ignore",
  "log",
  "notify",
@@ -605,6 +578,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -612,10 +586,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "context-mcp"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "context-batch-ref",
+ "context-code-chunker",
+ "context-graph",
+ "context-indexer",
+ "context-protocol",
+ "context-search",
+ "context-vector-store",
+ "dirs",
+ "env_logger",
+ "flate2",
+ "libc",
+ "log",
+ "petgraph",
+ "regex",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "context-protocol"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "glob",
  "schemars",
  "serde",
  "serde_json",
@@ -1049,6 +1054,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]

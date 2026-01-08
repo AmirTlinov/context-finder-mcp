@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::paths::{find_context_dir_from_path, CONTEXT_DIR_NAME};
 use std::path::{Path, PathBuf};
 
 const CACHE_MAGIC: &[u8; 4] = b"EC01";
@@ -10,8 +11,8 @@ pub struct EmbeddingCache {
 
 impl EmbeddingCache {
     pub fn for_store_path(store_path: &Path) -> Self {
-        let context_dir =
-            find_context_dir(store_path).unwrap_or_else(|| PathBuf::from(".context-finder"));
+        let context_dir = find_context_dir_from_path(store_path)
+            .unwrap_or_else(|| PathBuf::from(CONTEXT_DIR_NAME));
         Self {
             base_dir: context_dir.join("cache").join("embeddings"),
         }
@@ -85,17 +86,6 @@ impl EmbeddingCache {
             .join(safe_component(model_id));
         let _ = tokio::task::spawn_blocking(move || prune_dir(&root, max_bytes)).await;
     }
-}
-
-fn find_context_dir(store_path: &Path) -> Option<PathBuf> {
-    let mut current = store_path.parent();
-    while let Some(dir) = current {
-        if dir.file_name().and_then(|s| s.to_str()) == Some(".context-finder") {
-            return Some(dir.to_path_buf());
-        }
-        current = dir.parent();
-    }
-    None
 }
 
 fn safe_component(raw: &str) -> String {

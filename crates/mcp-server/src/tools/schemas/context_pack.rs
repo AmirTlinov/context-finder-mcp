@@ -1,6 +1,8 @@
 use rmcp::schemars;
 use serde::Deserialize;
 
+use super::response_mode::ResponseMode;
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ContextPackRequest {
     /// Search query
@@ -17,9 +19,23 @@ pub struct ContextPackRequest {
     #[schemars(description = "Maximum number of primary results")]
     pub limit: Option<usize>,
 
-    /// Maximum total characters for packed output (default: 20000)
+    /// Maximum total characters for packed output (default: 2000)
     #[schemars(description = "Maximum total characters in packed output")]
     pub max_chars: Option<usize>,
+
+    /// Optional include path prefixes (relative to project root). When provided, only matching
+    /// paths are eligible for primary/related items.
+    #[schemars(description = "Optional include path prefixes (relative to project root)")]
+    pub include_paths: Option<Vec<String>>,
+
+    /// Optional exclude path prefixes (relative to project root). Exclusions win over includes.
+    #[schemars(description = "Optional exclude path prefixes (relative to project root)")]
+    pub exclude_paths: Option<Vec<String>>,
+
+    /// Optional file path filter (glob or substring). If no glob metachars are present, treated
+    /// as substring match against the relative file path.
+    #[schemars(description = "Optional file path filter (glob or substring)")]
+    pub file_pattern: Option<String>,
 
     /// Related chunks per primary (default: 3)
     #[schemars(description = "Maximum related chunks per primary")]
@@ -47,17 +63,27 @@ pub struct ContextPackRequest {
     #[schemars(description = "Programming language for graph analysis")]
     pub language: Option<String>,
 
-    /// Automatically build or refresh the semantic index before executing (default: true)
+    /// Response mode:
+    /// - "facts" (default): keeps meta/index_state for freshness, strips next_actions to reduce noise.
+    /// - "full": includes meta/index_state and next_actions.
+    /// - "minimal": strips meta/index_state and next_actions to reduce noise. When not "full", `trace` is ignored.
+    #[schemars(description = "Response mode: 'facts' (default), 'full', or 'minimal'")]
+    pub response_mode: Option<ResponseMode>,
+
+    /// Include debug output (adds a second MCP content block with debug JSON)
+    #[schemars(description = "Include debug output as an additional response block")]
+    pub trace: Option<bool>,
+
+    /// Automatically build/refresh the semantic index when needed.
+    ///
+    /// When true, this tool may spend a bounded time budget to (re)index a missing/stale project.
+    /// When false, the tool will not attempt auto-index and will fall back to lexical strategies.
     #[schemars(
         description = "Automatically build or refresh the semantic index before executing (default: true)."
     )]
     pub auto_index: Option<bool>,
 
-    /// Auto-index time budget in milliseconds (default: 3000)
-    #[schemars(description = "Auto-index time budget in milliseconds (default: 3000).")]
+    /// Auto-index time budget in milliseconds when auto_index=true.
+    #[schemars(description = "Auto-index time budget in milliseconds (default: 15000).")]
     pub auto_index_budget_ms: Option<u64>,
-
-    /// Include debug output (adds a second MCP content block with debug JSON)
-    #[schemars(description = "Include debug output as an additional response block")]
-    pub trace: Option<bool>,
 }

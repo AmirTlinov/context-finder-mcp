@@ -7,7 +7,9 @@ use crate::command::warm;
 use anyhow::Result;
 use context_indexer::{ModelIndexSpec, MultiModelProjectIndexer};
 use context_protocol::{DefaultBudgets, ToolNextAction};
-use context_vector_store::{current_model_id, ModelRegistry, QueryKind};
+use context_vector_store::{
+    context_dir_for_project_root, current_model_id, ModelRegistry, QueryKind,
+};
 use std::collections::HashSet;
 
 pub struct IndexService {
@@ -96,10 +98,8 @@ impl IndexService {
             .await
             .ok()
             .map(|m| m.len());
-        let graph_cache_path = project_ctx
-            .root
-            .join(".context-finder")
-            .join("graph_cache.json");
+        let graph_cache_path =
+            context_dir_for_project_root(&project_ctx.root).join("graph_cache.json");
         outcome.meta.graph_cache_size_bytes = tokio::fs::metadata(graph_cache_path)
             .await
             .ok()

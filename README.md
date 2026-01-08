@@ -1,25 +1,45 @@
-# Context Finder MCP
+# Context MCP
 
-Semantic code search **built for AI agents**: index once, then ask for **one bounded context pack** you can feed into a model or pipeline.
+Semantic code navigation **built for AI agents**: one call in, one **bounded** pack out — designed to feel like an agent’s “project memory” instead of a pile of `rg/cat/grep` steps.
 
-If you’re tired of “search → open file → search again → maybe the right function?”, Context Finder turns a query into a compact, contract-stable JSON response — with optional graph-aware “halo” context.
+If you’re tired of “search → open file → search again → maybe the right function?”, Context turns a query into a compact, bounded pack — **agent-native `.context` plain text via MCP**, and **contract-first JSON via the Command API** (CLI/HTTP/gRPC) when you need strict programmatic parsing.
+
+## Start here
+
+- Daily “project memory” UX: `docs/AGENT_MEMORY.md` (`read_pack` playbook)
+- Install + run + integrations: `docs/QUICK_START.md`
+- The UX/product goals: `PHILOSOPHY.md`
+- Premium quality gates (prevents regressions): `docs/QUALITY_CHARTER.md`
+
+## Agent UX: “project memory” (the whole point)
+
+Context is meant to be **more convenient than shell probing** *by design*:
+
+- **One entry point for daily use:** `read_pack` (MCP) is the “apply_patch of context”: one call returns stable project facts + relevant snippets under one budget.
+- **Facts-first + budget-first:** responses start with compact `project_facts` and strictly honor `max_chars`.
+- **Anchored snippets:** memory packs try to jump into the most useful part of long docs/configs (tests/run/config headings), not just the top of the file.
+- **Cursor-first continuation:** if it doesn’t fit, you continue with `cursor` — `read_pack` supports cursor-only continuation, and cursors are kept compact (server-backed when needed) to avoid blowing your context window.
+- **Noise-zero by default:** default `response_mode: "facts"` (or `"minimal"`) keeps output mostly *project content*, not tool chatter.
+- **Safe defaults:** root-locked file IO + conservative secret denylist; hidden configs are indexed only via allowlist (no accidental `.env` leaks; opt-in via `allow_secrets: true` when you explicitly need it).
+- **Multi-agent friendly:** shared MCP backend is the default (one warm engine cache + cursor store across many sessions). Set `CONTEXT_FINDER_MCP_SHARED=0` only if you explicitly want an isolated per-session server (mostly useful in tests).
 
 ## What you get
 
-- **Agent-first output:** `context-pack` returns a single JSON payload bounded by `max_chars`.
-- **One-call orchestration:** `action=batch` runs multiple actions under one `max_chars` budget (partial success per item; compact JSON stays within the cap).
+- **Agent-first output:** MCP tools return a single bounded `.context` payload under `max_chars` (high payload density, low tool chatter).
+- **Legend on demand:** MCP `help` explains the `.context` envelope (`A:/R:/N:/M:`); `[LEGEND]` is only emitted by `help` to keep other tools low-noise.
+- **One-call orchestration:** MCP `batch` runs multiple tools under one bounded `.context` response (partial success per item). For machine-readable batching and `$ref` workflows, use the Command API `batch`.
 - **Safe file reads:** MCP `file_slice` returns a bounded file window (root-locked, line-based, hashed).
 - **Regex context reads:** MCP `grep_context` returns all regex matches with `before/after` context (grep `-B/-A/-C`), merged into compact hunks under hard budgets.
 - **Safe file listing:** MCP `list_files` returns bounded file paths (glob/substring filter).
-- **Repo onboarding pack:** MCP `repo_onboarding_pack` returns `map` + key docs (`file_slice`) + `next_actions` in one bounded response, trims map before docs under tight budgets, auto-refreshes the index by default, and reports `docs_reason` when no docs were included.
-- **One-call reading pack:** MCP `read_pack` picks the right tool (`file_slice` / `grep_context` / `context_pack` / `repo_onboarding_pack`) and returns `sections` + `next_actions` under one `max_chars` budget; under tight budgets it may drop `meta`/`next_actions` to stay within the cap; errors are structured in `structured_content.error`.
-- **Cursor pagination:** `map`, `list_files`, `text_search`, `grep_context`, `file_slice` return `next_cursor` when truncated so agents can continue without guessing.
-- **Freshness by default:** every response can carry `meta.index_state`; `options.stale_policy=auto|warn|fail` controls (re)index behavior.
+- **Repo onboarding pack:** MCP `repo_onboarding_pack` returns `map` + key docs (`file_slice`) in one bounded response. It trims map before docs under tight budgets, auto-refreshes the index by default, and reports `docs_reason` when no docs were included.
+- **One-call reading pack:** MCP `read_pack` is the single entry point for daily “project memory”, targeted reads (`file`/`grep`/`query`), and one-call recall (`questions`/`ask`). By default it returns a compact `project_facts` section + `snippet` payloads under one `max_chars` budget; richer graph/overview output is opt-in.
+- **Cursor pagination:** when truncated, MCP tools include an `M: <cursor>` line in `.context` output so agents can continue without guessing.
+- **Freshness when you ask for it:** semantic tools can report index freshness via `meta.index_state` (and reindex attempts) without polluting tight-loop reads; use `response_mode: "full"` when you need diagnostics.
 - **Stable integration surfaces:** CLI JSON, HTTP, gRPC, MCP — all treated as contracts.
 - **Hybrid retrieval:** semantic + fuzzy + fusion + profile-driven boosts.
 - **Graph-aware context:** attach related chunks (calls/imports/tests) when you need it.
 - **Task packs:** `task_pack` adds `why` + `next_actions` on top of `context_pack`.
-- **Bounded text search:** `text_search` uses corpus when present and can fall back to filesystem scanning safely.
+- **Bounded text search:** `text_search` is filesystem-first (agent-native `rg` replacement) and stays safe/low-noise under tight budgets; corpus support is kept only for cursor compatibility.
 - **Measured quality:** golden datasets + MRR/recall/latency/bytes + A/B comparisons.
 - **Offline-first models:** download once from a manifest, verify sha256, never commit assets.
 - **No silent CPU fallback:** CUDA by default; CPU only if explicitly allowed.
@@ -29,17 +49,17 @@ If you’re tired of “search → open file → search again → maybe the righ
 ### 1) Build and install
 
 ```bash
-git clone https://github.com/AmirTlinov/context-finder-mcp.git
-cd context-finder-mcp
+git clone https://github.com/AmirTlinov/context-mcp.git
+cd context-mcp
 
 cargo build --release
-cargo install --path crates/cli
+cargo install --path crates/cli --locked
 ```
 
 Optional local alias (avoids `cargo install` during iteration):
 
 ```bash
-alias context-finder='./target/release/context-finder'
+alias context='./target/release/context'
 ```
 
 ### 2) Install models (offline) and verify
@@ -47,28 +67,30 @@ alias context-finder='./target/release/context-finder'
 Model assets are downloaded once into `./models/` (gitignored) from `models/manifest.json`:
 
 ```bash
-context-finder install-models
-context-finder doctor --json
+context install-models
+context doctor --json
 ```
 
 Execution policy:
 
 - GPU-only by default (CUDA).
-- CPU fallback is allowed only when `CONTEXT_FINDER_ALLOW_CPU=1`.
+- CPU fallback is allowed only when `CONTEXT_ALLOW_CPU=1`.
 
 ### 3) Index and ask for a bounded pack
 
 ```bash
 cd /path/to/project
 
-context-finder index . --json
-context-finder context-pack "index schema version" --path . --max-chars 20000 --json --quiet
+context index . --json
+context context-pack "index schema version" --path . --max-chars 20000 --json --quiet
 ```
+
+Note: in MCP mode you typically don’t run `index` manually — indexing is triggered automatically and kept fresh incrementally in the background.
 
 Want exploration with graph expansion?
 
 ```bash
-context-finder context "streaming indexer health" --path . --strategy deep --show-graph --json --quiet
+context context "streaming indexer health" --path . --strategy deep --show-graph --json --quiet
 ```
 
 ## Integrations
@@ -78,13 +100,13 @@ context-finder context "streaming indexer health" --path . --strategy deep --sho
 One request shape; one response envelope:
 
 ```bash
-context-finder command --json '{"action":"search","payload":{"query":"embedding templates","limit":5,"project":"."}}'
+context command --json '{"action":"search","payload":{"query":"embedding templates","limit":5,"project":"."}}'
 ```
 
 Task-oriented pack with freshness guard and path filters:
 
 ```bash
-context-finder command --json '{
+context command --json '{
   "action":"task_pack",
   "options":{"stale_policy":"auto","max_reindex_ms":1500,"include_paths":["src"]},
   "payload":{"intent":"refresh watermark policy","project":".","max_chars":20000}
@@ -94,7 +116,7 @@ context-finder command --json '{
 Batch (one request → many actions):
 
 ```bash
-context-finder command --json '{
+context command --json '{
   "action":"batch",
   "options":{"stale_policy":"auto","max_reindex_ms":1500},
   "payload":{
@@ -115,7 +137,7 @@ Notes:
 ### HTTP
 
 ```bash
-context-finder serve-http --bind 127.0.0.1:7700
+context serve-http --bind 127.0.0.1:7700
 ```
 
 - `POST /command`
@@ -124,46 +146,82 @@ context-finder serve-http --bind 127.0.0.1:7700
 ### gRPC
 
 ```bash
-context-finder serve-grpc --bind 127.0.0.1:50051
+context serve-grpc --bind 127.0.0.1:50051
 ```
 
 ### MCP server
 
 ```bash
-cargo install --path crates/mcp-server
+cargo install --path crates/mcp-server --locked
 ```
 
 Self-audit tool inventory (no MCP client required):
 
 ```bash
-context-finder-mcp --print-tools
+context-mcp --print-tools
 ```
 
 Example Codex config (`~/.codex/config.toml`):
 
 ```toml
-[mcp_servers.context-finder]
-command = "context-finder-mcp"
+[mcp_servers.context]
+command = "context-mcp"
 args = []
 
-[mcp_servers.context-finder.env]
-CONTEXT_FINDER_PROFILE = "quality"
+[mcp_servers.context.env]
+CONTEXT_PROFILE = "quality"
+# Shared MCP backend is enabled by default (agent-native multi-session UX).
+# Set to "0" only if you need an isolated in-process server per session:
+# CONTEXT_MCP_SHARED = "0"
+
+# Optional:
+# CONTEXT_MODEL_DIR = "/path/to/models"
+# CONTEXT_MCP_SOCKET = "/tmp/context-mcp.sock"
+# CONTEXT_MCP_LOG = "1" # stderr-only logs (keep off by default for protocol purity)
+
+# Default output is agent-native `.context` plain text (no JSON in chat).
+# `structured_content` is intentionally omitted to keep agent context windows clean.
 ```
 
-Fastest way to orient on a new repo (one MCP call → map + key docs + next actions): use `repo_onboarding_pack`:
+Daily project memory (one MCP call → stable repo facts + key docs): use `read_pack`:
+
+```jsonc
+{ "path": "/path/to/project" }
+```
+
+Map-first onboarding (one MCP call → map + key docs; use `response_mode: "full"` for extra diagnostics): use `repo_onboarding_pack`:
 
 ```jsonc
 {
   "path": "/path/to/project",
   "map_depth": 2,
   "docs_limit": 6,
-  "max_chars": 20000
+  "response_mode": "full",
+  "max_chars": 2000
 }
 ```
 
 Want one MCP tool to replace `cat`/`sed`, `rg -C`, *and* semantic packs? Use `read_pack`:
 
 ```jsonc
+// Daily memory pack (defaults)
+{ "path": "/path/to/project" }
+
+// One-call recall (ask multi-part questions in one MCP call)
+{
+  "path": "/path/to/project",
+  "questions": [
+    "Where is the HTTP /command route implemented?",
+    "How do I run tests in this repo?",
+    "re: cargo test", // optional: explicit grep directive (Rust regex syntax)
+    "lit: cargo test", // optional: literal grep directive (no regex)
+    "fast in:src lit: cursor_fingerprint", // optional: per-question scoping + force fast path
+    "deep index:8s k:5 ctx:20 How does auto-index decide the project root? in:crates", // per-question deep mode + knobs
+    "deep How does auto-index decide the project root?" // optional: per-question deep mode (semantic + index if needed)
+  ],
+  "max_chars": 2000
+}
+
 // Read a file window (file_slice)
 {
   "path": "/path/to/project",
@@ -171,13 +229,13 @@ Want one MCP tool to replace `cat`/`sed`, `rg -C`, *and* semantic packs? Use `re
   "file": "src/lib.rs",
   "start_line": 120,
   "max_lines": 80,
-  "max_chars": 20000
+  "max_chars": 2000
 }
 
 // Continue without repeating inputs (cursor-only continuation)
 {
   "path": "/path/to/project",
-  "cursor": "<next_cursor>"
+  "cursor": "<cursor>"
 }
 ```
 
@@ -187,23 +245,31 @@ Need grep-like reads with N lines of context across a repo (without `rg` + `sed`
 {
   "path": "/path/to/project",
   "pattern": "stale_policy",
+  // Optional: treat `pattern` as a literal string (like `rg -F`)
+  // "literal": true,
   "file_pattern": "crates/*/src/*",
   "before": 50,
   "after": 50,
   "max_hunks": 40,
-  "max_chars": 20000
+  "max_chars": 2000,
+  // Optional: "numbered" (default) prefixes each line with "<line>: " and marks match lines as "<line>:* "
+  // "format": "numbered"
 }
 ```
 
-If the output is truncated, the response includes `next_cursor`. Call again with the same options + `cursor: "<next_cursor>"`.
+If the output is truncated, the `.context` text includes an `M: <cursor>` line. `grep_context` supports cursor-only continuation:
 
-Agent-friendly tip: the MCP tool `batch` lets you execute multiple tools in one call (one bounded JSON result). `path` is canonical (alias: `project`). In batch `version: 2`, item inputs can depend on earlier outputs via `$ref` (JSON Pointer):
+```jsonc
+{ "path": "/path/to/project", "cursor": "<cursor>" }
+```
+
+Agent-friendly tip: the MCP tool `batch` lets you execute multiple tools in one call (one bounded `.context` response). `path` is canonical (alias: `project`). In batch `version: 2`, item inputs can depend on earlier outputs via `$ref` (JSON Pointer):
 
 ```jsonc
 {
   "version": 2,
   "path": "/path/to/project",
-  "max_chars": 20000,
+  "max_chars": 2000,
   "items": [
     { "id": "hits", "tool": "text_search", "input": { "pattern": "stale_policy", "max_results": 1 } },
     {
@@ -226,9 +292,9 @@ When you need the *exact* contents of a file region (without `cat`/`sed`), use t
 {
   "path": "/path/to/project",
   "file": "src/lib.rs",
-  "start_line": 120,
-  "max_lines": 80,
-  "max_chars": 8000
+  "offset": 120,
+  "limit": 80,
+  "max_chars": 2000
 }
 ```
 
@@ -238,9 +304,9 @@ If the response is truncated, continue with `cursor` (keep the same limits):
 {
   "path": "/path/to/project",
   "file": "src/lib.rs",
-  "cursor": "<next_cursor>",
-  "max_lines": 80,
-  "max_chars": 8000
+  "cursor": "<cursor>",
+  "limit": 80,
+  "max_chars": 2000
 }
 ```
 
@@ -251,7 +317,7 @@ When you need file paths first (without `ls/find/rg --files`), use `list_files`:
   "path": "/path/to/project",
   "file_pattern": "src/*",
   "limit": 200,
-  "max_chars": 8000
+  "max_chars": 2000
 }
 ```
 
@@ -267,6 +333,7 @@ All integration surfaces are contract-first and versioned:
 ## Documentation
 
 - [docs/README.md](docs/README.md) (navigation hub)
+- [docs/AGENT_MEMORY.md](docs/AGENT_MEMORY.md) (`read_pack` as “project memory” and daily default)
 - [docs/QUICK_START.md](docs/QUICK_START.md) (install, CLI, servers, JSON API)
 - [USAGE_EXAMPLES.md](USAGE_EXAMPLES.md) (agent-first workflows)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

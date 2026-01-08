@@ -65,7 +65,11 @@ impl QueryClassifier {
         // like identifier search rather than purely conceptual.
         if tokens.len() > 1 {
             let first = Self::strip_identifier_punct(tokens[0]);
-            if !first.is_empty() && !Self::is_path_token(first) && Self::is_identifier_like(first) {
+            if !first.is_empty()
+                && !Self::is_path_token(first)
+                && !Self::is_question_leader(first)
+                && Self::is_identifier_like(first)
+            {
                 return QueryType::Identifier;
             }
         }
@@ -142,6 +146,59 @@ impl QueryClassifier {
         has_sep || has_colons || has_ext
     }
 
+    /// Heuristic: does the first token look like a natural-language question lead?
+    ///
+    /// This prevents false positives like `"How does X work"` being classified as Identifier
+    /// just because "How" is mixed-case (capitalized) in English.
+    fn is_question_leader(first_token: &str) -> bool {
+        let lowered = first_token.trim().to_lowercase();
+        matches!(
+            lowered.as_str(),
+            "how"
+                | "what"
+                | "why"
+                | "where"
+                | "when"
+                | "who"
+                | "which"
+                | "does"
+                | "do"
+                | "is"
+                | "are"
+                | "can"
+                | "could"
+                | "should"
+                | "will"
+                | "would"
+                | "explain"
+                | "describe"
+                | "tell"
+                | "show"
+                | "list"
+                | "find"
+                | "help"
+                | "как"
+                | "что"
+                | "почему"
+                | "где"
+                | "когда"
+                | "кто"
+                | "какой"
+                | "какая"
+                | "какие"
+                | "объясни"
+                | "объясните"
+                | "опиши"
+                | "опишите"
+                | "покажи"
+                | "покажите"
+                | "найди"
+                | "найдите"
+                | "перечисли"
+                | "перечислите"
+        )
+    }
+
     fn is_identifier_like(query: &str) -> bool {
         if query.contains(' ') {
             return false;
@@ -201,6 +258,16 @@ mod tests {
         );
         assert_eq!(
             QueryClassifier::classify("how does the MCP server load chunks for map/search"),
+            QueryType::Conceptual
+        );
+        assert_eq!(
+            QueryClassifier::classify("How does the MCP server load chunks for map/search"),
+            QueryType::Conceptual
+        );
+        assert_eq!(
+            QueryClassifier::classify(
+                "Explain the decision logic for when the tool uses the semantic index versus the filesystem scan"
+            ),
             QueryType::Conceptual
         );
     }

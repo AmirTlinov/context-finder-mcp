@@ -23,6 +23,7 @@ __pycache__/
 .tasks/
 .serena/
 .claude/
+.branchmind_rust/
 .last
 .apply_task_projects.yaml
 *.json.bak

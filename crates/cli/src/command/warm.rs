@@ -69,7 +69,7 @@ impl Warmer {
 
         // Trigger lazy embed load
         let model = EmbeddingModel::new()?;
-        let _ = model.embed("context-finder warmup").await?;
+        let _ = model.embed("context warmup").await?;
 
         Ok(WarmMeta {
             warmed: true,

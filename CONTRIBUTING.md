@@ -12,7 +12,7 @@ Requirements:
 Model assets are optional for most development tasks. For deterministic, model-free tests:
 
 ```bash
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
+CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 ```
 
 ## Quality gates
@@ -29,7 +29,7 @@ CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
 ## Documentation
 
 - Documentation is maintained in English (`*.md`).
-- Keep command examples consistent with `context-finder --help`.
+- Keep command examples consistent with `context --help`.
 
 ## Contract-first changes (APIs/integrations)
 
@@ -45,7 +45,7 @@ See `contracts/README.md` and `AGENTS.md`.
 ## Models and caches
 
 - Do not commit downloaded model assets under `models/**`.
-- Do not commit local caches (`.context-finder/`, `.fastembed_cache/`, `.deps/`, etc.).
+- Do not commit local caches (`.context/`, `.fastembed_cache/`, `.deps/`, etc.).
 
 ## Benchmarks and datasets
 

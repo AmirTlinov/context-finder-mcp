@@ -16,6 +16,25 @@ struct SemanticSource {
     index: VectorIndex,
 }
 
+#[derive(Clone, Debug)]
+enum SemanticSearchStatus {
+    Enabled,
+    Disabled { reason: String },
+}
+
+impl SemanticSearchStatus {
+    fn is_enabled(&self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+
+    fn disabled_reason(&self) -> Option<&str> {
+        match self {
+            Self::Disabled { reason } => Some(reason.as_str()),
+            Self::Enabled => None,
+        }
+    }
+}
+
 /// Hybrid search combining semantic (multi-model) + fuzzy + RRF fusion.
 ///
 /// This searcher keeps the same output shape as `HybridSearch`, but uses multiple semantic experts
@@ -30,6 +49,7 @@ pub struct MultiModelHybridSearch {
     expander: QueryExpander,
     profile: SearchProfile,
     registry: ModelRegistry,
+    semantic: SemanticSearchStatus,
 }
 
 impl MultiModelHybridSearch {
@@ -104,6 +124,7 @@ impl MultiModelHybridSearch {
             expander: QueryExpander::new(),
             profile,
             registry,
+            semantic: SemanticSearchStatus::Enabled,
         })
     }
 
@@ -167,12 +188,68 @@ impl MultiModelHybridSearch {
             expander: QueryExpander::new(),
             profile,
             registry,
+            semantic: SemanticSearchStatus::Enabled,
         })
     }
 
     #[must_use]
     pub fn chunks(&self) -> &[CodeChunk] {
         &self.chunks
+    }
+
+    #[must_use]
+    pub fn loaded_model_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.sources.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    #[must_use]
+    pub fn has_semantic_index(&self, model_id: &str) -> bool {
+        let key = model_id.trim();
+        !key.is_empty() && self.sources.contains_key(key)
+    }
+
+    pub fn insert_semantic_index(&mut self, model_id: String, index: VectorIndex) {
+        let key = model_id.trim().to_string();
+        if key.is_empty() {
+            return;
+        }
+
+        // Guardrail: mismatched embedding dimensions can happen if users swap models without
+        // rebuilding indices; fail safely by disabling semantic until corrected.
+        if let Some(existing) = self.sources.values().next() {
+            if existing.index.dimension() != index.dimension() {
+                self.semantic = SemanticSearchStatus::Disabled {
+                    reason: format!(
+                        "Semantic index dimension mismatch for model '{key}' (got {}, expected {})",
+                        index.dimension(),
+                        existing.index.dimension()
+                    ),
+                };
+                return;
+            }
+        }
+
+        self.sources.insert(key, SemanticSource { index });
+    }
+
+    pub fn remove_semantic_index(&mut self, model_id: &str) {
+        let key = model_id.trim();
+        if key.is_empty() {
+            return;
+        }
+        // Never remove the last remaining index: many call paths assume at least one semantic
+        // source exists (even if semantic is later disabled due to embedding issues).
+        if self.sources.len() <= 1 {
+            return;
+        }
+        self.sources.remove(key);
+    }
+
+    #[must_use]
+    pub fn semantic_disabled_reason(&self) -> Option<&str> {
+        self.semantic.disabled_reason()
     }
 
     pub async fn search(&mut self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
@@ -210,20 +287,41 @@ impl MultiModelHybridSearch {
             QueryType::Path => QueryKind::Path,
             QueryType::Conceptual => QueryKind::Conceptual,
         };
-        let embedding_base = if query_kind == QueryKind::Identifier {
-            anchor.as_deref().unwrap_or(expanded_query.as_str())
-        } else {
-            expanded_query.as_str()
-        };
-        let embedding_query = self
-            .profile
-            .embedding()
-            .render_query(query_kind, embedding_base)?;
 
         // 1) Multi-model semantic search (rank-fused), keeping per-chunk max cosine for rerank.
-        let (semantic_rank, semantic_map) = self
-            .semantic_search_multi(query, query_kind, &embedding_query, candidate_pool)
-            .await?;
+        // If embeddings are unavailable (e.g. CUDA EP missing and CPU fallback not allowed),
+        // degrade gracefully to fuzzy-only search. This keeps the tool useful instead of failing.
+        let (semantic_rank, semantic_map) = if self.semantic.is_enabled() {
+            let embedding_base = if query_kind == QueryKind::Identifier {
+                anchor.as_deref().unwrap_or(expanded_query.as_str())
+            } else {
+                expanded_query.as_str()
+            };
+            let embedding_query = self
+                .profile
+                .embedding()
+                .render_query(query_kind, embedding_base)?;
+
+            match self
+                .semantic_search_multi(query, query_kind, &embedding_query, candidate_pool)
+                .await
+            {
+                Ok(result) => result,
+                Err(err) => {
+                    if let Some(reason) = semantic_disable_reason(&err) {
+                        log::warn!(
+                            "Semantic search disabled; falling back to fuzzy-only results: {reason}"
+                        );
+                        self.semantic = SemanticSearchStatus::Disabled { reason };
+                        (Vec::new(), HashMap::new())
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        } else {
+            (Vec::new(), HashMap::new())
+        };
 
         // 2) Fuzzy search (path/symbol matching)
         let min_fuzzy = self.profile.min_fuzzy_score();
@@ -456,10 +554,30 @@ impl MultiModelHybridSearch {
 
         // Embed queries per model first so we can run index search without holding any locks.
         let mut embeds: Vec<(&str, Vec<f32>)> = Vec::with_capacity(models.len());
+        let mut first_embed_error: Option<context_vector_store::VectorStoreError> = None;
         for &model_id in &models {
-            embeds.push((
-                model_id,
-                self.registry.embed(model_id, embedding_query).await?,
+            match self.registry.embed(model_id, embedding_query).await {
+                Ok(query_vec) => {
+                    embeds.push((model_id, query_vec));
+                }
+                Err(err) => {
+                    log::debug!("Semantic embed failed for model '{model_id}': {err}");
+                    if first_embed_error.is_none() {
+                        first_embed_error = Some(err);
+                    }
+                }
+            }
+        }
+
+        // If no models could embed the query, treat semantic search as unavailable and let the
+        // caller decide how to degrade (typically: fuzzy-only search).
+        if embeds.is_empty() {
+            return Err(SearchError::VectorStoreError(
+                first_embed_error.unwrap_or_else(|| {
+                    context_vector_store::VectorStoreError::EmbeddingError(
+                        "No embedding models available to embed query".to_string(),
+                    )
+                }),
             ));
         }
 
@@ -705,6 +823,15 @@ impl MultiModelContextSearch {
     }
 }
 
+fn semantic_disable_reason(err: &SearchError) -> Option<String> {
+    match err {
+        SearchError::VectorStoreError(context_vector_store::VectorStoreError::EmbeddingError(
+            message,
+        )) => Some(message.clone()),
+        _ => None,
+    }
+}
+
 fn collect_chunks(store: &VectorIndex) -> (Vec<CodeChunk>, HashMap<String, usize>) {
     let mut chunks = Vec::new();
     let mut lookup = HashMap::new();
@@ -845,7 +972,7 @@ mod tests {
                 id.clone(),
                 StoredChunk {
                     chunk,
-                    vector,
+                    vector: std::sync::Arc::new(vector),
                     id,
                     doc_hash: 0,
                 },
@@ -1013,5 +1140,44 @@ mod tests {
             conceptual[0].chunk.file_path,
             "crates/mcp-server/tests/mcp_smoke.rs"
         );
+    }
+
+    #[tokio::test]
+    async fn embedding_errors_degrade_to_fuzzy_only_search() {
+        let model_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("models");
+        let registry = ModelRegistry::new_stub(model_dir).unwrap();
+
+        let tmp = TempDir::new().unwrap();
+        let chunks = vec![chunk("a.rs", "alpha"), chunk("b.rs", "beta")];
+
+        let idx_small = write_index(&tmp, &registry, "bge-small", "small.json", chunks.clone())
+            .await
+            .unwrap();
+
+        // Purposely use a model id that the registry does not know about. Semantic search should
+        // fail with an embedding error, and the engine must degrade to fuzzy-only results rather
+        // than failing the whole query.
+        let sources = vec![("unknown-model".to_string(), idx_small)];
+        let profile = SearchProfile::general();
+        let mut search = MultiModelHybridSearch::new(sources, profile, registry).unwrap();
+
+        assert!(search.semantic_disabled_reason().is_none());
+
+        let results = search.search("alpha", 3).await.unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].id, "a.rs:1:2");
+
+        let disabled = search.semantic_disabled_reason();
+        assert!(disabled.is_some());
+        assert!(disabled
+            .unwrap()
+            .contains("Unknown embedding model id 'unknown-model'"));
+
+        // Once semantic search has been disabled, subsequent searches should keep working.
+        let results = search.search("beta", 3).await.unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].id, "b.rs:1:2");
     }
 }

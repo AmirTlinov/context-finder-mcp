@@ -297,7 +297,7 @@ fn missing_index_message(state: &IndexState) -> String {
         .path
         .as_deref()
         .unwrap_or("<unknown-index-path>");
-    format!("Index not found at {path}. Run 'context-finder index' first.")
+    format!("Index not found at {path}. Run 'context index' first.")
 }
 
 fn stale_reason_name(reason: &StaleReason) -> &'static str {

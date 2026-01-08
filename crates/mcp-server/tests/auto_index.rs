@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
@@ -46,6 +45,7 @@ async fn context_pack_auto_indexes_missing_project() -> Result<()> {
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -63,16 +63,14 @@ async fn context_pack_auto_indexes_missing_project() -> Result<()> {
     .context("write lib.rs")?;
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before context_pack"
+        !root.join(".context").exists() && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before context_pack"
     );
 
     let args = serde_json::json!({
         "path": root.to_string_lossy(),
         "query": "alpha",
         "max_chars": 5000,
-        "auto_index": true,
-        "auto_index_budget_ms": 5000,
     });
     let result = tokio::time::timeout(
         Duration::from_secs(30),
@@ -90,30 +88,29 @@ async fn context_pack_auto_indexes_missing_project() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("context_pack did not return text content")?;
-    let json: Value =
-        serde_json::from_str(text).context("context_pack output is not valid JSON")?;
-
-    let index_state = json
-        .get("meta")
-        .and_then(|m| m.get("index_state"))
-        .context("context_pack meta.index_state missing")?;
-    let index_exists = index_state
-        .get("index")
-        .and_then(|i| i.get("exists"))
-        .and_then(Value::as_bool);
-    assert_eq!(index_exists, Some(true));
-
-    let reindex = index_state
-        .get("reindex")
-        .context("context_pack meta.index_state.reindex missing")?;
-    assert_eq!(
-        reindex.get("attempted").and_then(Value::as_bool),
-        Some(true)
+        .context("context_pack missing text output")?;
+    assert!(
+        text.contains("[CONTENT]"),
+        "context_pack must return `.context` output"
     );
-    assert_eq!(
-        reindex.get("performed").and_then(Value::as_bool),
-        Some(true)
+
+    let indexes_dir = root.join(".context").join("indexes");
+    assert!(
+        indexes_dir.exists(),
+        "context_pack did not create .context/indexes"
+    );
+    let mut found_index_json = false;
+    for entry in std::fs::read_dir(&indexes_dir).context("read indexes dir")? {
+        let entry = entry?;
+        let candidate = entry.path().join("index.json");
+        if candidate.exists() {
+            found_index_json = true;
+            break;
+        }
+    }
+    assert!(
+        found_index_json,
+        "context_pack did not write any index.json files"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

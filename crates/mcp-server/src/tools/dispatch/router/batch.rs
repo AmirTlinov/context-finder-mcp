@@ -3,19 +3,21 @@ use super::super::{
     push_item_or_truncate, resolve_batch_refs, trim_output_to_budget, BatchBudget, BatchItemResult,
     BatchItemStatus, BatchRequest, BatchResult, BatchToolName, CallToolResult, CapabilitiesRequest,
     Content, ContextFinderService, ContextPackRequest, ContextRequest, DoctorRequest,
-    ExplainRequest, FileSliceRequest, GrepContextRequest, ImpactRequest, IndexRequest,
-    ListFilesRequest, MapRequest, McpError, OverviewRequest, Parameters, SearchRequest,
-    TextSearchRequest, TraceRequest,
+    ExplainRequest, FileSliceRequest, GrepContextRequest, HelpRequest, ImpactRequest,
+    ListFilesRequest, MapRequest, McpError, OverviewRequest, ResponseMode, SearchRequest,
+    TextSearchRequest, ToolMeta, TraceRequest,
 };
+use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::schemas::batch::BatchItem;
 use context_protocol::ErrorEnvelope;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use super::error::{
-    attach_meta, invalid_request, invalid_request_with, invalid_request_with_meta, meta_for_request,
+    attach_meta, attach_structured_content, invalid_request, invalid_request_with,
+    invalid_request_with_meta, meta_for_request,
 };
-const DEFAULT_MAX_CHARS: usize = 20_000;
+const DEFAULT_MAX_CHARS: usize = 2_000;
 const MAX_MAX_CHARS: usize = 500_000;
 const MIN_SUPPORTED_VERSION: u32 = 1;
 const LATEST_VERSION: u32 = 2;
@@ -55,10 +57,13 @@ fn budget_error(
     err: anyhow::Error,
 ) -> CallToolResult {
     let suggested = suggest_max_chars(max_chars);
+    // Even in low-noise modes, budget errors should return a deterministic recovery action.
+    // This keeps the tool "self-healing" for agents.
+    let next_actions = vec![retry_action(suggested, path, version)];
     invalid_request_with(
         format!("max_chars too small for batch response ({err:#})"),
         Some(format!("Increase max_chars (suggested: {suggested}).")),
-        vec![retry_action(suggested, path, version)],
+        next_actions,
     )
 }
 
@@ -72,15 +77,78 @@ fn validate_batch_version(version: u32) -> Option<String> {
     }
 }
 
+fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
+    match tool {
+        BatchToolName::Capabilities => "capabilities",
+        BatchToolName::Help => "help",
+        BatchToolName::Map => "map",
+        BatchToolName::FileSlice => "file_slice",
+        BatchToolName::ListFiles => "list_files",
+        BatchToolName::TextSearch => "text_search",
+        BatchToolName::GrepContext => "grep_context",
+        BatchToolName::Doctor => "doctor",
+        BatchToolName::Search => "search",
+        BatchToolName::Context => "context",
+        BatchToolName::ContextPack => "context_pack",
+        BatchToolName::Impact => "impact",
+        BatchToolName::Trace => "trace",
+        BatchToolName::Explain => "explain",
+        BatchToolName::Overview => "overview",
+    }
+}
+
+fn batch_item_status_label(status: BatchItemStatus) -> &'static str {
+    match status {
+        BatchItemStatus::Ok => "ok",
+        BatchItemStatus::Error => "error",
+    }
+}
+
+fn render_batch_context_doc(
+    output: &BatchResult,
+    docs_by_id: &HashMap<String, String>,
+    _response_mode: ResponseMode,
+) -> String {
+    let mut doc = ContextDocBuilder::new();
+    doc.push_answer(&format!(
+        "batch: items={} truncated={}",
+        output.items.len(),
+        output.budget.truncated
+    ));
+    doc.push_root_fingerprint(output.meta.root_fingerprint);
+
+    for item in &output.items {
+        doc.push_note(&format!(
+            "item {}: tool={} status={}",
+            item.id,
+            batch_tool_name_label(item.tool),
+            batch_item_status_label(item.status)
+        ));
+
+        if let Some(text) = docs_by_id.get(&item.id) {
+            doc.push_block_smart(text);
+        } else if let Some(message) = item.message.as_deref() {
+            doc.push_block_smart(message);
+        }
+        doc.push_blank();
+    }
+
+    if output.budget.truncated {
+        doc.push_note("truncated=true (increase max_chars)");
+    }
+
+    doc.finish()
+}
+
 async fn dispatch_tool(
     service: &ContextFinderService,
     tool: BatchToolName,
     input: serde_json::Value,
 ) -> std::result::Result<CallToolResult, McpError> {
     macro_rules! typed_call {
-        ($req:ty, $method:ident, $tool_name:literal) => {{
+        ($req:ty, $func:path, $tool_name:literal) => {{
             match serde_json::from_value::<$req>(input) {
-                Ok(req) => service.$method(Parameters(req)).await,
+                Ok(req) => $func(service, req).await,
                 Err(err) => Ok(invalid_request(format!(
                     "Invalid input for {}: {err}",
                     $tool_name
@@ -90,23 +158,52 @@ async fn dispatch_tool(
     }
 
     match tool {
-        BatchToolName::Capabilities => {
-            typed_call!(CapabilitiesRequest, capabilities, "capabilities")
+        BatchToolName::Capabilities => typed_call!(
+            CapabilitiesRequest,
+            super::capabilities::capabilities,
+            "capabilities"
+        ),
+        BatchToolName::Help => typed_call!(HelpRequest, super::help::help, "help"),
+        BatchToolName::Map => typed_call!(MapRequest, super::map::map, "map"),
+        BatchToolName::FileSlice => match serde_json::from_value::<FileSliceRequest>(input) {
+            Ok(req) => super::file_slice::file_slice(service, &req).await,
+            Err(err) => Ok(invalid_request(format!(
+                "Invalid input for file_slice: {err}"
+            ))),
+        },
+        BatchToolName::ListFiles => {
+            typed_call!(
+                ListFilesRequest,
+                super::list_files::list_files,
+                "list_files"
+            )
         }
-        BatchToolName::Map => typed_call!(MapRequest, map, "map"),
-        BatchToolName::FileSlice => typed_call!(FileSliceRequest, file_slice, "file_slice"),
-        BatchToolName::ListFiles => typed_call!(ListFilesRequest, list_files, "list_files"),
-        BatchToolName::TextSearch => typed_call!(TextSearchRequest, text_search, "text_search"),
-        BatchToolName::GrepContext => typed_call!(GrepContextRequest, grep_context, "grep_context"),
-        BatchToolName::Doctor => typed_call!(DoctorRequest, doctor, "doctor"),
-        BatchToolName::Search => typed_call!(SearchRequest, search, "search"),
-        BatchToolName::Context => typed_call!(ContextRequest, context, "context"),
-        BatchToolName::ContextPack => typed_call!(ContextPackRequest, context_pack, "context_pack"),
-        BatchToolName::Index => typed_call!(IndexRequest, index, "index"),
-        BatchToolName::Impact => typed_call!(ImpactRequest, impact, "impact"),
-        BatchToolName::Trace => typed_call!(TraceRequest, trace, "trace"),
-        BatchToolName::Explain => typed_call!(ExplainRequest, explain, "explain"),
-        BatchToolName::Overview => typed_call!(OverviewRequest, overview, "overview"),
+        BatchToolName::TextSearch => {
+            typed_call!(
+                TextSearchRequest,
+                super::text_search::text_search,
+                "text_search"
+            )
+        }
+        BatchToolName::GrepContext => typed_call!(
+            GrepContextRequest,
+            super::grep_context::grep_context,
+            "grep_context"
+        ),
+        BatchToolName::Doctor => typed_call!(DoctorRequest, super::doctor::doctor, "doctor"),
+        BatchToolName::Search => typed_call!(SearchRequest, super::search::search, "search"),
+        BatchToolName::Context => typed_call!(ContextRequest, super::context::context, "context"),
+        BatchToolName::ContextPack => typed_call!(
+            ContextPackRequest,
+            super::context_pack::context_pack,
+            "context_pack"
+        ),
+        BatchToolName::Impact => typed_call!(ImpactRequest, super::impact::impact, "impact"),
+        BatchToolName::Trace => typed_call!(TraceRequest, super::trace::trace, "trace"),
+        BatchToolName::Explain => typed_call!(ExplainRequest, super::explain::explain, "explain"),
+        BatchToolName::Overview => {
+            typed_call!(OverviewRequest, super::overview::overview, "overview")
+        }
     }
 }
 
@@ -117,6 +214,8 @@ struct BatchRunner<'a> {
     seen_ids: HashSet<String>,
     ref_context: Option<serde_json::Value>,
     output: BatchResult,
+    response_mode: ResponseMode,
+    docs_by_id: HashMap<String, String>,
 }
 
 impl<'a> BatchRunner<'a> {
@@ -125,6 +224,7 @@ impl<'a> BatchRunner<'a> {
         version: u32,
         max_chars: usize,
         inferred_path: Option<String>,
+        response_mode: ResponseMode,
     ) -> Self {
         let output = BatchResult {
             version,
@@ -136,7 +236,7 @@ impl<'a> BatchRunner<'a> {
                 truncation: None,
             },
             next_actions: Vec::new(),
-            meta: context_indexer::ToolMeta { index_state: None },
+            meta: ToolMeta::default(),
         };
         let ref_context = (version >= 2).then(|| {
             serde_json::json!({
@@ -153,6 +253,8 @@ impl<'a> BatchRunner<'a> {
             seen_ids: HashSet::new(),
             ref_context,
             output,
+            response_mode,
+            docs_by_id: HashMap::new(),
         }
     }
 
@@ -306,16 +408,28 @@ impl<'a> BatchRunner<'a> {
             item.tool,
             self.remaining_chars(),
         );
+
         let tool_result = dispatch_tool(self.service, item.tool, input).await;
+        if let Ok(ref result) = tool_result {
+            let text = result
+                .content
+                .iter()
+                .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.trim().is_empty() {
+                self.docs_by_id.insert(trimmed_id.clone(), text);
+            }
+        }
         let outcome = materialize_item_result(trimmed_id, item.tool, tool_result);
 
         self.push_processed(outcome)
     }
 
     fn finish(self) -> CallToolResult {
-        CallToolResult::success(vec![Content::text(
-            context_protocol::serialize_json(&self.output).unwrap_or_default(),
-        )])
+        let doc = render_batch_context_doc(&self.output, &self.docs_by_id, self.response_mode);
+        let result = CallToolResult::success(vec![Content::text(doc)]);
+        attach_structured_content(result, &self.output, self.output.meta.clone(), "batch")
     }
 
     async fn apply_meta(&mut self) -> ToolResult<()> {
@@ -325,7 +439,9 @@ impl<'a> BatchRunner<'a> {
         let Ok(root) = PathBuf::from(raw_path).canonicalize() else {
             return Ok(());
         };
-        self.output.meta = self.service.tool_meta(&root).await;
+        if self.response_mode != ResponseMode::Minimal {
+            self.output.meta = self.service.tool_meta(&root).await;
+        }
         trim_output_to_budget(&mut self.output).map_err(|err| {
             budget_error(
                 self.output.budget.max_chars,
@@ -334,7 +450,10 @@ impl<'a> BatchRunner<'a> {
                 err,
             )
         })?;
-        if self.output.budget.truncated && self.output.next_actions.is_empty() {
+        if self.response_mode == ResponseMode::Full
+            && self.output.budget.truncated
+            && self.output.next_actions.is_empty()
+        {
             let suggested = suggest_max_chars(self.output.budget.max_chars);
             self.output.next_actions.push(retry_action(
                 suggested,
@@ -349,6 +468,10 @@ impl<'a> BatchRunner<'a> {
                     err,
                 )
             })?;
+        }
+
+        if self.response_mode != ResponseMode::Full {
+            self.output.next_actions.clear();
         }
         Ok(())
     }
@@ -439,12 +562,18 @@ fn extract_error_envelope(result: &CallToolResult) -> Option<ErrorEnvelope> {
     serde_json::from_value(raw).ok()
 }
 
-/// Execute multiple Context Finder tools in a single call (agent-friendly batch).
+/// Execute multiple Context tools in a single call (agent-friendly batch).
 pub(in crate::tools::dispatch) async fn batch(
     service: &ContextFinderService,
     request: BatchRequest,
 ) -> Result<CallToolResult, McpError> {
-    let mut meta = meta_for_request(service, request.path.as_deref()).await;
+    let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
+
+    let mut meta = if response_mode == ResponseMode::Minimal {
+        ToolMeta::default()
+    } else {
+        meta_for_request(service, request.path.as_deref()).await
+    };
     if request.items.is_empty() {
         return Ok(invalid_request_with_meta(
             "Batch items must not be empty",
@@ -474,7 +603,7 @@ pub(in crate::tools::dispatch) async fn batch(
             truncation: None,
         },
         next_actions: Vec::new(),
-        meta: context_indexer::ToolMeta { index_state: None },
+        meta: ToolMeta::default(),
     };
     if let Ok(min_chars) = compute_used_chars(&min_payload) {
         if min_chars > max_chars {
@@ -488,16 +617,23 @@ pub(in crate::tools::dispatch) async fn batch(
         }
     }
 
-    let inferred_path = match service.resolve_root(request.path.as_deref()).await {
+    let inferred_path = match service
+        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .await
+    {
         Ok((root, root_display)) => {
-            meta = service.tool_meta(&root).await;
+            meta = if response_mode == ResponseMode::Minimal {
+                ToolMeta::default()
+            } else {
+                service.tool_meta(&root).await
+            };
             Some(root_display)
         }
         Err(message) => {
             return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
         }
     };
-    let mut runner = BatchRunner::new(service, version, max_chars, inferred_path)
+    let mut runner = BatchRunner::new(service, version, max_chars, inferred_path, response_mode)
         .with_stop_on_error(request.stop_on_error);
     runner.update_ref_context_path();
 

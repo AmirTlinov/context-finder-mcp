@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::file_slice::FileSliceResult;
 use super::map::MapResult;
+use super::response_mode::ResponseMode;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RepoOnboardingPackRequest {
@@ -41,16 +42,29 @@ pub struct RepoOnboardingPackRequest {
     #[schemars(description = "Max UTF-8 chars per doc slice")]
     pub doc_max_chars: Option<usize>,
 
-    /// Maximum number of UTF-8 characters for the entire onboarding pack (default: 20000)
+    /// Maximum number of UTF-8 characters for the entire onboarding pack (default: 2000)
     #[schemars(description = "Maximum number of UTF-8 characters for the onboarding pack")]
     pub max_chars: Option<usize>,
 
-    /// Automatically build or refresh the semantic index (default: true)
-    #[schemars(description = "Automatically build or refresh the semantic index (default: true).")]
+    /// Response mode:
+    /// - "facts" (default): keeps meta/index_state for freshness, strips next_actions to reduce noise.
+    /// - "full": includes meta/index_state and next_actions (when applicable).
+    /// - "minimal": strips meta/index_state and next_actions to reduce noise.
+    #[schemars(description = "Response mode: 'facts' (default), 'full', or 'minimal'")]
+    pub response_mode: Option<ResponseMode>,
+
+    /// Automatically build/refresh the semantic index when needed.
+    ///
+    /// Repo onboarding packs are often the first tool call in a fresh session; allowing a bounded
+    /// auto-index here helps subsequent semantic tools (search/context_pack) become available
+    /// without a separate explicit indexing step.
+    #[schemars(
+        description = "Automatically build or refresh the semantic index before executing (default: true)."
+    )]
     pub auto_index: Option<bool>,
 
-    /// Auto-index time budget in milliseconds (default: 3000)
-    #[schemars(description = "Auto-index time budget in milliseconds (default: 3000).")]
+    /// Auto-index time budget in milliseconds when auto_index=true.
+    #[schemars(description = "Auto-index time budget in milliseconds (default: 15000).")]
     pub auto_index_budget_ms: Option<u64>,
 }
 

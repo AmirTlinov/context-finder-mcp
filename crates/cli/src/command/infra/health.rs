@@ -2,6 +2,7 @@ use crate::command::context::index_path;
 use crate::command::domain::{CommandOutcome, Hint, HintKind};
 use anyhow::Result;
 use context_indexer::{read_health_snapshot, write_health_snapshot, HealthSnapshot, IndexStats};
+use context_vector_store::context_dir_for_project_root;
 use serde::Serialize;
 use std::path::Path;
 use tokio::fs;
@@ -56,7 +57,7 @@ impl HealthPort {
     pub async fn probe(&self, root: &Path) -> Result<HealthReport> {
         let snapshot = read_health_snapshot(root).await.ok().flatten();
         let index_path = index_path(root);
-        let graph_path = root.join(".context-finder").join("graph_cache.json");
+        let graph_path = context_dir_for_project_root(root).join("graph_cache.json");
 
         let index_size_bytes = fs::metadata(&index_path).await.ok().map(|m| m.len());
         let graph_cache_size_bytes = fs::metadata(&graph_path).await.ok().map(|m| m.len());

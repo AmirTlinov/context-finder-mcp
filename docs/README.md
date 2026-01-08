@@ -1,8 +1,8 @@
 # Documentation
 
-This folder contains human-oriented documentation for Context Finder.
+This folder contains human-oriented documentation for Context.
 
-If you are integrating Context Finder programmatically, treat the **contracts** as the source of truth:
+If you are integrating Context programmatically, treat the **contracts** as the source of truth:
 
 - [contracts/README.md](../contracts/README.md)
 - [contracts/command/v1/](../contracts/command/v1/) (JSON Schemas)
@@ -11,8 +11,12 @@ If you are integrating Context Finder programmatically, treat the **contracts** 
 
 ## Start here
 
+- [docs/AGENT_MEMORY.md](AGENT_MEMORY.md) — the “project memory” playbook (`read_pack` as the daily default)
+- [docs/AGENT_DX_RUNBOOK.md](AGENT_DX_RUNBOOK.md) — multi-session hygiene, trust checks, and troubleshooting patterns
 - [docs/QUICK_START.md](QUICK_START.md) — install, models, CLI, HTTP/gRPC, JSON API examples
 - [USAGE_EXAMPLES.md](../USAGE_EXAMPLES.md) — agent-first workflows (best defaults and patterns)
+- [docs/QUALITY_CHARTER.md](QUALITY_CHARTER.md) — premium-quality invariants, SLOs, and release gates (prevents regressions)
+- [docs/EVALUATION.md](EVALUATION.md) — evaluation loop, metrics, and how we prevent quality regressions
 - [docs/ARCHITECTURE.md](ARCHITECTURE.md) — crate map + data flow + on-disk layout
 - [PHILOSOPHY.md](../PHILOSOPHY.md) — why the project is contract-first and agent-first
 

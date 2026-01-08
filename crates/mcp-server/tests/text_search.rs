@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use serde_json::Value;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
@@ -46,6 +44,7 @@ async fn text_search_works_without_index_and_is_bounded() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -90,26 +89,143 @@ async fn text_search_works_without_index_and_is_bounded() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("text_search did not return text content")?;
-    let json: Value = serde_json::from_str(text).context("text_search output is not valid JSON")?;
-
-    assert_eq!(
-        json.get("pattern").and_then(Value::as_str),
-        Some("println!")
+        .context("text_search missing text output")?;
+    assert!(text.contains("[CONTENT]"));
+    assert!(text.contains("A: Matches:"), "missing answer line");
+    assert!(
+        text.contains("pattern=println!"),
+        "missing pattern in answer"
     );
-    assert_eq!(json.get("truncated").and_then(Value::as_bool), Some(false));
+    assert!(
+        text.contains("R: src/main.rs:"),
+        "expected src/main.rs match in output"
+    );
 
-    let matches = json
-        .get("matches")
-        .and_then(Value::as_array)
-        .context("missing matches array")?;
-    assert!(!matches.is_empty(), "expected at least one match");
+    // Must not create indexes/corpus as a side effect.
+    assert!(
+        !root.join(".context-finder").exists(),
+        "text_search created .context-finder side effects"
+    );
 
-    let files: HashSet<&str> = matches
-        .iter()
-        .filter_map(|m| m.get("file").and_then(Value::as_str))
-        .collect();
-    assert!(files.contains("src/main.rs"));
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn text_search_respects_max_chars_and_supports_cursor_only_continuation() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+
+    // Many long match lines -> forces max_chars truncation in a deterministic way.
+    let long_tail = "x".repeat(400);
+    let mut content = String::new();
+    for idx in 0..20usize {
+        content.push_str(&format!("// {idx}\n"));
+        content.push_str(&format!("let v{idx} = \"render {long_tail}\";\n"));
+    }
+    std::fs::write(root.join("src").join("main.rs"), content).context("write main.rs")?;
+
+    assert!(
+        !root.join(".context-finder").exists(),
+        "temp project unexpectedly has .context-finder before text_search"
+    );
+
+    let max_chars = 320usize;
+    let args = serde_json::json!({
+        "path": root.to_string_lossy(),
+        "pattern": "render",
+        "file_pattern": "src/*",
+        "max_results": 100,
+        "max_chars": max_chars,
+        "case_sensitive": true,
+        "whole_word": false,
+        "response_mode": "minimal",
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "text_search".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling text_search")??;
+
+    assert_ne!(result.is_error, Some(true), "text_search returned error");
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("text_search did not return text content")?;
+    anyhow::ensure!(
+        text.chars().count() <= max_chars,
+        "expected text_search to respect max_chars (used_chars={}, max_chars={})",
+        text.chars().count(),
+        max_chars
+    );
+
+    let cursor = text
+        .lines()
+        .find_map(|line| line.strip_prefix("M: ").map(str::to_string))
+        .context("expected cursor line (M:) when truncated")?;
+    anyhow::ensure!(
+        cursor.len() < 200,
+        "expected compact cursor alias, got len={}",
+        cursor.len()
+    );
+
+    // Cursor-only continuation: pattern and other options are inferred from the cursor.
+    let args2 = serde_json::json!({
+        "path": root.to_string_lossy(),
+        "cursor": cursor,
+        "max_chars": max_chars,
+        "response_mode": "minimal",
+    });
+    let result2 = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "text_search".into(),
+            arguments: args2.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling text_search continuation")??;
+
+    assert_ne!(
+        result2.is_error,
+        Some(true),
+        "text_search continuation returned error"
+    );
+    let text2 = result2
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("text_search continuation did not return text content")?;
+    anyhow::ensure!(
+        text2.chars().count() <= max_chars,
+        "expected continuation to respect max_chars"
+    );
+    anyhow::ensure!(
+        text2.contains("R: src/main.rs:"),
+        "expected continuation to return matches"
+    );
 
     // Must not create indexes/corpus as a side effect.
     assert!(

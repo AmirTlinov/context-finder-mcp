@@ -52,18 +52,18 @@ Run these before considering a change “done”:
 scripts/validate_contracts.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
+CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 ```
 
 Notes:
 
 - Model downloads are **not** required for most development.
-- CPU fallback is **opt-in** only: `CONTEXT_FINDER_ALLOW_CPU=1`.
+- CPU fallback is **opt-in** only: `CONTEXT_ALLOW_CPU=1`.
 
 ## 5) Repository hygiene (hard rules)
 
 - Do not commit downloaded model assets under `models/**`.
-- Do not commit local caches (`.context-finder/`, `.fastembed_cache/`, `.deps/`, etc.).
+- Do not commit local caches (`.context/`, `.fastembed_cache/`, `.deps/`, etc.).
 - Avoid churn: no formatting-only refactors, no mass renames.
 - When you add a new public knob (flag/env/config), document it in:
   - the relevant contract (if it affects an API surface)

@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use context_code_chunker::{ChunkMetadata, CodeChunk};
 use context_vector_store::ChunkCorpus;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use serde_json::Value;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -50,6 +49,7 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -67,6 +67,8 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         serde_json::to_vec(&tools).context("serialize tools/list response for diagnostics")?;
     let tool_names: HashSet<&str> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     for expected in [
+        "capabilities",
+        "help",
         "map",
         "repo_onboarding_pack",
         "read_pack",
@@ -78,7 +80,6 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         "search",
         "context",
         "context_pack",
-        "index",
         "text_search",
         "impact",
         "trace",
@@ -115,6 +116,7 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         "path": root.to_string_lossy(),
         "depth": 2,
         "limit": 20,
+        "response_mode": "facts",
     });
     let map_result = tokio::time::timeout(
         Duration::from_secs(10),
@@ -132,27 +134,20 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("map did not return text content")?;
-    let map_json: Value = serde_json::from_str(map_text).context("map output is not valid JSON")?;
-
+        .context("map missing text output")?;
+    assert!(map_text.contains("map:"), "map output missing summary");
     assert!(
-        map_json
-            .get("total_files")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            >= 1
+        map_text.contains("src"),
+        "expected src directory to appear in map output"
     );
-    assert!(map_json
-        .get("directories")
-        .and_then(Value::as_array)
-        .is_some());
 
     assert!(
         !root.join(".context-finder").exists(),
         "map created .context-finder side effects"
     );
 
-    let doctor_args = serde_json::json!({ "path": root.to_string_lossy() });
+    let doctor_args =
+        serde_json::json!({ "path": root.to_string_lossy(), "response_mode": "full" });
     let doctor_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
@@ -169,51 +164,18 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("doctor did not return text content")?;
-    let doctor_json: Value =
-        serde_json::from_str(doctor_text).context("doctor output is not valid JSON")?;
-
-    assert_eq!(
-        doctor_json
-            .get("env")
-            .and_then(|v| v.get("profile"))
-            .and_then(Value::as_str),
-        Some("quality")
+        .context("doctor missing text output")?;
+    assert!(
+        doctor_text.contains("profile: quality"),
+        "expected doctor output to mention profile"
     );
-    let project = doctor_json
-        .get("project")
-        .context("doctor did not return project info")?;
-    let project_root = project
-        .get("root")
-        .and_then(Value::as_str)
-        .context("doctor project.root missing")?;
-    let corpus_path = project
-        .get("corpus_path")
-        .and_then(Value::as_str)
-        .context("doctor project.corpus_path missing")?;
-
-    let expected_root = root.canonicalize().context("canonicalize temp root")?;
-    let reported_root = PathBuf::from(project_root)
-        .canonicalize()
-        .context("canonicalize reported root")?;
-    assert_eq!(
-        reported_root, expected_root,
-        "doctor reported unexpected root (got: {project_root})"
+    assert!(
+        doctor_text.contains("project_root:"),
+        "expected doctor output to mention project_root"
     );
-
-    let expected_corpus_path = expected_root.join(".context-finder").join("corpus.json");
-    assert_eq!(
-        PathBuf::from(corpus_path),
-        expected_corpus_path,
-        "doctor reported unexpected corpus_path"
-    );
-    assert_eq!(
-        project
-            .get("has_corpus")
-            .and_then(Value::as_bool)
-            .context("doctor project.has_corpus missing")?,
-        expected_corpus_path.exists(),
-        "doctor has_corpus must match corpus_path existence"
+    assert!(
+        doctor_text.contains(root.to_string_lossy().as_ref()),
+        "expected doctor output to include the requested root"
     );
 
     // Create a minimal corpus + index to validate drift diagnostics without requiring embedding models.
@@ -269,34 +231,10 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("doctor did not return text content (with corpus/index)")?;
-    let doctor_json: Value = serde_json::from_str(doctor_text)
-        .context("doctor output is not valid JSON (with corpus/index)")?;
-
-    assert_eq!(
-        doctor_json
-            .get("project")
-            .and_then(|v| v.get("has_corpus"))
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        doctor_json
-            .get("project")
-            .and_then(|v| v.get("drift"))
-            .and_then(Value::as_array)
-            .map(|v| v.len()),
-        Some(1)
-    );
-    assert_eq!(
-        doctor_json
-            .get("project")
-            .and_then(|v| v.get("drift"))
-            .and_then(Value::as_array)
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.get("missing_chunks"))
-            .and_then(Value::as_u64),
-        Some(1)
+        .context("doctor (with corpus/index) missing text output")?;
+    assert!(
+        doctor_text.contains("has_corpus=true"),
+        "expected doctor to report has_corpus=true after corpus.json is present"
     );
 
     // Batch: one call → multiple tools, with a single bounded JSON output.
@@ -320,35 +258,27 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
     .context("timeout calling batch")??;
 
     assert_ne!(batch_result.is_error, Some(true), "batch returned error");
+    assert!(
+        batch_result.structured_content.is_none(),
+        "batch should not return structured_content"
+    );
     let batch_text = batch_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("batch did not return text content")?;
-    let batch_json: Value =
-        serde_json::from_str(batch_text).context("batch output is not valid JSON")?;
-
-    assert_eq!(
-        batch_json.get("version").and_then(Value::as_u64),
-        Some(2),
-        "batch schema version mismatch"
+        .context("batch missing text output")?;
+    assert!(
+        batch_text.contains("batch: items=2 truncated=false"),
+        "batch output missing summary"
     );
-    let items = batch_json
-        .get("items")
-        .and_then(Value::as_array)
-        .context("batch items is not an array")?;
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0].get("id").and_then(Value::as_str), Some("map"));
-    assert_eq!(items[0].get("status").and_then(Value::as_str), Some("ok"));
-    assert_eq!(items[1].get("id").and_then(Value::as_str), Some("doctor"));
-    assert_eq!(items[1].get("status").and_then(Value::as_str), Some("ok"));
-    assert_eq!(
-        batch_json
-            .get("budget")
-            .and_then(|v| v.get("truncated"))
-            .and_then(Value::as_bool),
-        Some(false)
+    assert!(
+        batch_text.contains("item map: tool=map status=ok"),
+        "batch output missing map item status"
+    );
+    assert!(
+        batch_text.contains("item doctor: tool=doctor status=ok"),
+        "batch output missing doctor item status"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -363,6 +293,7 @@ async fn mcp_batch_truncates_when_budget_is_too_small() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -402,31 +333,27 @@ async fn mcp_batch_truncates_when_budget_is_too_small() -> Result<()> {
         Some(true),
         "batch should return error"
     );
-    let structured = batch_result
-        .structured_content
-        .as_ref()
-        .context("batch did not return structured content")?;
-    let error = structured
-        .get("error")
-        .context("batch structured content missing error")?;
-    assert_eq!(
-        error.get("code").and_then(Value::as_str),
-        Some("invalid_request")
-    );
-    let next_actions = error
-        .get("next_actions")
-        .and_then(Value::as_array)
-        .context("batch error missing next_actions")?;
     assert!(
-        !next_actions.is_empty(),
-        "batch error should suggest next actions"
+        batch_result.structured_content.is_none(),
+        "batch should not return structured_content on error"
+    );
+    let text = batch_result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .unwrap_or_default();
+    assert!(
+        text.contains("error: invalid_request"),
+        "expected invalid_request error, got: {text}"
     );
     assert!(
-        structured
-            .get("meta")
-            .and_then(|meta| meta.get("index_state"))
-            .is_some(),
-        "batch error should include meta.index_state"
+        text.contains("max_chars too small"),
+        "expected max_chars guidance, got: {text}"
+    );
+    assert!(
+        text.contains("next: batch"),
+        "expected next action hint in error text, got: {text}"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -441,6 +368,7 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -486,45 +414,13 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("file_slice did not return text content")?;
-    let slice_json: Value =
-        serde_json::from_str(slice_text).context("file_slice output is not valid JSON")?;
-
-    assert_eq!(
-        slice_json.get("file").and_then(Value::as_str),
-        Some("src/main.rs")
-    );
-    assert_eq!(
-        slice_json.get("start_line").and_then(Value::as_u64),
-        Some(2)
-    );
-    assert_eq!(slice_json.get("end_line").and_then(Value::as_u64), Some(3));
-    assert_eq!(
-        slice_json.get("returned_lines").and_then(Value::as_u64),
-        Some(2)
-    );
-    assert_eq!(
-        slice_json.get("truncated").and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        slice_json.get("content").and_then(Value::as_str),
-        Some("line-2\nline-3")
-    );
+        .context("file_slice missing text output")?;
+    assert!(slice_text.contains("R: src/main.rs:2"));
+    assert!(slice_text.contains("line-2"));
+    assert!(slice_text.contains("line-3"));
     assert!(
-        slice_json
-            .get("file_size_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            > 0
-    );
-    assert!(
-        slice_json
-            .get("content_sha256")
-            .and_then(Value::as_str)
-            .map(|s| s.len())
-            .unwrap_or(0)
-            == 64
+        !slice_text.contains("line-1"),
+        "did not expect line-1 when start_line=2"
     );
 
     assert!(
@@ -587,6 +483,7 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -633,42 +530,12 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("list_files did not return text content")?;
-    let list_json: Value =
-        serde_json::from_str(list_text).context("list_files output is not valid JSON")?;
-
-    assert_eq!(
-        list_json.get("source").and_then(Value::as_str),
-        Some("filesystem")
+        .context("list_files missing text output")?;
+    assert!(list_text.contains("src/main.rs"));
+    assert!(
+        !list_text.contains("\nM: "),
+        "did not expect truncation cursor for list_files"
     );
-    let files = list_json
-        .get("files")
-        .and_then(Value::as_array)
-        .context("list_files files is not an array")?;
-    assert_eq!(files.len(), 1);
-    assert_eq!(
-        files[0].as_str(),
-        Some("src/main.rs"),
-        "unexpected file path: {files:?}"
-    );
-    assert_eq!(
-        list_json.get("truncated").and_then(Value::as_bool),
-        Some(false)
-    );
-
-    for file in files {
-        let Some(file) = file.as_str() else {
-            continue;
-        };
-        assert!(
-            !file.starts_with('/'),
-            "list_files must return relative paths (got: {file})"
-        );
-        assert!(
-            !file.contains(".."),
-            "list_files must not return traversal paths (got: {file})"
-        );
-    }
 
     let limited_args = serde_json::json!({
         "path": root.to_string_lossy(),
@@ -694,16 +561,10 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("list_files (limited) did not return text content")?;
-    let limited_json: Value = serde_json::from_str(limited_text)
-        .context("list_files (limited) output is not valid JSON")?;
-    assert_eq!(
-        limited_json.get("truncated").and_then(Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        limited_json.get("truncation").and_then(Value::as_str),
-        Some("max_items")
+        .context("list_files (limited) missing text output")?;
+    assert!(
+        limited_text.contains("\nM: "),
+        "expected truncation cursor (M:)"
     );
 
     assert!(

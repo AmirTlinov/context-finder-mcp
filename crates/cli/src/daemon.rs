@@ -4,7 +4,7 @@ use anyhow::{Context as AnyhowContext, Result};
 use context_graph::GraphLanguage;
 use context_indexer::{IndexerHealth, StreamingIndexer, ProjectIndexer};
 use context_search::{ContextSearch, HybridSearch};
-use context_vector_store::VectorStore;
+use context_vector_store::{context_dir_for_project_root, VectorStore};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -296,7 +296,7 @@ impl ContextFinder for ContextFinderService {
 }
 
 async fn build_context_search(config: &DaemonConfig) -> Result<ContextSearch> {
-    let store_path = config.project_root.join(".context-finder/index.json");
+    let store_path = context_dir_for_project_root(&config.project_root).join("index.json");
     let store_mtime = tokio::fs::metadata(&store_path)
         .await
         .context("Failed to stat vector store")?

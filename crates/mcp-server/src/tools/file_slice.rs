@@ -4,23 +4,52 @@ use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Seek};
 use std::path::{Path, PathBuf};
 
-use super::cursor::{decode_cursor, encode_cursor, CURSOR_VERSION};
+use super::cursor::{cursor_fingerprint, decode_cursor, encode_cursor, CURSOR_VERSION};
 use super::paths::normalize_relative_path;
+use super::schemas::content_format::ContentFormat;
 use super::schemas::file_slice::{
     FileSliceCursorV1, FileSliceRequest, FileSliceResult, FileSliceTruncation,
 };
+use super::schemas::response_mode::ResponseMode;
+use super::secrets::is_potential_secret_path;
 use super::util::{hex_encode_lower, unix_ms};
 
 const DEFAULT_MAX_LINES: usize = 200;
 const MAX_MAX_LINES: usize = 5_000;
-const DEFAULT_MAX_CHARS: usize = 20_000;
+const DEFAULT_MAX_CHARS: usize = 2_000;
 const MAX_MAX_CHARS: usize = 500_000;
+
+fn file_slice_envelope_reserve(response_mode: ResponseMode, display_file: &str) -> usize {
+    // Keep enough headroom for the response envelope so tight `max_chars` budgets still return a
+    // useful slice instead of "truncated but empty".
+    //
+    // We keep this conservative, but noticeably smaller for `.context` output (tiny envelope).
+    let file_overhead = display_file
+        .chars()
+        .count()
+        // File path appears in multiple envelope lines (`A:` + `R:`) and can also influence the
+        // cursor block; keep a small extra cushion for line numbers and formatting.
+        .saturating_mul(2)
+        .saturating_add(48)
+        .min(768);
+
+    let base_reserve: usize = match response_mode {
+        ResponseMode::Minimal => 120,
+        ResponseMode::Facts => 200,
+        ResponseMode::Full => 380,
+    };
+
+    base_reserve.saturating_add(file_overhead)
+}
 
 struct CursorValidation<'a> {
     root_display: &'a str,
+    root_hash: u64,
     display_file: &'a str,
     max_lines: usize,
     max_chars: usize,
+    format: ContentFormat,
+    allow_secrets: bool,
     file_size_bytes: u64,
     file_mtime_ms: u64,
 }
@@ -57,7 +86,11 @@ fn decode_resume_cursor(
     if decoded.v != CURSOR_VERSION || decoded.tool != "file_slice" {
         return Err("Invalid cursor: wrong tool".to_string());
     }
-    if decoded.root != validation.root_display {
+    if let Some(hash) = decoded.root_hash {
+        if hash != validation.root_hash {
+            return Err("Invalid cursor: different root".to_string());
+        }
+    } else if decoded.root.as_deref() != Some(validation.root_display) {
         return Err("Invalid cursor: different root".to_string());
     }
     if decoded.file != validation.display_file {
@@ -69,10 +102,13 @@ fn decode_resume_cursor(
             decoded.max_lines, validation.max_lines
         ));
     }
-    if decoded.max_chars != validation.max_chars {
+    if decoded.format != validation.format {
+        return Err("Invalid cursor: different format".to_string());
+    }
+    if decoded.allow_secrets != validation.allow_secrets {
         return Err(format!(
-            "Invalid cursor: different max_chars (cursor={}, expected={}). Resume with the same max_chars that produced this cursor.",
-            decoded.max_chars, validation.max_chars
+            "Invalid cursor: different allow_secrets (cursor={}, expected={})",
+            decoded.allow_secrets, validation.allow_secrets
         ));
     }
     if decoded.file_size_bytes != validation.file_size_bytes
@@ -99,10 +135,13 @@ fn encode_next_cursor(
     let token = FileSliceCursorV1 {
         v: CURSOR_VERSION,
         tool: "file_slice".to_string(),
-        root: validation.root_display.to_string(),
+        root: Some(validation.root_display.to_string()),
+        root_hash: Some(validation.root_hash),
         file: validation.display_file.to_string(),
         max_lines: validation.max_lines,
         max_chars: validation.max_chars,
+        format: validation.format,
+        allow_secrets: validation.allow_secrets,
         next_start_line,
         next_byte_offset,
         file_size_bytes: validation.file_size_bytes,
@@ -120,6 +159,7 @@ struct ReadSliceConfig<'a> {
     using_cursor: bool,
     max_lines: usize,
     max_chars: usize,
+    format: ContentFormat,
     cursor_validation: &'a CursorValidation<'a>,
 }
 
@@ -183,7 +223,13 @@ fn read_file_slice(cfg: &ReadSliceConfig<'_>) -> std::result::Result<ReadSliceOu
             break;
         }
 
-        let line_chars = line.chars().count();
+        let prefix = if cfg.format == ContentFormat::Numbered {
+            format!("{line_no}: ")
+        } else {
+            String::new()
+        };
+
+        let line_chars = prefix.chars().count().saturating_add(line.chars().count());
         let extra_chars = if returned_lines == 0 {
             line_chars
         } else {
@@ -203,6 +249,9 @@ fn read_file_slice(cfg: &ReadSliceConfig<'_>) -> std::result::Result<ReadSliceOu
         if returned_lines > 0 {
             content.push('\n');
             used_chars += 1;
+        }
+        if !prefix.is_empty() {
+            content.push_str(&prefix);
         }
         content.push_str(line);
         used_chars += line_chars;
@@ -227,10 +276,38 @@ pub(super) fn compute_file_slice_result(
     root_display: &str,
     request: &FileSliceRequest,
 ) -> std::result::Result<FileSliceResult, String> {
-    let file_str = request.file.trim();
-    if file_str.is_empty() {
-        return Err("File must not be empty".to_string());
+    let cursor_payload: Option<FileSliceCursorV1> = request
+        .cursor
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|cursor| decode_cursor(cursor).map_err(|err| format!("Invalid cursor: {err}")))
+        .transpose()?;
+    if let Some(decoded) = cursor_payload.as_ref() {
+        if decoded.v != CURSOR_VERSION || decoded.tool != "file_slice" {
+            return Err("Invalid cursor: wrong tool".to_string());
+        }
+        if let Some(hash) = decoded.root_hash {
+            if hash != cursor_fingerprint(root_display) {
+                return Err("Invalid cursor: different root".to_string());
+            }
+        } else if decoded.root.as_deref() != Some(root_display) {
+            return Err("Invalid cursor: different root".to_string());
+        }
     }
+
+    let requested_file = request
+        .file
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let file_str = if let Some(file) = requested_file {
+        file
+    } else if let Some(decoded) = cursor_payload.as_ref() {
+        decoded.file.as_str()
+    } else {
+        return Err("Error: file is required when no cursor is provided".to_string());
+    };
 
     let candidate = resolve_candidate_path(root, file_str);
 
@@ -245,6 +322,16 @@ pub(super) fn compute_file_slice_result(
 
     let display_file = display_file_path(root, &canonical_file);
 
+    let allow_secrets = request
+        .allow_secrets
+        .or_else(|| cursor_payload.as_ref().map(|c| c.allow_secrets))
+        .unwrap_or(false);
+    if !allow_secrets && is_potential_secret_path(&display_file) {
+        return Err(format!(
+            "Refusing to read potential secret file '{display_file}' (set allow_secrets=true to override)"
+        ));
+    }
+
     let meta = match std::fs::metadata(&canonical_file) {
         Ok(m) => m,
         Err(e) => return Err(format!("Failed to stat '{display_file}': {e}")),
@@ -254,24 +341,62 @@ pub(super) fn compute_file_slice_result(
 
     let max_lines = request
         .max_lines
+        .or_else(|| cursor_payload.as_ref().map(|c| c.max_lines))
         .unwrap_or(DEFAULT_MAX_LINES)
         .clamp(1, MAX_MAX_LINES);
-    let max_chars = request
+    let output_max_chars = request
         .max_chars
+        .or_else(|| cursor_payload.as_ref().map(|c| c.max_chars))
         .unwrap_or(DEFAULT_MAX_CHARS)
         .clamp(1, MAX_MAX_CHARS);
 
     let start_line = request.start_line.unwrap_or(1).max(1);
+    let format = request
+        .format
+        .or_else(|| cursor_payload.as_ref().map(|c| c.format))
+        .unwrap_or(ContentFormat::Plain);
+    let response_mode = request.response_mode.unwrap_or(ResponseMode::Minimal);
+
+    // `max_chars` is a hard budget for the whole tool output. Reserve envelope headroom and spend
+    // the rest on actual file content.
+    //
+    // Guardrail: keep `reserve` from starving content in small budgets (common in tests and
+    // "just show me a snippet" workflows). We'll still respect `max_chars` overall, but aim to
+    // leave enough room for at least a couple of meaningful lines.
+    let reserve = {
+        let min_content = match response_mode {
+            ResponseMode::Minimal => 120,
+            ResponseMode::Facts => 200,
+            ResponseMode::Full => 260,
+        };
+        let raw = file_slice_envelope_reserve(response_mode, &display_file);
+        raw.min(output_max_chars.saturating_sub(min_content))
+    };
+    let content_max_chars = output_max_chars.saturating_sub(reserve).max(1);
     let validation = CursorValidation {
         root_display,
+        root_hash: cursor_fingerprint(root_display),
         display_file: &display_file,
         max_lines,
-        max_chars,
+        max_chars: output_max_chars,
+        format,
+        allow_secrets,
         file_size_bytes,
         file_mtime_ms,
     };
+    let request_with_cursor_filled = FileSliceRequest {
+        path: request.path.clone(),
+        file: Some(display_file.clone()),
+        start_line: request.start_line,
+        max_lines: request.max_lines,
+        max_chars: request.max_chars,
+        format: request.format,
+        response_mode: request.response_mode,
+        allow_secrets: request.allow_secrets,
+        cursor: request.cursor.clone(),
+    };
     let (using_cursor, start_line, start_byte_offset) =
-        decode_resume_cursor(request, &validation, start_line)?;
+        decode_resume_cursor(&request_with_cursor_filled, &validation, start_line)?;
 
     let read_cfg = ReadSliceConfig {
         canonical_file: &canonical_file,
@@ -280,7 +405,8 @@ pub(super) fn compute_file_slice_result(
         start_byte_offset,
         using_cursor,
         max_lines,
-        max_chars,
+        max_chars: content_max_chars,
+        format,
         cursor_validation: &validation,
     };
     let read = read_file_slice(&read_cfg)?;
@@ -293,18 +419,18 @@ pub(super) fn compute_file_slice_result(
         file: display_file,
         start_line,
         end_line: read.end_line,
-        returned_lines: read.returned_lines,
-        used_chars: read.used_chars,
-        max_lines,
-        max_chars,
+        returned_lines: Some(read.returned_lines),
+        used_chars: Some(read.used_chars),
+        max_lines: Some(max_lines),
+        max_chars: Some(output_max_chars),
         truncated: read.truncated,
         truncation: read.truncation,
         next_cursor: read.next_cursor,
         next_actions: None,
-        meta: ToolMeta { index_state: None },
-        file_size_bytes,
-        file_mtime_ms,
-        content_sha256,
+        meta: Some(ToolMeta::default()),
+        file_size_bytes: Some(file_size_bytes),
+        file_mtime_ms: Some(file_mtime_ms),
+        content_sha256: Some(content_sha256),
         content: read.content,
     })
 }
@@ -395,18 +521,18 @@ pub(super) fn compute_onboarding_doc_slice(
         file: display_file,
         start_line,
         end_line,
-        returned_lines,
-        used_chars,
-        max_lines,
-        max_chars,
+        returned_lines: Some(returned_lines),
+        used_chars: Some(used_chars),
+        max_lines: Some(max_lines),
+        max_chars: Some(max_chars),
         truncated,
         truncation,
         next_cursor: None,
         next_actions: None,
-        meta: ToolMeta { index_state: None },
-        file_size_bytes,
-        file_mtime_ms,
-        content_sha256,
+        meta: Some(ToolMeta::default()),
+        file_size_bytes: Some(file_size_bytes),
+        file_mtime_ms: Some(file_mtime_ms),
+        content_sha256: Some(content_sha256),
         content,
     })
 }

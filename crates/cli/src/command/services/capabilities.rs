@@ -26,7 +26,7 @@ impl CapabilitiesService {
         let output = Capabilities {
             schema_version: CAPABILITIES_SCHEMA_VERSION,
             server: CapabilitiesServer {
-                name: "context-finder-cli".to_string(),
+                name: "context-cli".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             versions: CapabilitiesVersions {

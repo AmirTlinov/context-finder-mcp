@@ -1,0 +1,139 @@
+use anyhow::{Context, Result};
+use serde_json::Value;
+use std::path::PathBuf;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
+
+fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
+        return Ok(PathBuf::from(path));
+    }
+
+    // `.../target/{debug|release}/deps/<test>` → `.../target/{debug|release}/context-finder-mcp`
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
+            let candidate = target_profile_dir.join("context-finder-mcp");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .ancestors()
+        .nth(2)
+        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
+    for rel in [
+        "target/debug/context-finder-mcp",
+        "target/release/context-finder-mcp",
+    ] {
+        let candidate = repo_root.join(rel);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    anyhow::bail!("failed to locate context-finder-mcp binary")
+}
+
+async fn send_line(stdin: &mut tokio::process::ChildStdin, value: &Value) -> Result<()> {
+    let mut json = serde_json::to_vec(value)?;
+    json.push(b'\n');
+    stdin.write_all(&json).await?;
+    stdin.flush().await?;
+    Ok(())
+}
+
+async fn read_line_json(stdout: &mut BufReader<tokio::process::ChildStdout>) -> Result<Value> {
+    loop {
+        let mut line = String::new();
+        let n = tokio::time::timeout(Duration::from_secs(10), stdout.read_line(&mut line))
+            .await
+            .context("timeout reading json line")??;
+        if n == 0 {
+            anyhow::bail!("EOF while reading json line");
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        return Ok(serde_json::from_str(&line)?);
+    }
+}
+
+#[tokio::test]
+async fn mcp_accepts_newline_json_batch_messages() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
+
+    let mut child = cmd.spawn().context("spawn mcp server")?;
+    let mut stdin = child.stdin.take().context("stdin")?;
+    let stdout = child.stdout.take().context("stdout")?;
+    let mut stdout = BufReader::new(stdout);
+
+    // Send a single newline-delimited JSON batch: initialize + initialized + tools/list.
+    let batch = serde_json::json!([
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": { "name": "newline-batch-smoke", "version": "0.1" }
+            }
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
+        }
+    ]);
+    send_line(&mut stdin, &batch).await?;
+
+    let mut init_seen = false;
+    let mut list_seen = false;
+    for _ in 0..10 {
+        let msg = read_line_json(&mut stdout).await?;
+        if msg.get("id").and_then(Value::as_i64) == Some(1) {
+            init_seen = true;
+        }
+        if msg.get("id").and_then(Value::as_i64) == Some(2) {
+            list_seen = true;
+            let tools = msg
+                .get("result")
+                .and_then(|v| v.get("tools"))
+                .and_then(Value::as_array)
+                .context("missing result.tools")?;
+            assert!(
+                tools
+                    .iter()
+                    .any(|t| t.get("name").and_then(Value::as_str) == Some("read_pack")),
+                "tools/list missing 'read_pack'"
+            );
+            break;
+        }
+    }
+
+    assert!(init_seen, "did not observe initialize response");
+    assert!(list_seen, "did not observe tools/list response");
+
+    let _ = child.kill().await;
+    Ok(())
+}

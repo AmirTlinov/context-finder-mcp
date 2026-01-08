@@ -1,10 +1,11 @@
 use context_code_chunker::CodeChunk;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredChunk {
     pub chunk: CodeChunk,
-    pub vector: Vec<f32>,
+    pub vector: Arc<Vec<f32>>,
     pub id: String,
     #[serde(default)]
     pub doc_hash: u64,

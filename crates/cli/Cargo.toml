@@ -1,11 +1,15 @@
 [package]
-name = "context-finder-cli"
+name = "context-cli"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 build = "build.rs"
+
+[[bin]]
+name = "context"
+path = "src/main.rs"
 
 [[bin]]
 name = "context-finder"

@@ -1,23 +1,21 @@
 use super::super::{
     AutoIndexPolicy, CallToolResult, Content, ContextFinderService, GraphStats, KeyTypeInfo,
-    LayerInfo, McpError, OverviewRequest, OverviewResult, ProjectInfo,
+    LayerInfo, McpError, OverviewRequest, OverviewResult, ProjectInfo, ResponseMode, ToolMeta,
 };
+use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::util::path_has_extension_ignore_ascii_case;
 use context_code_chunker::CodeChunk;
 use context_graph::CodeGraph;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use super::error::{internal_error_with_meta, invalid_request_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, internal_error_with_meta, invalid_request_with_meta,
+    meta_for_request,
+};
 const MAX_ENTRY_POINTS: usize = 10;
 const MAX_KEY_TYPES: usize = 10;
 const HOTSPOT_LIMIT: usize = 20;
-
-fn success_payload(result: &OverviewResult) -> CallToolResult {
-    CallToolResult::success(vec![Content::text(
-        context_protocol::serialize_json(result).unwrap_or_default(),
-    )])
-}
 
 fn compute_project_info(root: &Path, chunks: &[CodeChunk]) -> ProjectInfo {
     let total_files: HashSet<&str> = chunks.iter().map(|c| c.file_path.as_str()).collect();
@@ -64,26 +62,49 @@ fn compute_layers(chunks: &[CodeChunk]) -> Vec<LayerInfo> {
     layers
 }
 
-fn is_entry_point_candidate(symbol_name: &str, file_path: &str) -> bool {
-    if symbol_name == "unknown" || symbol_name.starts_with("test_") {
-        return false;
-    }
-    if file_path.contains("/tests/") || path_has_extension_ignore_ascii_case(file_path, "md") {
-        return false;
-    }
-    true
-}
+fn compute_entry_points(chunks: &[CodeChunk]) -> Vec<String> {
+    fn looks_like_entry_file(file_path: &str) -> bool {
+        let path = file_path.trim();
+        if path.is_empty() {
+            return false;
+        }
+        if path.contains("/tests/") || path.contains("/test/") {
+            return false;
+        }
+        if path_has_extension_ignore_ascii_case(path, "md")
+            || path_has_extension_ignore_ascii_case(path, "mdx")
+        {
+            return false;
+        }
 
-fn compute_entry_points(graph: &CodeGraph) -> Vec<String> {
-    let entry_nodes = graph.find_entry_points();
-    let mut entry_points: Vec<String> = entry_nodes
+        // Keep this simple and language-agnostic: prioritize obvious entry points that appear
+        // across ecosystems.
+        let lower = path.to_ascii_lowercase();
+        matches!(
+            lower.as_str(),
+            // Rust
+            _ if lower.ends_with("/src/main.rs")
+                || lower.ends_with("/src/lib.rs")
+                // Python
+                || lower.ends_with("/src/__main__.py")
+                || lower.ends_with("/src/main.py")
+                // JS/TS
+                || lower.ends_with("/src/index.ts")
+                || lower.ends_with("/src/index.tsx")
+                || lower.ends_with("/src/index.js")
+                || lower.ends_with("/src/index.jsx")
+                || lower.ends_with("/src/main.ts")
+                || lower.ends_with("/src/main.js")
+                // Go
+                || lower.ends_with("/main.go")
+        )
+    }
+
+    let mut entry_points: Vec<String> = chunks
         .iter()
-        .filter_map(|n| {
-            graph.get_node(*n).and_then(|nd| {
-                is_entry_point_candidate(&nd.symbol.name, &nd.symbol.file_path)
-                    .then(|| nd.symbol.name.clone())
-            })
-        })
+        .map(|c| c.file_path.as_str())
+        .filter(|p| looks_like_entry_file(p))
+        .map(|p| p.to_string())
         .collect();
 
     entry_points.sort();
@@ -128,10 +149,15 @@ pub(in crate::tools::dispatch) async fn overview(
     service: &ContextFinderService,
     request: OverviewRequest,
 ) -> Result<CallToolResult, McpError> {
+    let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
     let root = match service.resolve_root(request.path.as_deref()).await {
         Ok((root, _)) => root,
         Err(message) => {
-            let meta = meta_for_request(service, request.path.as_deref()).await;
+            let meta = if response_mode == ResponseMode::Minimal {
+                ToolMeta::default()
+            } else {
+                meta_for_request(service, request.path.as_deref()).await
+            };
             return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
         }
     };
@@ -140,8 +166,27 @@ pub(in crate::tools::dispatch) async fn overview(
         Ok(engine) => engine,
         Err(e) => {
             let meta = service.tool_meta(&root).await;
-            return Ok(internal_error_with_meta(format!("Error: {e}"), meta));
+            let meta_for_output = if response_mode == ResponseMode::Minimal {
+                ToolMeta {
+                    root_fingerprint: meta.root_fingerprint,
+                    ..ToolMeta::default()
+                }
+            } else {
+                meta
+            };
+            return Ok(internal_error_with_meta(
+                format!("Error: {e}"),
+                meta_for_output,
+            ));
         }
+    };
+    let meta_for_output = if response_mode == ResponseMode::Minimal {
+        ToolMeta {
+            root_fingerprint: meta.root_fingerprint,
+            ..ToolMeta::default()
+        }
+    } else {
+        meta.clone()
     };
 
     let detected_language = {
@@ -155,31 +200,30 @@ pub(in crate::tools::dispatch) async fn overview(
             ContextFinderService::parse_language(Some(lang))
         });
 
-    if let Err(e) = engine.engine_mut().ensure_graph(language).await {
-        return Ok(internal_error_with_meta(
-            format!("Graph build error: {e}"),
-            meta.clone(),
-        ));
-    }
-
     let result = {
         let engine_ref = engine.engine_mut();
         let chunks = engine_ref.context_search.hybrid().chunks();
-        let Some(assembler) = engine_ref.context_search.assembler() else {
-            return Ok(internal_error_with_meta(
-                "Graph build error: missing assembler after build",
-                meta.clone(),
-            ));
-        };
-        let graph = assembler.graph();
 
         let project = compute_project_info(&root, chunks);
         let layers = compute_layers(chunks);
-        let entry_points = compute_entry_points(graph);
-        let key_types = compute_key_types(graph);
+        let entry_points = compute_entry_points(chunks);
 
-        let (nodes, edges) = graph.stats();
-        let graph_stats = GraphStats { nodes, edges };
+        // Agent-first UX: `overview` should be useful even when graph building is unavailable or
+        // undesirable. We only build the graph in `full` mode.
+        let (key_types, graph_stats) = if response_mode == ResponseMode::Full {
+            if let Err(_e) = engine_ref.ensure_graph(language).await {
+                (Vec::new(), GraphStats { nodes: 0, edges: 0 })
+            } else if let Some(assembler) = engine_ref.context_search.assembler() {
+                let graph = assembler.graph();
+                let key_types = compute_key_types(graph);
+                let (nodes, edges) = graph.stats();
+                (key_types, GraphStats { nodes, edges })
+            } else {
+                (Vec::new(), GraphStats { nodes: 0, edges: 0 })
+            }
+        } else {
+            (Vec::new(), GraphStats { nodes: 0, edges: 0 })
+        };
 
         OverviewResult {
             project,
@@ -187,10 +231,50 @@ pub(in crate::tools::dispatch) async fn overview(
             entry_points,
             key_types,
             graph_stats,
-            meta,
+            meta: meta_for_output,
         }
     };
 
     drop(engine);
-    Ok(success_payload(&result))
+
+    let mut doc = ContextDocBuilder::new();
+    doc.push_answer(&format!(
+        "overview: {} (files={}, chunks={}, lines={})",
+        result.project.name, result.project.files, result.project.chunks, result.project.lines
+    ));
+    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    if !result.layers.is_empty() {
+        doc.push_note("layers:");
+        for layer in &result.layers {
+            doc.push_line(&format!(
+                "- {} (files={}, role={})",
+                layer.name, layer.files, layer.role
+            ));
+        }
+    }
+    if !result.entry_points.is_empty() {
+        doc.push_note("entry_points:");
+        for ep in &result.entry_points {
+            doc.push_line(&format!("- {ep}"));
+        }
+    }
+    if response_mode == ResponseMode::Full {
+        if !result.key_types.is_empty() {
+            doc.push_note("key_types:");
+            for kt in &result.key_types {
+                doc.push_line(&format!("- {} ({}) {}", kt.name, kt.kind, kt.file));
+            }
+        }
+        doc.push_note(&format!(
+            "graph: nodes={} edges={}",
+            result.graph_stats.nodes, result.graph_stats.edges
+        ));
+    }
+    let output = CallToolResult::success(vec![Content::text(doc.finish())]);
+    Ok(attach_structured_content(
+        output,
+        &result,
+        result.meta.clone(),
+        "overview",
+    ))
 }

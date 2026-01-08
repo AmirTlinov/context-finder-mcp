@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::hnsw_index::HnswIndex;
 use crate::templates::{DocumentTemplates, EmbeddingTemplates};
 use crate::types::{SearchResult, StoredChunk};
+use crate::paths::{find_context_dir_from_path, CONTEXT_DIR_NAME};
 use crate::ChunkCorpus;
 use context_code_chunker::CodeChunk;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub struct VectorStore {
     chunks: HashMap<String, StoredChunk>,
@@ -49,7 +51,7 @@ struct PersistedVectorStoreV3 {
 
 #[derive(Serialize, Deserialize)]
 struct PersistedVectorEntryV3 {
-    vector: Vec<f32>,
+    vector: Arc<Vec<f32>>,
     #[serde(default)]
     doc_hash: u64,
 }
@@ -59,6 +61,16 @@ struct PersistedStoreData {
     id_map_raw: HashMap<usize, String>,
     stored_next_id: usize,
     stored_dimension: usize,
+}
+
+fn normalize_arc_vector(vector: &mut Arc<Vec<f32>>) {
+    let arc = std::mem::replace(vector, Arc::new(Vec::new()));
+    let mut owned = match Arc::try_unwrap(arc) {
+        Ok(vec) => vec,
+        Err(arc) => (*arc).clone(),
+    };
+    crate::hnsw_index::normalize_in_place(&mut owned);
+    *vector = Arc::new(owned);
 }
 
 impl VectorIndex {
@@ -72,7 +84,7 @@ impl VectorIndex {
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(1);
 
-        let (chunks, id_map_raw, vectors, dimension) =
+        let (mut chunks, id_map_raw, mut vectors, dimension) =
             if schema_version == u64::from(VECTOR_STORE_SCHEMA_VERSION) {
                 let persisted: PersistedVectorStoreV3 = serde_json::from_value(save_data)?;
                 (
@@ -82,7 +94,7 @@ impl VectorIndex {
                         .vectors
                         .into_iter()
                         .map(|(id, entry)| (id, entry.vector))
-                        .collect::<HashMap<String, Vec<f32>>>(),
+                        .collect::<HashMap<String, Arc<Vec<f32>>>>(),
                     persisted.dimension,
                 )
             } else if schema_version == 1 {
@@ -120,12 +132,24 @@ impl VectorIndex {
             );
         }
 
+        for stored in chunks.values_mut() {
+            normalize_arc_vector(&mut stored.vector);
+        }
+        for vector in vectors.values_mut() {
+            normalize_arc_vector(vector);
+        }
+
         let mut index = HnswIndex::new(dimension);
-        for (&numeric_id, string_id) in &id_map {
+        let mut numeric_ids: Vec<usize> = id_map.keys().copied().collect();
+        numeric_ids.sort();
+        for numeric_id in numeric_ids {
+            let Some(string_id) = id_map.get(&numeric_id) else {
+                continue;
+            };
             if let Some(stored) = chunks.get(string_id) {
-                index.add(numeric_id, &stored.vector)?;
+                index.add_shared(numeric_id, stored.vector.clone())?;
             } else if let Some(vector) = vectors.get(string_id) {
-                index.add(numeric_id, vector)?;
+                index.add_shared(numeric_id, vector.clone())?;
             }
         }
 
@@ -285,8 +309,12 @@ impl VectorStore {
                 numeric_id
             };
 
-            // Add to HNSW index
-            self.index.add(numeric_id, &vector)?;
+            let mut vector = vector;
+            crate::hnsw_index::normalize_in_place(&mut vector);
+            let vector = Arc::new(vector);
+
+            // Add to HNSW index (shared vector, no duplication)
+            self.index.add_shared(numeric_id, vector.clone())?;
 
             // Add to id mapping
             self.id_map.insert(numeric_id, id.clone());
@@ -545,6 +573,13 @@ impl VectorStore {
         removed
     }
 
+    /// Remove a single chunk by its string id (`<file>:<start>:<end>`).
+    ///
+    /// This is primarily used for index self-healing when detecting corpus/index drift.
+    pub fn remove_chunk_by_id(&mut self, id: &str) -> bool {
+        self.remove_chunk_id(id)
+    }
+
     fn remove_chunk_id(&mut self, id: &str) -> bool {
         if self.chunks.remove(id).is_none() {
             return false;
@@ -559,7 +594,18 @@ impl VectorStore {
 
     /// Save store to disk
     pub async fn save(&self) -> Result<()> {
-        log::info!("Saving VectorStore to {}", self.path.display());
+        self.save_impl(&self.path, SaveMode::Normal).await
+    }
+
+    /// Save store to an alternate location (index + meta), without mutating or pruning caches.
+    ///
+    /// This is intended for staging/transactional writes in higher-level indexers.
+    pub async fn save_to_path(&self, path: impl AsRef<Path>) -> Result<()> {
+        self.save_impl(path.as_ref(), SaveMode::Staged).await
+    }
+
+    async fn save_impl(&self, path: &Path, mode: SaveMode) -> Result<()> {
+        log::info!("Saving VectorStore to {}", path.display());
 
         let mut vectors: BTreeMap<String, PersistedVectorEntryV3> = BTreeMap::new();
         for (id, stored) in &self.chunks {
@@ -586,14 +632,16 @@ impl VectorStore {
         };
 
         let data = serde_json::to_vec_pretty(&persisted)?;
-        let tmp = self.path.with_extension("json.tmp");
+        let tmp = path.with_extension("json.tmp");
         tokio::fs::write(&tmp, data).await?;
-        tokio::fs::rename(&tmp, &self.path).await?;
-        self.save_meta().await?;
-        if let Some(max_bytes) = embed_cache_max_bytes_from_env() {
-            self.embedding_cache
-                .prune_model_dir(&self.embedding_mode, &self.model_id, max_bytes)
-                .await;
+        tokio::fs::rename(&tmp, path).await?;
+        self.save_meta_for_store_path(path).await?;
+        if mode == SaveMode::Normal {
+            if let Some(max_bytes) = embed_cache_max_bytes_from_env() {
+                self.embedding_cache
+                    .prune_model_dir(&self.embedding_mode, &self.model_id, max_bytes)
+                    .await;
+            }
         }
         log::info!("VectorStore saved successfully");
         Ok(())
@@ -678,9 +726,14 @@ impl VectorStore {
         let mut index = HnswIndex::new(dimension);
 
         // Rebuild index using id_map
-        for (&numeric_id, string_id) in &id_map {
+        let mut numeric_ids: Vec<usize> = id_map.keys().copied().collect();
+        numeric_ids.sort();
+        for numeric_id in numeric_ids {
+            let Some(string_id) = id_map.get(&numeric_id) else {
+                continue;
+            };
             if let Some(stored) = chunks.get(string_id) {
-                index.add(numeric_id, &stored.vector)?;
+                index.add_shared(numeric_id, stored.vector.clone())?;
             }
         }
 
@@ -772,6 +825,10 @@ impl VectorStore {
             );
         }
 
+        for stored in chunks.values_mut() {
+            normalize_arc_vector(&mut stored.vector);
+        }
+
         Ok(PersistedStoreData {
             chunks,
             id_map_raw: persisted.id_map.into_iter().collect(),
@@ -781,7 +838,7 @@ impl VectorStore {
     }
 
     fn load_v1_store_data(save_data: &serde_json::Value) -> Result<PersistedStoreData> {
-        let chunks: HashMap<String, StoredChunk> =
+        let mut chunks: HashMap<String, StoredChunk> =
             serde_json::from_value(save_data["chunks"].clone())?;
         let id_map_raw: HashMap<usize, String> =
             serde_json::from_value(save_data["id_map"].clone())?;
@@ -794,6 +851,11 @@ impl VectorStore {
             .and_then(serde_json::Value::as_u64)
             .and_then(|v| usize::try_from(v).ok())
             .unwrap_or(384);
+
+        for stored in chunks.values_mut() {
+            normalize_arc_vector(&mut stored.vector);
+        }
+
         Ok(PersistedStoreData {
             chunks,
             id_map_raw,
@@ -913,7 +975,10 @@ impl VectorStore {
         {
             let numeric_id = self.next_id;
             self.next_id += 1;
-            self.index.add(numeric_id, &vector)?;
+            let mut vector = vector;
+            crate::hnsw_index::normalize_in_place(&mut vector);
+            let vector = Arc::new(vector);
+            self.index.add_shared(numeric_id, vector.clone())?;
             self.id_map.insert(numeric_id, id.clone());
             self.reverse_id_map.insert(id.clone(), numeric_id);
             new_chunks.insert(
@@ -931,8 +996,8 @@ impl VectorStore {
         Ok(())
     }
 
-    async fn save_meta(&self) -> Result<()> {
-        let path = self.meta_path();
+    async fn save_meta_for_store_path(&self, store_path: &Path) -> Result<()> {
+        let path = meta_path(store_path);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -949,10 +1014,12 @@ impl VectorStore {
         tokio::fs::write(path, data).await?;
         Ok(())
     }
+}
 
-    fn meta_path(&self) -> PathBuf {
-        meta_path(&self.path)
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SaveMode {
+    Normal,
+    Staged,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -994,14 +1061,10 @@ fn meta_path(store_path: &Path) -> PathBuf {
 }
 
 fn corpus_path_for_store_path(store_path: &Path) -> PathBuf {
-    let mut current = store_path.parent();
-    while let Some(dir) = current {
-        if dir.file_name().and_then(|s| s.to_str()) == Some(".context-finder") {
-            return dir.join("corpus.json");
-        }
-        current = dir.parent();
+    if let Some(dir) = find_context_dir_from_path(store_path) {
+        return dir.join("corpus.json");
     }
-    PathBuf::from(".context-finder").join("corpus.json")
+    PathBuf::from(CONTEXT_DIR_NAME).join("corpus.json")
 }
 
 async fn load_meta_info(store_path: &Path) -> Option<StoreMetaInfo> {
@@ -1051,7 +1114,9 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 fn embed_cache_max_bytes_from_env() -> Option<u64> {
-    let raw = std::env::var("CONTEXT_FINDER_EMBED_CACHE_MAX_MB").ok()?;
+    let raw = std::env::var("CONTEXT_EMBED_CACHE_MAX_MB")
+        .or_else(|_| std::env::var("CONTEXT_FINDER_EMBED_CACHE_MAX_MB"))
+        .ok()?;
     let mb: u64 = raw.trim().parse().ok()?;
     if mb == 0 {
         return None;
@@ -1096,13 +1161,13 @@ mod tests {
 
     #[tokio::test]
     async fn add_chunks_uses_embedding_cache_in_stub_mode() {
-        std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-        std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODEL", "bge-small");
+        std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
+        std::env::set_var("CONTEXT_EMBEDDING_MODEL", "bge-small");
 
         let tmp = TempDir::new().unwrap();
         let store_path = tmp
             .path()
-            .join(".context-finder/indexes/bge-small/index.json");
+            .join(".context/indexes/bge-small/index.json");
         tokio::fs::create_dir_all(store_path.parent().unwrap())
             .await
             .unwrap();

@@ -3,10 +3,13 @@ use context_protocol::{BudgetTruncation, ErrorEnvelope, ToolNextAction};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
+use super::response_mode::ResponseMode;
+
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchToolName {
     Capabilities,
+    Help,
     Map,
     FileSlice,
     ListFiles,
@@ -16,7 +19,6 @@ pub enum BatchToolName {
     Search,
     Context,
     ContextPack,
-    Index,
     Impact,
     Trace,
     Explain,
@@ -48,6 +50,13 @@ pub struct BatchRequest {
         description = "Maximum number of UTF-8 characters for the serialized batch result (best effort)."
     )]
     pub max_chars: Option<usize>,
+
+    /// Response mode:
+    /// - "facts" (default): keeps meta/index_state for freshness, strips next_actions to reduce noise.
+    /// - "full": includes meta/index_state and next_actions (when applicable).
+    /// - "minimal": strips meta/index_state and next_actions to reduce noise.
+    #[schemars(description = "Response mode: 'facts' (default), 'full', or 'minimal'")]
+    pub response_mode: Option<ResponseMode>,
 
     /// If true, stop processing after the first item error.
     #[schemars(description = "If true, stop processing after the first item error.")]

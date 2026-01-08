@@ -294,8 +294,8 @@ mod tests {
 
     #[tokio::test]
     async fn build_and_search_stub() {
-        std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-        std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODEL", "bge-small");
+        std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
+        std::env::set_var("CONTEXT_EMBEDDING_MODEL", "bge-small");
 
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("graph_nodes.json");

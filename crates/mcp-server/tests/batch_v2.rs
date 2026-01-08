@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
@@ -45,6 +44,7 @@ async fn batch_v2_resolves_refs_between_items() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -79,42 +79,28 @@ async fn batch_v2_resolves_refs_between_items() -> Result<()> {
     .context("timeout calling batch")??;
 
     assert_ne!(result.is_error, Some(true), "batch returned error");
+    assert!(
+        result.structured_content.is_none(),
+        "batch should not return structured_content"
+    );
     let text = result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("batch did not return text content")?;
-    let json: Value = serde_json::from_str(text).context("batch output is not valid JSON")?;
-
-    assert_eq!(json.get("version").and_then(Value::as_u64), Some(2));
-    let items = json
-        .get("items")
-        .and_then(Value::as_array)
-        .context("batch items missing")?;
-    assert_eq!(items.len(), 2);
-
-    let ctx_item = items
-        .iter()
-        .find(|v| v.get("id").and_then(Value::as_str) == Some("ctx"))
-        .context("missing ctx item")?;
-    assert_eq!(ctx_item.get("status").and_then(Value::as_str), Some("ok"));
-
-    let ctx_data = ctx_item.get("data").context("ctx item missing data")?;
-    assert_eq!(
-        ctx_data.get("file").and_then(Value::as_str),
-        Some("src/a.txt")
+        .context("batch missing text output")?;
+    assert!(
+        text.contains("item ctx: tool=grep_context status=ok"),
+        "expected ctx item to succeed"
     );
-    let hunks = ctx_data
-        .get("hunks")
-        .and_then(Value::as_array)
-        .context("ctx data missing hunks")?;
-    assert!(!hunks.is_empty(), "expected at least one hunk");
-    let content = hunks[0]
-        .get("content")
-        .and_then(Value::as_str)
-        .context("hunk missing content")?;
-    assert!(content.contains("TARGET"));
+    assert!(
+        text.contains("src/a.txt"),
+        "expected batch output to include src/a.txt"
+    );
+    assert!(
+        text.contains("TARGET"),
+        "expected batch output to include TARGET"
+    );
 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
@@ -128,6 +114,7 @@ async fn batch_v2_accepts_action_payload_aliases() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -160,26 +147,24 @@ async fn batch_v2_accepts_action_payload_aliases() -> Result<()> {
     .context("timeout calling batch")??;
 
     assert_ne!(result.is_error, Some(true), "batch returned error");
+    assert!(
+        result.structured_content.is_none(),
+        "batch should not return structured_content"
+    );
     let text = result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("batch did not return text content")?;
-    let json: Value = serde_json::from_str(text).context("batch output is not valid JSON")?;
-
-    let items = json
-        .get("items")
-        .and_then(Value::as_array)
-        .context("batch items missing")?;
-    let files_item = items.first().context("missing files item")?;
-    assert_eq!(files_item.get("status").and_then(Value::as_str), Some("ok"));
-    let data = files_item.get("data").context("files item missing data")?;
-    let files = data
-        .get("files")
-        .and_then(Value::as_array)
-        .context("files data missing files array")?;
-    assert!(files.iter().any(|v| v.as_str() == Some("src/a.txt")));
+        .context("batch missing text output")?;
+    assert!(
+        text.contains("item files: tool=list_files status=ok"),
+        "expected files item to succeed"
+    );
+    assert!(
+        text.contains("src/a.txt"),
+        "expected batch output to include src/a.txt"
+    );
 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
@@ -193,6 +178,7 @@ async fn batch_v2_respects_max_chars_budget() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -236,13 +222,10 @@ async fn batch_v2_respects_max_chars_budget() -> Result<()> {
         text.chars().count() <= max_chars,
         "batch output exceeded max_chars"
     );
-    let json: Value = serde_json::from_str(text).context("batch output is not valid JSON")?;
-    let used_chars = json
-        .get("budget")
-        .and_then(|budget| budget.get("used_chars"))
-        .and_then(Value::as_u64)
-        .context("budget.used_chars missing")?;
-    assert!(used_chars <= max_chars as u64);
+    assert!(
+        result.structured_content.is_none(),
+        "batch should not return structured_content"
+    );
 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
@@ -256,6 +239,7 @@ async fn batch_v2_ref_to_failed_item_data_returns_error() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -289,34 +273,23 @@ async fn batch_v2_ref_to_failed_item_data_returns_error() -> Result<()> {
     .context("timeout calling batch")??;
 
     assert_ne!(result.is_error, Some(true), "batch returned error");
+    assert!(
+        result.structured_content.is_none(),
+        "batch should not return structured_content"
+    );
     let text = result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("batch did not return text content")?;
-    let json: Value = serde_json::from_str(text).context("batch output is not valid JSON")?;
-
-    let items = json
-        .get("items")
-        .and_then(Value::as_array)
-        .context("batch items missing")?;
-
-    let slice_item = items
-        .iter()
-        .find(|v| v.get("id").and_then(Value::as_str) == Some("slice"))
-        .context("missing slice item")?;
-    assert_eq!(
-        slice_item.get("status").and_then(Value::as_str),
-        Some("error")
-    );
-    let message = slice_item
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+        .context("batch missing text output")?;
     assert!(
-        message.contains("Ref resolution error"),
-        "expected ref resolution error, got: {message}"
+        text.contains("item slice: tool=file_slice status=error"),
+        "expected slice item to error"
+    );
+    assert!(
+        text.contains("Ref resolution error"),
+        "expected ref resolution error in batch output"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

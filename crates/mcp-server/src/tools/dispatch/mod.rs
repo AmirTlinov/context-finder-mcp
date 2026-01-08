@@ -1,4 +1,4 @@
-//! MCP tool dispatch for Context Finder
+//! MCP tool dispatch for Context
 //!
 //! Provides semantic code search capabilities to AI agents via MCP protocol.
 
@@ -9,7 +9,6 @@ use super::batch::{
 use super::catalog;
 use super::cursor::{decode_cursor, encode_cursor, CURSOR_VERSION};
 use super::file_slice::compute_file_slice_result;
-pub(super) use super::grep_context::finalize_grep_context_budget;
 use super::grep_context::{compute_grep_context_result, GrepContextComputeOptions};
 pub(super) use super::list_files::finalize_list_files_budget;
 use super::list_files::{compute_list_files_result, decode_list_files_cursor};
@@ -23,14 +22,15 @@ use super::schemas::capabilities::CapabilitiesRequest;
 use super::schemas::context::{ContextHit, ContextRequest, ContextResult, RelatedCode};
 use super::schemas::context_pack::ContextPackRequest;
 use super::schemas::doctor::{
-    DoctorEnvResult, DoctorIndexDrift, DoctorModelStatus, DoctorProjectResult, DoctorRequest,
-    DoctorResult,
+    DoctorEnvResult, DoctorIndexDrift, DoctorIndexingObservability, DoctorModelStatus,
+    DoctorObservability, DoctorProjectResult, DoctorRequest, DoctorResult,
+    DoctorWarmIndexersObservability,
 };
 use super::schemas::explain::{ExplainRequest, ExplainResult};
 use super::schemas::file_slice::{FileSliceCursorV1, FileSliceRequest};
 use super::schemas::grep_context::{GrepContextCursorV1, GrepContextRequest};
+use super::schemas::help::HelpRequest;
 use super::schemas::impact::{ImpactRequest, ImpactResult, SymbolLocation, UsageInfo};
-use super::schemas::index::{IndexRequest, IndexResult};
 use super::schemas::list_files::ListFilesRequest;
 #[cfg(test)]
 use super::schemas::list_files::ListFilesTruncation;
@@ -39,10 +39,12 @@ use super::schemas::overview::{
     GraphStats, KeyTypeInfo, LayerInfo, OverviewRequest, OverviewResult, ProjectInfo,
 };
 use super::schemas::read_pack::{
-    ReadPackBudget, ReadPackIntent, ReadPackNextAction, ReadPackRequest, ReadPackResult,
-    ReadPackSection, ReadPackTruncation,
+    ProjectFactsResult, ReadPackBudget, ReadPackIntent, ReadPackNextAction, ReadPackRecallResult,
+    ReadPackRequest, ReadPackResult, ReadPackSection, ReadPackSnippet, ReadPackSnippetKind,
+    ReadPackTruncation,
 };
 use super::schemas::repo_onboarding_pack::RepoOnboardingPackRequest;
+use super::schemas::response_mode::ResponseMode;
 pub(super) use super::schemas::search::{SearchRequest, SearchResponse, SearchResult};
 use super::schemas::text_search::{
     TextSearchCursorModeV1, TextSearchCursorV1, TextSearchMatch, TextSearchRequest,
@@ -50,16 +52,16 @@ use super::schemas::text_search::{
 };
 use super::schemas::trace::{TraceRequest, TraceResult, TraceStep};
 use super::util::{path_has_extension_ignore_ascii_case, unix_ms};
-use crate::runtime_env;
 use anyhow::{Context as AnyhowContext, Result};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use context_graph::{
     build_graph_docs, CodeGraph, ContextAssembler, GraphDocConfig, GraphEdge, GraphLanguage,
     GraphNode, RelationshipType, Symbol, GRAPH_DOC_VERSION,
 };
 use context_indexer::{
-    assess_staleness, compute_project_watermark, read_index_watermark, FileScanner, IndexSnapshot,
-    IndexState, IndexerError, PersistedIndexWatermark, ReindexAttempt, ReindexResult, ToolMeta,
-    INDEX_STATE_SCHEMA_VERSION,
+    assess_staleness, compute_project_watermark, read_index_watermark, root_fingerprint,
+    FileScanner, IndexSnapshot, IndexState, IndexerError, PersistedIndexWatermark, ReindexAttempt,
+    ReindexResult, ToolMeta, INDEX_STATE_SCHEMA_VERSION,
 };
 use context_protocol::{finalize_used_chars, BudgetTruncation};
 use context_search::{
@@ -67,12 +69,14 @@ use context_search::{
     MultiModelHybridSearch, QueryClassifier, QueryType, SearchProfile, CONTEXT_PACK_VERSION,
 };
 use context_vector_store::{
-    classify_path_kind, corpus_path_for_project_root, current_model_id, ChunkCorpus, DocumentKind,
-    GraphNodeDoc, GraphNodeStore, GraphNodeStoreMeta, QueryKind, VectorIndex,
+    classify_path_kind, context_dir_for_project_root, corpus_path_for_project_root,
+    current_model_id, ChunkCorpus, DocumentKind, GraphNodeDoc, GraphNodeStore, GraphNodeStoreMeta,
+    QueryKind, VectorIndex, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -82,7 +86,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::Mutex;
 
-/// Context Finder MCP Service
+/// Context MCP Service
 #[derive(Clone)]
 pub struct ContextFinderService {
     /// Search profile
@@ -91,14 +95,45 @@ pub struct ContextFinderService {
     tool_router: ToolRouter<Self>,
     /// Shared cache state (per-process)
     state: Arc<ServiceState>,
+    /// Per-connection session defaults (do not share across multi-agent sessions).
+    session: Arc<Mutex<SessionDefaults>>,
+    /// Whether to fall back to the server process cwd when no root hint is available.
+    ///
+    /// This is safe for in-process (per-agent) servers, but unsafe for the shared daemon
+    /// where multiple projects share one backend.
+    allow_cwd_root_fallback: bool,
 }
 
 impl ContextFinderService {
     pub fn new() -> Self {
+        Self::new_with_policy(true)
+    }
+
+    pub fn new_daemon() -> Self {
+        // Shared daemon mode: never guess a root from the daemon process cwd. Require either:
+        // - explicit `path` on a tool call, or
+        // - MCP roots capability (via initialize -> roots/list), or
+        // - an explicit env override (CONTEXT_FINDER_ROOT / CONTEXT_FINDER_PROJECT_ROOT).
+        Self::new_with_policy(false)
+    }
+
+    fn new_with_policy(allow_cwd_root_fallback: bool) -> Self {
         Self {
             profile: load_profile_from_env(),
             tool_router: Self::tool_router(),
             state: Arc::new(ServiceState::new()),
+            session: Arc::new(Mutex::new(SessionDefaults::default())),
+            allow_cwd_root_fallback,
+        }
+    }
+
+    pub fn clone_for_connection(&self) -> Self {
+        Self {
+            profile: self.profile.clone(),
+            tool_router: self.tool_router.clone(),
+            state: self.state.clone(),
+            session: Arc::new(Mutex::new(SessionDefaults::default())),
+            allow_cwd_root_fallback: self.allow_cwd_root_fallback,
         }
     }
 
@@ -106,37 +141,291 @@ impl ContextFinderService {
         &self,
         raw_path: Option<&str>,
     ) -> Result<(PathBuf, String), String> {
-        let (root, root_display) = self.state.resolve_root(raw_path).await?;
-        Self::touch_daemon_best_effort(&root);
+        self.resolve_root_with_hints(raw_path, &[]).await
+    }
+
+    pub(super) async fn resolve_root_with_hints(
+        &self,
+        raw_path: Option<&str>,
+        hints: &[String],
+    ) -> Result<(PathBuf, String), String> {
+        let (root, root_display) = self.resolve_root_impl_with_hints(raw_path, hints).await?;
+        self.touch_daemon_best_effort(&root);
         Ok((root, root_display))
+    }
+
+    pub(super) async fn resolve_root_no_daemon_touch(
+        &self,
+        raw_path: Option<&str>,
+    ) -> Result<(PathBuf, String), String> {
+        self.resolve_root_with_hints_no_daemon_touch(raw_path, &[]).await
+    }
+
+    pub(super) async fn resolve_root_with_hints_no_daemon_touch(
+        &self,
+        raw_path: Option<&str>,
+        hints: &[String],
+    ) -> Result<(PathBuf, String), String> {
+        self.resolve_root_impl_with_hints(raw_path, hints).await
+    }
+
+    async fn resolve_root_impl(&self, raw_path: Option<&str>) -> Result<(PathBuf, String), String> {
+        self.resolve_root_impl_with_hints(raw_path, &[]).await
+    }
+
+    async fn resolve_root_impl_with_hints(
+        &self,
+        raw_path: Option<&str>,
+        hints: &[String],
+    ) -> Result<(PathBuf, String), String> {
+        if let Some(raw) = trimmed_non_empty(raw_path) {
+            let root = canonicalize_root(raw).map_err(|err| format!("Invalid path: {err}"))?;
+            let root_display = root.to_string_lossy().to_string();
+
+            // Agent-native UX: callers often pass a "current file" path as `path`. Preserve the
+            // relative file hint (when possible) so `read_pack intent=memory` can surface the
+            // current working file without requiring extra parameters.
+            let mut focus_file: Option<String> = None;
+            if let Ok(canonical) = Path::new(raw).canonicalize() {
+                if let Ok(meta) = std::fs::metadata(&canonical) {
+                    if meta.is_file() {
+                        if let Ok(rel) = canonical.strip_prefix(&root) {
+                            focus_file = rel_path_string(rel);
+                        }
+                    }
+                }
+            }
+
+            let mut session = self.session.lock().await;
+            session.set_root(root.clone(), root_display.clone(), focus_file);
+            return Ok((root, root_display));
+        }
+
+        if let Some(root) = resolve_root_from_absolute_hints(hints) {
+            let root_display = root.to_string_lossy().to_string();
+            let mut session = self.session.lock().await;
+            session.set_root(root.clone(), root_display.clone(), None);
+            return Ok((root, root_display));
+        }
+
+        let relative_hints = collect_relative_hints(hints);
+        if !relative_hints.is_empty() {
+            if let Some((root, root_display)) =
+                self.resolve_root_from_relative_hints(&relative_hints).await
+            {
+                return Ok((root, root_display));
+            }
+        }
+
+        if let Some((root, root_display)) = self.session.lock().await.clone_root() {
+            return Ok((root, root_display));
+        }
+
+        if let Some((var, value)) = env_root_override() {
+            let root = canonicalize_root(&value)
+                .map_err(|err| format!("Invalid path from {var}: {err}"))?;
+            let root_display = root.to_string_lossy().to_string();
+            let mut session = self.session.lock().await;
+            let root_changed = match session.root.as_ref() {
+                Some(prev) => prev != &root,
+                None => true,
+            };
+            session.root = Some(root.clone());
+            session.root_display = Some(root_display.clone());
+            session.focus_file = None;
+            if root_changed {
+                session.clear_working_set();
+            }
+            return Ok((root, root_display));
+        }
+
+        if !self.allow_cwd_root_fallback {
+            return Err(
+                "Missing project root: pass `path` (recommended) or enable MCP roots, or set CONTEXT_FINDER_ROOT."
+                    .to_string(),
+            );
+        }
+
+        let cwd = env::current_dir()
+            .map_err(|err| format!("Failed to determine current directory: {err}"))?;
+        let candidate = find_git_root(&cwd).unwrap_or(cwd);
+        let root =
+            canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
+        let root_display = root.to_string_lossy().to_string();
+        let mut session = self.session.lock().await;
+        let root_changed = match session.root.as_ref() {
+            Some(prev) => prev != &root,
+            None => true,
+        };
+        session.root = Some(root.clone());
+        session.root_display = Some(root_display.clone());
+        session.focus_file = None;
+        if root_changed {
+            session.clear_working_set();
+        }
+        Ok((root, root_display))
+    }
+
+    async fn resolve_root_from_relative_hints(
+        &self,
+        hints: &[String],
+    ) -> Option<(PathBuf, String)> {
+        let session_root = self.session.lock().await.clone_root();
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if let Some((root, _)) = session_root.as_ref() {
+            roots.push(root.clone());
+        }
+        for root in self.state.recent_roots().await {
+            if !roots.iter().any(|known| known == &root) {
+                roots.push(root);
+            }
+        }
+        if roots.is_empty() {
+            return None;
+        }
+
+        let mut best_score = 0usize;
+        let mut best_roots: Vec<PathBuf> = Vec::new();
+        for root in &roots {
+            let score = hint_score_for_root(root, hints);
+            if score == 0 {
+                continue;
+            }
+            if score > best_score {
+                best_score = score;
+                best_roots.clear();
+            }
+            if score == best_score {
+                best_roots.push(root.clone());
+            }
+        }
+
+        if best_score == 0 || best_roots.is_empty() {
+            return None;
+        }
+
+        let chosen = if best_roots.len() == 1 {
+            best_roots.remove(0)
+        } else if let Some((root, _)) = session_root {
+            if best_roots.iter().any(|candidate| candidate == &root) {
+                root
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+
+        let root_display = chosen.to_string_lossy().to_string();
+        let mut session = self.session.lock().await;
+        session.set_root(chosen.clone(), root_display.clone(), None);
+        Some((chosen, root_display))
     }
 }
 
-const DEFAULT_AUTO_INDEX_BUDGET_MS: u64 = 3_000;
+const DEFAULT_AUTO_INDEX_BUDGET_MS: u64 = 15_000;
 const MIN_AUTO_INDEX_BUDGET_MS: u64 = 100;
 const MAX_AUTO_INDEX_BUDGET_MS: u64 = 120_000;
+
+const MCP_DEFAULT_MAX_CHARS: usize = 2_000;
+
+pub(in crate::tools::dispatch) fn mcp_default_budgets() -> context_protocol::DefaultBudgets {
+    context_protocol::DefaultBudgets {
+        max_chars: MCP_DEFAULT_MAX_CHARS,
+        read_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
+        repo_onboarding_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
+        context_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
+        batch_max_chars: MCP_DEFAULT_MAX_CHARS,
+        file_slice_max_chars: MCP_DEFAULT_MAX_CHARS,
+        grep_context_max_chars: MCP_DEFAULT_MAX_CHARS,
+        list_files_max_chars: MCP_DEFAULT_MAX_CHARS,
+        auto_index_budget_ms: DEFAULT_AUTO_INDEX_BUDGET_MS,
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(in crate::tools::dispatch) struct AutoIndexPolicy {
     enabled: bool,
     budget_ms: u64,
+    allow_missing_index_rebuild: bool,
+    budget_is_default: bool,
 }
 
 impl AutoIndexPolicy {
+    fn with_budget_ms(
+        budget_ms: u64,
+        allow_missing_index_rebuild: bool,
+        budget_is_default: bool,
+    ) -> Self {
+        let budget_ms = budget_ms.clamp(MIN_AUTO_INDEX_BUDGET_MS, MAX_AUTO_INDEX_BUDGET_MS);
+        Self {
+            enabled: true,
+            budget_ms,
+            allow_missing_index_rebuild,
+            budget_is_default,
+        }
+    }
+
     pub(in crate::tools::dispatch) fn from_request(
         auto_index: Option<bool>,
         auto_index_budget_ms: Option<u64>,
     ) -> Self {
-        let enabled = auto_index.unwrap_or(true);
-        let budget_ms = auto_index_budget_ms
-            .unwrap_or(DEFAULT_AUTO_INDEX_BUDGET_MS)
-            .clamp(MIN_AUTO_INDEX_BUDGET_MS, MAX_AUTO_INDEX_BUDGET_MS);
-        Self { enabled, budget_ms }
+        match auto_index {
+            Some(false) => Self {
+                enabled: false,
+                budget_ms: DEFAULT_AUTO_INDEX_BUDGET_MS,
+                allow_missing_index_rebuild: false,
+                budget_is_default: true,
+            },
+            Some(true) => {
+                let budget_is_default = auto_index_budget_ms.is_none();
+                Self::with_budget_ms(
+                    auto_index_budget_ms.unwrap_or(DEFAULT_AUTO_INDEX_BUDGET_MS),
+                    true,
+                    budget_is_default,
+                )
+            }
+            None => {
+                let mut policy = Self::semantic_default();
+                if let Some(budget_ms) = auto_index_budget_ms {
+                    policy =
+                        Self::with_budget_ms(budget_ms, policy.allow_missing_index_rebuild, false);
+                }
+                policy
+            }
+        }
+    }
+
+    /// Agent-native default: keep semantic tools fast and predictable.
+    ///
+    /// - If the index is missing, do not block the request on a full build; the background daemon
+    ///   warms indexes incrementally and the tool can fall back to lexical strategies.
+    /// - If the index exists but is stale, request a background refresh; tools fall back until the
+    ///   index catches up.
+    pub(in crate::tools::dispatch) fn semantic_default() -> Self {
+        // If we are running without a daemon (or in stub embedding mode), there is no background
+        // warmup path. In that environment, allow a bounded inline build so semantic tools can
+        // become usable without requiring an explicit `index` step.
+        let daemon_disabled = std::env::var("CONTEXT_FINDER_DISABLE_DAEMON")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let stub_embeddings = std::env::var("CONTEXT_EMBEDDING_MODE")
+            .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
+            .ok()
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("stub"));
+
+        Self::with_budget_ms(
+            DEFAULT_AUTO_INDEX_BUDGET_MS,
+            daemon_disabled || stub_embeddings,
+            true,
+        )
     }
 }
 
 fn load_profile_from_env() -> SearchProfile {
-    let profile_name = std::env::var("CONTEXT_FINDER_PROFILE")
+    let profile_name = std::env::var("CONTEXT_PROFILE")
+        .or_else(|_| std::env::var("CONTEXT_FINDER_PROFILE"))
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
@@ -166,6 +455,76 @@ fn load_profile_from_env() -> SearchProfile {
 
 #[tool_handler]
 impl ServerHandler for ContextFinderService {
+    #[allow(clippy::manual_async_fn)]
+    fn initialize(
+        &self,
+        request: rmcp::model::InitializeRequestParam,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<
+        Output = std::result::Result<rmcp::model::InitializeResult, McpError>,
+    > + Send
+           + '_ {
+        async move {
+            // Codex MCP client may be strict about the protocolVersion it requested during
+            // initialization. rmcp defaults can lag behind, even when the tool surface is compatible.
+            //
+            // Agent-native behavior: echo the client's requested protocolVersion in the initialize
+            // result so the transport stays open.
+            if context.peer.peer_info().is_none() {
+                context.peer.set_peer_info(request.clone());
+            }
+
+            // Session root: prefer the client's declared workspace roots when available.
+            //
+            // Important: do NOT block the initialize handshake on roots/list. Some MCP clients
+            // cannot serve server->client requests until after initialization completes, and
+            // blocking here can cause startup timeouts ("context deadline exceeded").
+            if request.capabilities.roots.is_some() {
+                let peer = context.peer.clone();
+                let session = self.session.clone();
+                tokio::spawn(async move {
+                    // Give the client a moment to process the initialize response first.
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+
+                    let roots = tokio::time::timeout(Duration::from_millis(800), peer.list_roots())
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok());
+                    let Some(roots) = roots else {
+                        return;
+                    };
+
+                    let Some(path) = roots
+                        .roots
+                        .iter()
+                        .find_map(|root| root_path_from_mcp_uri(&root.uri))
+                    else {
+                        return;
+                    };
+
+                    let root = match canonicalize_root_path(&path) {
+                        Ok(root) => root,
+                        Err(err) => {
+                            log::debug!("Ignoring invalid MCP root {path:?}: {err}");
+                            return;
+                        }
+                    };
+
+                    let root_display = root.to_string_lossy().to_string();
+                    let mut session = session.lock().await;
+                    if session.root.is_none() {
+                        session.root = Some(root);
+                        session.root_display = Some(root_display);
+                    }
+                });
+            }
+
+            let mut info = self.get_info();
+            info.protocol_version = request.protocol_version;
+            Ok(info)
+        }
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(catalog::tool_instructions()),
@@ -188,37 +547,113 @@ impl ContextFinderService {
     }
 
     async fn tool_meta(&self, root: &Path) -> ToolMeta {
-        match gather_index_state(root, &self.profile).await {
+        if let Some(cached) = self.state.tool_meta_cache_get(root).await {
+            return cached;
+        }
+
+        let root_display = root.to_string_lossy().to_string();
+        let root_fp = root_fingerprint(&root_display);
+        let meta = match gather_index_state(root, &self.profile).await {
             Ok(index_state) => ToolMeta {
                 index_state: Some(index_state),
+                root_fingerprint: Some(root_fp),
             },
             Err(err) => {
                 log::debug!("index_state unavailable for {}: {err:#}", root.display());
-                ToolMeta { index_state: None }
+                ToolMeta {
+                    index_state: None,
+                    root_fingerprint: Some(root_fp),
+                }
             }
-        }
+        };
+
+        self.state.tool_meta_cache_put(root, meta.clone()).await;
+        meta
     }
 
     async fn tool_meta_with_auto_index(&self, root: &Path, policy: AutoIndexPolicy) -> ToolMeta {
+        let root_display = root.to_string_lossy().to_string();
+        let root_fp = root_fingerprint(&root_display);
         let mut index_state = match gather_index_state(root, &self.profile).await {
             Ok(state) => state,
             Err(err) => {
                 log::debug!("index_state unavailable for {}: {err:#}", root.display());
-                return ToolMeta { index_state: None };
+                return ToolMeta {
+                    index_state: None,
+                    root_fingerprint: Some(root_fp),
+                };
             }
         };
 
-        if policy.enabled && (index_state.stale || !index_state.index.exists) {
-            let reindex = self.attempt_reindex(root, policy.budget_ms).await;
-            if let Ok(refreshed) = gather_index_state(root, &self.profile).await {
-                index_state = refreshed;
+        if policy.enabled && index_state.stale {
+            // Agent-native performance: avoid long tail latencies on first use.
+            //
+            // Shared daemon mode (default): never block tool calls on indexing. If the index is
+            // stale, request a background refresh and let semantic tools fall back until it
+            // catches up.
+            //
+            // Daemon-disabled / stub environments: keep the previous behavior and attempt a
+            // bounded inline build so semantic tools become usable without a manual `index` step.
+            if !policy.allow_missing_index_rebuild {
+                let reason = if index_state.stale_reasons.is_empty() {
+                    "stale_index".to_string()
+                } else {
+                    format!("stale:{}", format_stale_reasons(&index_state.stale_reasons))
+                };
+                self.request_daemon_refresh_best_effort(root, &reason);
+                index_state.reindex = Some(ReindexAttempt {
+                    attempted: true,
+                    performed: false,
+                    budget_ms: Some(policy.budget_ms),
+                    duration_ms: Some(0),
+                    result: Some(ReindexResult::Skipped),
+                    error: None,
+                });
+            } else {
+                // If the index is missing, allow_missing_index_rebuild enables a bounded inline
+                // build; if the index exists but is stale, attempt a bounded refresh so subsequent
+                // calls stay fresh.
+                let should_attempt = index_state.index.exists || policy.allow_missing_index_rebuild;
+                let reindex = if should_attempt {
+                    let mut budget_ms = policy.budget_ms;
+                    if policy.budget_is_default {
+                        if let Ok(Some(health)) = context_indexer::read_health_snapshot(root).await
+                        {
+                            if let Some(p95) = health.p95_duration_ms {
+                                // Adaptive default: use recent p95 indexing time as a hint, without
+                                // exploding tail latency (hard-capped globally).
+                                let suggested = p95.saturating_mul(12).saturating_div(10);
+                                budget_ms = budget_ms.max(suggested);
+                            }
+                        }
+                    }
+                    budget_ms = budget_ms.clamp(MIN_AUTO_INDEX_BUDGET_MS, MAX_AUTO_INDEX_BUDGET_MS);
+
+                    let reindex = self.attempt_reindex(root, budget_ms).await;
+                    if let Ok(refreshed) = gather_index_state(root, &self.profile).await {
+                        index_state = refreshed;
+                    }
+                    reindex
+                } else {
+                    ReindexAttempt {
+                        attempted: true,
+                        performed: false,
+                        budget_ms: Some(policy.budget_ms),
+                        duration_ms: Some(0),
+                        result: Some(ReindexResult::Skipped),
+                        error: None,
+                    }
+                };
+                index_state.reindex = Some(reindex);
             }
-            index_state.reindex = Some(reindex);
         }
 
-        ToolMeta {
+        let meta = ToolMeta {
             index_state: Some(index_state),
-        }
+            root_fingerprint: Some(root_fp),
+        };
+        self.state.tool_meta_cache_put(root, meta.clone()).await;
+        meta
     }
 
     async fn prepare_semantic_engine(
@@ -226,39 +661,100 @@ impl ContextFinderService {
         root: &Path,
         policy: AutoIndexPolicy,
     ) -> Result<(EngineLock, ToolMeta)> {
-        let mut index_state = gather_index_state(root, &self.profile).await?;
-        let mut attempt: Option<ReindexAttempt> = None;
+        // Reuse the cached index_state (`tool_meta`) to avoid repeating watermark scans on
+        // back-to-back tool calls (especially expensive on non-git projects).
+        let meta = if policy.enabled {
+            self.tool_meta_with_auto_index(root, policy).await
+        } else {
+            self.tool_meta(root).await
+        };
 
-        if policy.enabled && (index_state.stale || !index_state.index.exists) {
-            let reindex = self.attempt_reindex(root, policy.budget_ms).await;
-            attempt = Some(reindex.clone());
-            if let Ok(refreshed) = gather_index_state(root, &self.profile).await {
-                index_state = refreshed;
-            }
-            index_state.reindex = Some(reindex);
-        }
+        let Some(index_state) = meta.index_state.clone() else {
+            return Err(anyhow::anyhow!("index_state unavailable"));
+        };
 
         if !index_state.index.exists {
+            self.request_daemon_refresh_best_effort(root, "missing_index");
             return Err(anyhow::anyhow!(missing_index_message(
                 &index_state,
-                attempt.as_ref()
+                index_state.reindex.as_ref()
+            )));
+        }
+
+        // Freshness-safe behavior: never serve silently stale semantic results. If the index is
+        // stale (or became stale after a bounded refresh attempt), fall back to filesystem tools
+        // while the daemon (or the next bounded refresh) catches up.
+        if index_state.stale {
+            if index_state.stale_reasons.is_empty() {
+                self.request_daemon_refresh_best_effort(root, "stale_index");
+            } else {
+                let reason = format!("stale:{}", format_stale_reasons(&index_state.stale_reasons));
+                self.request_daemon_refresh_best_effort(root, &reason);
+            }
+            return Err(anyhow::anyhow!(stale_index_message(
+                &index_state,
+                index_state.reindex.as_ref()
             )));
         }
 
         let engine = self.lock_engine(root).await?;
-        let meta = ToolMeta {
-            index_state: Some(index_state),
+        Ok((engine, meta))
+    }
+
+    pub(in crate::tools::dispatch) async fn prepare_semantic_engine_for_query(
+        &self,
+        root: &Path,
+        policy: AutoIndexPolicy,
+        query: &str,
+    ) -> Result<(EngineLock, ToolMeta)> {
+        let (mut engine, meta) = self.prepare_semantic_engine(root, policy).await?;
+
+        let Some(index_state) = meta.index_state.as_ref() else {
+            return Ok((engine, meta));
         };
+
+        let query_kind = match QueryClassifier::classify(query) {
+            QueryType::Identifier => QueryKind::Identifier,
+            QueryType::Path => QueryKind::Path,
+            QueryType::Conceptual => QueryKind::Conceptual,
+        };
+        let desired_models = self.profile.experts().semantic_models(query_kind);
+        if desired_models.is_empty() {
+            return Ok((engine, meta));
+        }
+
+        let ensure = engine
+            .engine_mut()
+            .ensure_semantic_models_loaded(&index_state.project_watermark, desired_models)
+            .await?;
+
+        if !ensure.missing_models.is_empty() || !ensure.stale_models.is_empty() {
+            // Best-effort: request a background refresh of missing/stale expert indices, but do not
+            // hard-fail the tool. The search layer will fall back to available semantic sources,
+            // keeping agents productive while the daemon catches up.
+            let mut refresh_models = Vec::new();
+            refresh_models.extend(ensure.missing_models.into_iter());
+            refresh_models.extend(ensure.stale_models.into_iter());
+            self.request_daemon_refresh_for_models_best_effort(
+                root,
+                "missing_or_stale_model_index",
+                refresh_models,
+            );
+        }
+
         Ok((engine, meta))
     }
 
     async fn lock_engine(&self, root: &Path) -> Result<EngineLock> {
-        Self::touch_daemon_best_effort(root);
+        self.touch_daemon_best_effort(root);
 
         let handle = self.state.engine_handle(root).await;
         let mut slot = handle.lock_owned().await;
 
-        let signature = compute_engine_signature(root, &self.profile).await?;
+        // Engine validity is tied to the canonical (primary) index and chunk corpus. Expert
+        // indices are loaded/evicted independently and must not force full engine rebuilds.
+        let primary_model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
+        let signature = compute_engine_signature(root, &[primary_model_id]).await?;
         let needs_rebuild = slot
             .engine
             .as_ref()
@@ -271,11 +767,113 @@ impl ContextFinderService {
         Ok(EngineLock { slot })
     }
 
-    fn touch_daemon_best_effort(root: &Path) {
+    async fn maybe_warm_graph_nodes_store(&self, root: PathBuf, language: GraphLanguage) {
+        let store_path = graph_nodes_store_path(&root);
+        let key = store_path.to_string_lossy().to_string();
+
+        if !self.state.graph_nodes_warmup_begin(key.clone()).await {
+            return;
+        }
+
+        if tokio::runtime::Handle::try_current().is_err() {
+            self.state.graph_nodes_warmup_finish(&key).await;
+            return;
+        }
+
+        let service = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = warm_graph_nodes_store_task(service, root, language).await {
+                log::debug!("graph_nodes warmup failed: {err:#}");
+            }
+        });
+    }
+
+    fn daemon_model_ids(&self) -> Vec<String> {
+        // Agent-native default: keep indexes fresh without manual commands, while staying
+        // resource-aware. Warm the primary model first, then (when resources permit) include the
+        // profile's semantic expert models so retrieval quality doesn't silently degrade due to
+        // drift in non-primary indices.
+        let primary = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
+
+        let max_models = match total_memory_gib_linux_best_effort() {
+            Some(mem_gib) if mem_gib <= 8 => 1,
+            Some(mem_gib) if mem_gib <= 16 => 2,
+            Some(mem_gib) if mem_gib <= 32 => 3,
+            Some(_) => 4,
+            None => 2,
+        };
+
+        let mut out: Vec<String> = Vec::new();
+        out.push(primary.clone());
+
+        let mut seen: HashSet<String> = HashSet::new();
+        seen.insert(primary);
+
+        fn model_cost_rank(model_id: &str) -> u8 {
+            let id = model_id.trim().to_ascii_lowercase();
+            if id.contains("tiny") || id.contains("mini") || id.contains("small") {
+                return 0;
+            }
+            if id.contains("base") {
+                return 1;
+            }
+            if id.contains("large") || id.contains("xl") {
+                return 2;
+            }
+            1
+        }
+
+        let experts = self.profile.experts();
+        for kind in [
+            QueryKind::Conceptual,
+            QueryKind::Path,
+            QueryKind::Identifier,
+        ] {
+            let mut models: Vec<&String> = experts.semantic_models(kind).iter().collect();
+            models.sort_by(|a, b| {
+                model_cost_rank(a)
+                    .cmp(&model_cost_rank(b))
+                    .then_with(|| a.cmp(b))
+            });
+
+            for model in models {
+                if out.len() >= max_models {
+                    break;
+                }
+                if seen.insert(model.clone()) {
+                    out.push(model.clone());
+                }
+            }
+            if out.len() >= max_models {
+                break;
+            }
+        }
+
+        out
+    }
+
+    fn touch_daemon_best_effort(&self, root: &Path) {
+        let models = self.daemon_model_ids();
+        self.touch_daemon_models_best_effort(root, models);
+    }
+
+    fn touch_daemon_models_best_effort(&self, root: &Path, models: Vec<String>) {
         let disable = std::env::var("CONTEXT_FINDER_DISABLE_DAEMON")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         if disable {
+            return;
+        }
+
+        // In stub embedding mode we aim for deterministic, dependency-light behavior
+        // (used heavily in CI and tests). The background daemon is a performance
+        // optimization and can introduce nondeterminism / flakiness in constrained
+        // environments, so we skip it.
+        let stub = std::env::var("CONTEXT_FINDER_EMBEDDING_MODE")
+            .ok()
+            .map(|v| v.trim().eq_ignore_ascii_case("stub"))
+            .unwrap_or(false);
+        if stub {
             return;
         }
 
@@ -284,9 +882,72 @@ impl ContextFinderService {
             log::debug!("daemon touch skipped (no runtime)");
             return;
         }
+
+        // Debounce daemon touches: many tools call `resolve_root` (and some call `lock_engine`),
+        // so we avoid spawning a ping task for every single request.
+        let profile = self.profile.clone();
+        let state = self.state.clone();
         tokio::spawn(async move {
-            if let Err(err) = crate::daemon::touch(&root).await {
-                log::debug!("daemon touch failed: {err:#}");
+            if !state.should_touch_daemon(&root).await {
+                return;
+            }
+            state.touch_warm_indexes(&root, &profile, models).await;
+        });
+    }
+
+    fn request_daemon_refresh_best_effort(&self, root: &Path, reason: &str) {
+        // Default refresh requests come from primary index staleness/missing checks. Keep them
+        // cheap by targeting only the primary model; expert indices are refreshed on-demand
+        // (query-kind aware) via `request_daemon_refresh_for_models_best_effort` below.
+        let model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
+        self.request_daemon_refresh_for_models_best_effort(root, reason, vec![model_id]);
+    }
+
+    fn request_daemon_refresh_for_models_best_effort(
+        &self,
+        root: &Path,
+        reason: &str,
+        models: Vec<String>,
+    ) {
+        let disable = std::env::var("CONTEXT_FINDER_DISABLE_DAEMON")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if disable {
+            return;
+        }
+
+        // In stub embedding mode we aim for deterministic, dependency-light behavior.
+        // Background refresh is a performance optimization and can introduce nondeterminism,
+        // so we skip it.
+        let stub = std::env::var("CONTEXT_FINDER_EMBEDDING_MODE")
+            .ok()
+            .map(|v| v.trim().eq_ignore_ascii_case("stub"))
+            .unwrap_or(false);
+        if stub {
+            return;
+        }
+
+        let root = root.to_path_buf();
+        let reason = reason.to_string();
+        if tokio::runtime::Handle::try_current().is_err() {
+            log::debug!("daemon refresh skipped (no runtime)");
+            return;
+        }
+
+        let profile = self.profile.clone();
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            // Always register the desired model roster with the warm-indexer, even if the refresh
+            // trigger itself is debounced. This prevents "missing expert model index" scenarios
+            // from being silently delayed by a recent refresh for another model set.
+            state
+                .touch_warm_indexes(&root, &profile, models.clone())
+                .await;
+
+            if state.should_request_daemon_refresh(&root).await {
+                state
+                    .request_warm_indexes_refresh(&root, &profile, models, &reason)
+                    .await;
             }
         });
     }
@@ -338,6 +999,83 @@ impl ContextFinderService {
     }
 }
 
+async fn warm_graph_nodes_store_task(
+    service: ContextFinderService,
+    root: PathBuf,
+    language: GraphLanguage,
+) -> Result<()> {
+    let store_path = graph_nodes_store_path(&root);
+    let key = store_path.to_string_lossy().to_string();
+
+    let outcome = async {
+        let mut engine = service.lock_engine(&root).await?;
+        engine.engine_mut().ensure_graph(language).await?;
+
+        let graph_nodes_cfg = service.profile.graph_nodes();
+        let canonical_index_mtime = engine.engine_mut().canonical_index_mtime;
+        let source_index_mtime_ms = unix_ms(canonical_index_mtime);
+        let Some(assembler) = engine.engine_mut().context_search.assembler() else {
+            return Ok(());
+        };
+
+        let language_key = graph_language_key(language).to_string();
+        let template_hash = service.profile.embedding().graph_node_template_hash();
+
+        let loaded = GraphNodeStore::load(&store_path)
+            .await
+            .map_or(None, |store| {
+                let meta = store.meta();
+                (meta.source_index_mtime_ms == source_index_mtime_ms
+                    && meta.graph_language == language_key
+                    && meta.graph_doc_version == GRAPH_DOC_VERSION
+                    && meta.template_hash == template_hash)
+                    .then_some(store)
+            });
+
+        if loaded.is_some() {
+            return Ok(());
+        }
+
+        let docs = build_graph_docs(
+            assembler,
+            GraphDocConfig {
+                max_neighbors_per_relation: graph_nodes_cfg.max_neighbors_per_relation,
+            },
+        );
+        let docs: Vec<GraphNodeDoc> = docs
+            .into_iter()
+            .map(|doc| {
+                let text = service
+                    .profile
+                    .embedding()
+                    .render_graph_node_doc(&doc.doc)
+                    .unwrap_or(doc.doc);
+                GraphNodeDoc {
+                    node_id: doc.node_id,
+                    chunk_id: doc.chunk_id,
+                    text,
+                    doc_hash: doc.doc_hash,
+                }
+            })
+            .collect();
+
+        drop(engine);
+
+        let meta = GraphNodeStoreMeta::for_current_model(
+            source_index_mtime_ms,
+            language_key,
+            GRAPH_DOC_VERSION,
+            template_hash,
+        )?;
+        GraphNodeStore::build_or_update(&store_path, meta, docs).await?;
+        Ok(())
+    }
+    .await;
+
+    service.state.graph_nodes_warmup_finish(&key).await;
+    outcome
+}
+
 fn model_id_dir_name(model_id: &str) -> String {
     model_id
         .chars()
@@ -350,14 +1088,14 @@ fn model_id_dir_name(model_id: &str) -> String {
 
 fn graph_nodes_store_path(root: &Path) -> PathBuf {
     let model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
-    root.join(".context-finder")
+    context_dir_for_project_root(root)
         .join("indexes")
         .join(model_id_dir_name(&model_id))
         .join("graph_nodes.json")
 }
 
 fn index_path_for_model(root: &Path, model_id: &str) -> PathBuf {
-    root.join(".context-finder")
+    context_dir_for_project_root(root)
         .join("indexes")
         .join(model_id_dir_name(model_id))
         .join("index.json")
@@ -441,13 +1179,53 @@ fn missing_index_message(state: &IndexState, attempt: Option<&ReindexAttempt>) -
         .path
         .as_deref()
         .unwrap_or("<unknown-index-path>");
-    let mut message = format!("Index not found at {path}. Run 'context-finder index' first.");
+    let mut message =
+        format!("Index not found at {path}. Auto-index is starting in the background.");
     if let Some(attempt) = attempt {
         message.push_str(" Auto-index attempt: ");
         message.push_str(&format_reindex_attempt(attempt));
         message.push('.');
     }
     message
+}
+
+fn stale_index_message(state: &IndexState, attempt: Option<&ReindexAttempt>) -> String {
+    let mut message =
+        "Index is stale. Semantic tools will fall back to filesystem results while it refreshes."
+            .to_string();
+    if let Some(attempt) = attempt {
+        message.push_str(" Auto-index attempt: ");
+        message.push_str(&format_reindex_attempt(attempt));
+        message.push('.');
+    }
+    if !state.stale_reasons.is_empty() {
+        message.push_str(" Stale reasons: ");
+        message.push_str(&format_stale_reasons(&state.stale_reasons));
+        message.push('.');
+    }
+    message
+}
+
+fn stale_reason_name(reason: &context_indexer::StaleReason) -> &'static str {
+    match reason {
+        context_indexer::StaleReason::IndexMissing => "index_missing",
+        context_indexer::StaleReason::IndexCorrupt => "index_corrupt",
+        context_indexer::StaleReason::WatermarkMissing => "watermark_missing",
+        context_indexer::StaleReason::GitHeadMismatch => "git_head_mismatch",
+        context_indexer::StaleReason::GitDirtyMismatch => "git_dirty_mismatch",
+        context_indexer::StaleReason::FilesystemChanged => "filesystem_changed",
+    }
+}
+
+fn format_stale_reasons(reasons: &[context_indexer::StaleReason]) -> String {
+    if reasons.is_empty() {
+        return "unknown".to_string();
+    }
+    reasons
+        .iter()
+        .map(stale_reason_name)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn format_reindex_attempt(attempt: &ReindexAttempt) -> String {
@@ -473,57 +1251,20 @@ fn format_reindex_attempt(attempt: &ReindexAttempt) -> String {
     }
 }
 
-fn semantic_model_roster(profile: &SearchProfile) -> Vec<String> {
-    let experts = profile.experts();
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-
-    for kind in [
-        QueryKind::Identifier,
-        QueryKind::Path,
-        QueryKind::Conceptual,
-    ] {
-        for model_id in experts.semantic_models(kind) {
-            if seen.insert(model_id.clone()) {
-                out.push(model_id.clone());
-            }
-        }
-    }
-
-    out
-}
-
-async fn load_semantic_indexes(
-    root: &Path,
-    profile: &SearchProfile,
-) -> Result<Vec<(String, VectorIndex)>> {
-    let default_model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
-
-    let mut requested: Vec<String> = Vec::new();
-    requested.push(default_model_id.clone());
-    requested.extend(semantic_model_roster(profile));
-
-    let mut sources = Vec::new();
-    let mut seen = HashSet::new();
-    for model_id in requested {
-        if !seen.insert(model_id.clone()) {
-            continue;
-        }
-        let path = index_path_for_model(root, &model_id);
-        if !path.exists() {
-            continue;
-        }
-        let index = VectorIndex::load(&path)
-            .await
-            .with_context(|| format!("Failed to load index {}", path.display()))?;
-        sources.push((model_id, index));
-    }
-
-    if sources.is_empty() {
-        anyhow::bail!("No semantic indices available (run 'context-finder index' first)");
-    }
-
-    Ok(sources)
+async fn load_semantic_indexes(root: &Path) -> Result<Vec<(String, VectorIndex)>> {
+    // Low-RAM default: only load the primary semantic index. Expert indices are loaded on-demand
+    // per-query (and evicted by an engine-local LRU) to avoid ballooning RSS in a shared daemon.
+    let model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
+    let path = index_path_for_model(root, &model_id);
+    anyhow::ensure!(
+        path.exists(),
+        "No semantic indices available (missing {})",
+        path.display()
+    );
+    let index = VectorIndex::load(&path)
+        .await
+        .with_context(|| format!("Failed to load index {}", path.display()))?;
+    Ok(vec![(model_id, index)])
 }
 
 fn build_chunk_lookup(chunks: &[context_code_chunker::CodeChunk]) -> HashMap<String, usize> {
@@ -545,19 +1286,84 @@ fn build_chunk_lookup(chunks: &[context_code_chunker::CodeChunk]) -> HashMap<Str
 // ============================================================================
 
 const ENGINE_CACHE_CAPACITY: usize = 4;
+const TOOL_META_CACHE_CAPACITY: usize = 8;
+const TOOL_META_CACHE_TTL: Duration = Duration::from_secs(10);
+const TOOL_META_CACHE_GIT_WATERMARK_MAX_AGE_MS: u64 = 1_500;
+const TOOL_META_CACHE_FS_WATERMARK_MAX_AGE_MS: u64 = 10_000;
+const PROJECT_FACTS_CACHE_CAPACITY: usize = 8;
+const PROJECT_FACTS_CACHE_TTL: Duration = Duration::from_secs(10);
+const CURSOR_STORE_CAPACITY: usize = 256;
+const CURSOR_STORE_TTL: Duration = Duration::from_secs(60 * 60);
+
+fn total_memory_gib_linux_best_effort() -> Option<u64> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in contents.lines() {
+        let line = line.trim_start();
+        if !line.starts_with("MemTotal:") {
+            continue;
+        }
+        let kb = line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|v| v.parse::<u64>().ok())?;
+        return Some(kb / 1024 / 1024);
+    }
+    None
+}
+
+fn default_engine_semantic_index_cache_capacity() -> usize {
+    let Some(mem_gib) = total_memory_gib_linux_best_effort() else {
+        return 3;
+    };
+
+    if mem_gib <= 8 {
+        1
+    } else if mem_gib <= 16 {
+        2
+    } else {
+        3
+    }
+}
+
+fn engine_semantic_index_cache_capacity_from_env() -> usize {
+    std::env::var("CONTEXT_FINDER_ENGINE_SEMANTIC_INDEX_CAPACITY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(default_engine_semantic_index_cache_capacity)
+        .max(1)
+}
+
+// Daemon touch is a best-effort background performance optimization (keeps incremental indexes
+// warm). Avoid spawning a new ping task on every tool call: shared backends can be chatty.
+const DAEMON_TOUCH_CACHE_CAPACITY: usize = 32;
+const DAEMON_TOUCH_DEBOUNCE: Duration = Duration::from_millis(750);
+const DAEMON_REFRESH_CACHE_CAPACITY: usize = 32;
+const DAEMON_REFRESH_DEBOUNCE: Duration = Duration::from_millis(750);
 
 type EngineHandle = Arc<Mutex<EngineSlot>>;
 
 struct ServiceState {
     engines: Mutex<EngineCache>,
-    session: Mutex<SessionDefaults>,
+    tool_meta_cache: Mutex<ToolMetaCache>,
+    project_facts_cache: Mutex<ProjectFactsCache>,
+    cursor_store: Mutex<CursorStore>,
+    graph_nodes_warmup: Mutex<GraphNodesWarmupState>,
+    daemon_touch_cache: Mutex<DaemonTouchCache>,
+    daemon_refresh_cache: Mutex<DaemonTouchCache>,
+    warm_indexes: Mutex<crate::index_warmup::WarmIndexers>,
 }
 
 impl ServiceState {
     fn new() -> Self {
         Self {
             engines: Mutex::new(EngineCache::new(ENGINE_CACHE_CAPACITY)),
-            session: Mutex::new(SessionDefaults::default()),
+            tool_meta_cache: Mutex::new(ToolMetaCache::new()),
+            project_facts_cache: Mutex::new(ProjectFactsCache::new()),
+            cursor_store: Mutex::new(CursorStore::new()),
+            graph_nodes_warmup: Mutex::new(GraphNodesWarmupState::new()),
+            daemon_touch_cache: Mutex::new(DaemonTouchCache::new()),
+            daemon_refresh_cache: Mutex::new(DaemonTouchCache::new()),
+            warm_indexes: Mutex::new(crate::index_warmup::WarmIndexers::new()),
         }
     }
 
@@ -566,57 +1372,848 @@ impl ServiceState {
         cache.get_or_insert(root)
     }
 
-    async fn resolve_root(&self, raw_path: Option<&str>) -> Result<(PathBuf, String), String> {
-        if let Some(raw) = trimmed_non_empty(raw_path) {
-            let root = canonicalize_root(raw).map_err(|err| format!("Invalid path: {err}"))?;
-            let root_display = root.to_string_lossy().to_string();
-            let mut session = self.session.lock().await;
-            session.root = Some(root.clone());
-            session.root_display = Some(root_display.clone());
-            return Ok((root, root_display));
+    async fn tool_meta_cache_get(&self, root: &Path) -> Option<ToolMeta> {
+        let cached = {
+            let mut cache = self.tool_meta_cache.lock().await;
+            cache.get(root)
+        }?;
+
+        let Some(index_state) = cached.index_state.as_ref() else {
+            return Some(cached);
+        };
+
+        // Freshness-safe behavior: cached index_state must not allow silently stale semantic
+        // results. We cache to avoid repeated watermark scans, but we still re-check periodically
+        // (tuned per watermark kind).
+        let computed_at_ms = match &index_state.project_watermark {
+            context_indexer::Watermark::Git {
+                computed_at_unix_ms,
+                ..
+            } => computed_at_unix_ms,
+            context_indexer::Watermark::Filesystem {
+                computed_at_unix_ms,
+                ..
+            } => computed_at_unix_ms,
+        };
+        if let Some(computed_at_ms) = computed_at_ms {
+            let now_ms = unix_ms(std::time::SystemTime::now());
+            let max_age_ms = match &index_state.project_watermark {
+                context_indexer::Watermark::Git { .. } => TOOL_META_CACHE_GIT_WATERMARK_MAX_AGE_MS,
+                context_indexer::Watermark::Filesystem { .. } => {
+                    TOOL_META_CACHE_FS_WATERMARK_MAX_AGE_MS
+                }
+            };
+            if now_ms.saturating_sub(*computed_at_ms) > max_age_ms {
+                let mut cache = self.tool_meta_cache.lock().await;
+                cache.remove(root);
+                return None;
+            }
         }
 
-        if let Some((root, root_display)) = self.session.lock().await.clone_root() {
-            return Ok((root, root_display));
+        if !index_state.stale {
+            return Some(cached);
         }
 
-        if let Some((var, value)) = env_root_override() {
-            let root = canonicalize_root(&value)
-                .map_err(|err| format!("Invalid path from {var}: {err}"))?;
-            let root_display = root.to_string_lossy().to_string();
-            let mut session = self.session.lock().await;
-            session.root = Some(root.clone());
-            session.root_display = Some(root_display.clone());
-            return Ok((root, root_display));
+        // Fast freshness recovery: stale meta is cached to avoid expensive watermark scans, but if
+        // the index file changes (e.g., daemon refresh completed), the cached stale state becomes
+        // obsolete. Do a cheap index file stat and evict on change so the next call re-gathers.
+        let store_path = index_path_for_model(root, &index_state.model_id);
+        let should_evict = if !index_state.index.exists {
+            store_path.exists()
+        } else if let Some(cached_mtime) = index_state.index.mtime_ms {
+            match load_store_mtime(&store_path).await {
+                Ok(mtime) => unix_ms(mtime) != cached_mtime,
+                Err(_) => true,
+            }
+        } else {
+            // We don't have a stored mtime but the index exists; if the file can be stat'ed,
+            // treat it as a change signal and force a refresh.
+            load_store_mtime(&store_path).await.is_ok()
+        };
+
+        if should_evict {
+            let mut cache = self.tool_meta_cache.lock().await;
+            cache.remove(root);
+            return None;
         }
 
-        let cwd = env::current_dir()
-            .map_err(|err| format!("Failed to determine current directory: {err}"))?;
-        let candidate = find_git_root(&cwd).unwrap_or(cwd);
-        let root =
-            canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
-        let root_display = root.to_string_lossy().to_string();
-        let mut session = self.session.lock().await;
-        session.root = Some(root.clone());
-        session.root_display = Some(root_display.clone());
-        Ok((root, root_display))
+        Some(cached)
     }
+
+    async fn tool_meta_cache_put(&self, root: &Path, meta: ToolMeta) {
+        let mut cache = self.tool_meta_cache.lock().await;
+        cache.insert(root, meta);
+    }
+
+    async fn project_facts_cache_get(&self, root: &Path) -> Option<ProjectFactsResult> {
+        let mut cache = self.project_facts_cache.lock().await;
+        cache.get(root)
+    }
+
+    async fn project_facts_cache_put(&self, root: &Path, facts: ProjectFactsResult) {
+        let mut cache = self.project_facts_cache.lock().await;
+        cache.insert(root, facts);
+    }
+
+    async fn cursor_store_put(&self, payload: Vec<u8>) -> u64 {
+        let mut store = self.cursor_store.lock().await;
+        let id = store.insert(payload);
+        store.persist_best_effort();
+        id
+    }
+
+    async fn cursor_store_get(&self, id: u64) -> Option<Vec<u8>> {
+        let mut store = self.cursor_store.lock().await;
+        store.get(id)
+    }
+
+    async fn graph_nodes_warmup_begin(&self, key: String) -> bool {
+        let mut warmup = self.graph_nodes_warmup.lock().await;
+        warmup.begin(key)
+    }
+
+    async fn graph_nodes_warmup_finish(&self, key: &str) {
+        let mut warmup = self.graph_nodes_warmup.lock().await;
+        warmup.finish(key);
+    }
+
+    async fn should_touch_daemon(&self, root: &Path) -> bool {
+        let mut cache = self.daemon_touch_cache.lock().await;
+        cache.should_touch(root, Instant::now())
+    }
+
+    async fn should_request_daemon_refresh(&self, root: &Path) -> bool {
+        let mut cache = self.daemon_refresh_cache.lock().await;
+        cache.should_touch_with(
+            root,
+            Instant::now(),
+            DAEMON_REFRESH_DEBOUNCE,
+            DAEMON_REFRESH_CACHE_CAPACITY,
+        )
+    }
+
+    async fn touch_warm_indexes(
+        &self,
+        root: &Path,
+        profile: &SearchProfile,
+        model_ids: Vec<String>,
+    ) {
+        let mut warm = self.warm_indexes.lock().await;
+        warm.touch(root, profile, model_ids).await;
+    }
+
+    async fn request_warm_indexes_refresh(
+        &self,
+        root: &Path,
+        profile: &SearchProfile,
+        model_ids: Vec<String>,
+        reason: &str,
+    ) {
+        let mut warm = self.warm_indexes.lock().await;
+        warm.touch(root, profile, model_ids.clone()).await;
+        warm.request_refresh(root, reason, model_ids).await;
+    }
+
+    async fn recent_roots(&self) -> Vec<PathBuf> {
+        let guard = self.engines.lock().await;
+        guard.recent_roots()
+    }
+}
+
+struct GraphNodesWarmupState {
+    in_flight: HashSet<String>,
+}
+
+struct DaemonTouchCache {
+    entries: HashMap<PathBuf, Instant>,
+    order: VecDeque<PathBuf>,
+}
+
+impl DaemonTouchCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn should_touch(&mut self, root: &Path, now: Instant) -> bool {
+        self.should_touch_with(
+            root,
+            now,
+            DAEMON_TOUCH_DEBOUNCE,
+            DAEMON_TOUCH_CACHE_CAPACITY,
+        )
+    }
+
+    fn should_touch_with(
+        &mut self,
+        root: &Path,
+        now: Instant,
+        debounce: Duration,
+        capacity: usize,
+    ) -> bool {
+        let key = root.to_path_buf();
+        if let Some(last) = self.entries.get(&key).copied() {
+            if now.duration_since(last) < debounce {
+                return false;
+            }
+        }
+
+        self.entries.insert(key.clone(), now);
+        self.order.retain(|k| k != &key);
+        self.order.push_back(key);
+
+        while self.order.len() > capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+
+        true
+    }
+}
+
+impl GraphNodesWarmupState {
+    fn new() -> Self {
+        Self {
+            in_flight: HashSet::new(),
+        }
+    }
+
+    fn begin(&mut self, key: String) -> bool {
+        self.in_flight.insert(key)
+    }
+
+    fn finish(&mut self, key: &str) {
+        self.in_flight.remove(key);
+    }
+}
+
+#[derive(Clone)]
+struct ToolMetaCacheEntry {
+    meta: ToolMeta,
+    expires_at: Instant,
+}
+
+struct ToolMetaCache {
+    entries: HashMap<PathBuf, ToolMetaCacheEntry>,
+    order: VecDeque<PathBuf>,
+}
+
+impl ToolMetaCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, root: &Path) -> Option<ToolMeta> {
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let key = root.to_path_buf();
+        let entry = self.entries.remove(&key)?;
+        if entry.expires_at <= now {
+            self.order.retain(|k| k != &key);
+            return None;
+        }
+
+        self.order.retain(|k| k != &key);
+        self.order.push_back(key.clone());
+        let meta = entry.meta.clone();
+        self.entries.insert(key, entry);
+        Some(meta)
+    }
+
+    fn remove(&mut self, root: &Path) {
+        let key = root.to_path_buf();
+        self.entries.remove(&key);
+        self.order.retain(|k| k != &key);
+    }
+
+    fn insert(&mut self, root: &Path, meta: ToolMeta) {
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let key = root.to_path_buf();
+        let entry = ToolMetaCacheEntry {
+            meta,
+            expires_at: now + TOOL_META_CACHE_TTL,
+        };
+
+        self.entries.insert(key.clone(), entry);
+        self.order.retain(|k| k != &key);
+        self.order.push_back(key);
+
+        while self.order.len() > TOOL_META_CACHE_CAPACITY {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+    }
+
+    fn prune_expired(&mut self, now: Instant) {
+        let mut expired_keys: Vec<PathBuf> = Vec::new();
+        for (key, entry) in &self.entries {
+            if entry.expires_at <= now {
+                expired_keys.push(key.clone());
+            }
+        }
+
+        for key in expired_keys {
+            self.entries.remove(&key);
+        }
+
+        self.order.retain(|key| self.entries.contains_key(key));
+    }
+}
+
+#[cfg(test)]
+mod meta_cache_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn minimal_index_state(
+        root: &Path,
+        model_id: &str,
+        project_watermark: context_indexer::Watermark,
+        index_exists: bool,
+        index_mtime_ms: Option<u64>,
+        stale: bool,
+    ) -> IndexState {
+        IndexState {
+            schema_version: INDEX_STATE_SCHEMA_VERSION,
+            project_root: Some(root.to_string_lossy().to_string()),
+            model_id: model_id.to_string(),
+            profile: "quality".to_string(),
+            project_watermark,
+            index: IndexSnapshot {
+                exists: index_exists,
+                path: Some(
+                    index_path_for_model(root, model_id)
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+                mtime_ms: index_mtime_ms,
+                built_at_unix_ms: None,
+                watermark: None,
+            },
+            stale,
+            stale_reasons: Vec::new(),
+            reindex: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn evicts_cached_meta_when_project_watermark_is_too_old() {
+        let tmp = tempdir().expect("tempdir");
+        let root = tmp.path();
+        let now_ms = unix_ms(std::time::SystemTime::now());
+
+        let stale_age_ms = TOOL_META_CACHE_GIT_WATERMARK_MAX_AGE_MS.saturating_add(1);
+        let watermark = context_indexer::Watermark::Git {
+            computed_at_unix_ms: Some(now_ms.saturating_sub(stale_age_ms)),
+            git_head: "deadbeef".to_string(),
+            git_dirty: false,
+            dirty_hash: None,
+        };
+
+        let meta = ToolMeta {
+            index_state: Some(minimal_index_state(
+                root,
+                "bge-small",
+                watermark,
+                false,
+                None,
+                false,
+            )),
+            root_fingerprint: Some(1),
+        };
+
+        let state = ServiceState::new();
+        state.tool_meta_cache_put(root, meta).await;
+
+        let cached = state.tool_meta_cache_get(root).await;
+        assert!(
+            cached.is_none(),
+            "expected cache eviction when watermark is too old"
+        );
+    }
+
+    #[tokio::test]
+    async fn evicts_cached_stale_meta_when_index_mtime_changes() {
+        let tmp = tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        // Seed an index file so we can observe mtime changes cheaply.
+        let store_path = index_path_for_model(root, "bge-small");
+        tokio::fs::create_dir_all(store_path.parent().expect("parent"))
+            .await
+            .expect("mkdir index dir");
+        tokio::fs::write(&store_path, b"{\"schema_version\":3}")
+            .await
+            .expect("write index");
+
+        let initial_mtime_ms = unix_ms(load_store_mtime(&store_path).await.expect("mtime"));
+        let watermark = context_indexer::Watermark::Filesystem {
+            computed_at_unix_ms: Some(unix_ms(std::time::SystemTime::now())),
+            file_count: 1,
+            max_mtime_ms: 1,
+            total_bytes: 1,
+        };
+
+        let meta = ToolMeta {
+            index_state: Some(minimal_index_state(
+                root,
+                "bge-small",
+                watermark,
+                true,
+                Some(initial_mtime_ms),
+                true,
+            )),
+            root_fingerprint: Some(1),
+        };
+
+        let state = ServiceState::new();
+        state.tool_meta_cache_put(root, meta).await;
+
+        // Ensure mtime changes (some filesystems have coarse resolution).
+        let mut updated_mtime_ms = initial_mtime_ms;
+        for attempt in 0..64u64 {
+            tokio::fs::write(&store_path, format!("{{\"attempt\":{attempt}}}"))
+                .await
+                .expect("rewrite index");
+            updated_mtime_ms = unix_ms(load_store_mtime(&store_path).await.expect("mtime"));
+            if updated_mtime_ms != initial_mtime_ms {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_ne!(
+            updated_mtime_ms, initial_mtime_ms,
+            "expected index mtime to change for the test"
+        );
+
+        let cached = state.tool_meta_cache_get(root).await;
+        assert!(
+            cached.is_none(),
+            "expected cache eviction when index mtime changed"
+        );
+    }
+}
+
+#[derive(Clone)]
+struct ProjectFactsCacheEntry {
+    facts: ProjectFactsResult,
+    expires_at: Instant,
+}
+
+struct ProjectFactsCache {
+    entries: HashMap<PathBuf, ProjectFactsCacheEntry>,
+    order: VecDeque<PathBuf>,
+}
+
+impl ProjectFactsCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, root: &Path) -> Option<ProjectFactsResult> {
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let key = root.to_path_buf();
+        let entry = self.entries.remove(&key)?;
+        if entry.expires_at <= now {
+            self.order.retain(|k| k != &key);
+            return None;
+        }
+
+        self.order.retain(|k| k != &key);
+        self.order.push_back(key.clone());
+        let facts = entry.facts.clone();
+        self.entries.insert(key, entry);
+        Some(facts)
+    }
+
+    fn insert(&mut self, root: &Path, facts: ProjectFactsResult) {
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let key = root.to_path_buf();
+        let entry = ProjectFactsCacheEntry {
+            facts,
+            expires_at: now + PROJECT_FACTS_CACHE_TTL,
+        };
+
+        self.entries.insert(key.clone(), entry);
+        self.order.retain(|k| k != &key);
+        self.order.push_back(key);
+
+        while self.order.len() > PROJECT_FACTS_CACHE_CAPACITY {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+    }
+
+    fn prune_expired(&mut self, now: Instant) {
+        let mut expired_keys: Vec<PathBuf> = Vec::new();
+        for (key, entry) in &self.entries {
+            if entry.expires_at <= now {
+                expired_keys.push(key.clone());
+            }
+        }
+
+        for key in expired_keys {
+            self.entries.remove(&key);
+        }
+
+        self.order.retain(|key| self.entries.contains_key(key));
+    }
+}
+
+#[derive(Clone)]
+struct CursorStoreEntry {
+    payload: Vec<u8>,
+    expires_at: Instant,
+}
+
+struct CursorStore {
+    next_id: u64,
+    entries: HashMap<u64, CursorStoreEntry>,
+    order: VecDeque<u64>,
+    persist_path: Option<PathBuf>,
+}
+
+impl CursorStore {
+    fn new() -> Self {
+        let mut store = Self {
+            next_id: 1,
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            persist_path: cursor_store_persist_path(),
+        };
+        store.load_best_effort();
+        store
+    }
+
+    fn get(&mut self, id: u64) -> Option<Vec<u8>> {
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let entry = self.entries.remove(&id)?;
+        if entry.expires_at <= now {
+            self.order.retain(|k| k != &id);
+            return None;
+        }
+
+        self.order.retain(|k| k != &id);
+        self.order.push_back(id);
+        let payload = entry.payload.clone();
+        self.entries.insert(id, entry);
+        Some(payload)
+    }
+
+    fn insert(&mut self, payload: Vec<u8>) -> u64 {
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1).max(1);
+
+        let entry = CursorStoreEntry {
+            payload,
+            expires_at: now + CURSOR_STORE_TTL,
+        };
+
+        self.entries.insert(id, entry);
+        self.order.retain(|k| k != &id);
+        self.order.push_back(id);
+
+        while self.order.len() > CURSOR_STORE_CAPACITY {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+
+        id
+    }
+
+    fn prune_expired(&mut self, now: Instant) {
+        let mut expired: Vec<u64> = Vec::new();
+        for (key, entry) in &self.entries {
+            if entry.expires_at <= now {
+                expired.push(*key);
+            }
+        }
+
+        for key in expired {
+            self.entries.remove(&key);
+        }
+        self.order.retain(|key| self.entries.contains_key(key));
+    }
+
+    fn load_best_effort(&mut self) {
+        let Some(path) = self.persist_path.as_ref() else {
+            return;
+        };
+
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(_) => return,
+        };
+
+        let persisted: PersistedCursorStore = match serde_json::from_slice(&bytes) {
+            Ok(persisted) => persisted,
+            Err(_) => return,
+        };
+        if persisted.v != 1 {
+            return;
+        }
+
+        let now_unix_ms = unix_ms(SystemTime::now());
+        let now_instant = Instant::now();
+
+        let mut max_id = 0u64;
+        let mut seen_ids: HashSet<u64> = HashSet::new();
+        for entry in persisted.entries {
+            if entry.expires_at_unix_ms <= now_unix_ms {
+                continue;
+            }
+            let Ok(payload) = STANDARD.decode(entry.payload_b64.as_bytes()) else {
+                continue;
+            };
+            let remaining_ms = entry.expires_at_unix_ms.saturating_sub(now_unix_ms);
+            let expires_at = now_instant + Duration::from_millis(remaining_ms);
+            self.entries.insert(
+                entry.id,
+                CursorStoreEntry {
+                    payload,
+                    expires_at,
+                },
+            );
+            if seen_ids.insert(entry.id) {
+                self.order.push_back(entry.id);
+            }
+            max_id = max_id.max(entry.id);
+        }
+
+        if !self.entries.is_empty() {
+            self.next_id = max_id.wrapping_add(1).max(1);
+        }
+
+        while self.order.len() > CURSOR_STORE_CAPACITY {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+    }
+
+    fn persist_best_effort(&mut self) {
+        let Some(path) = self.persist_path.clone() else {
+            return;
+        };
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+
+        let now_unix_ms = unix_ms(SystemTime::now());
+        let mut entries = Vec::new();
+        for id in &self.order {
+            let Some(entry) = self.entries.get(id) else {
+                continue;
+            };
+            let remaining = entry.expires_at.saturating_duration_since(now);
+            let expires_at_unix_ms = now_unix_ms
+                .saturating_add(u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX));
+            entries.push(PersistedCursorStoreEntry {
+                id: *id,
+                expires_at_unix_ms,
+                payload_b64: STANDARD.encode(&entry.payload),
+            });
+        }
+
+        let persisted = PersistedCursorStore { v: 1, entries };
+        let Ok(data) = serde_json::to_vec(&persisted) else {
+            return;
+        };
+
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, &data).is_err() {
+            return;
+        }
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedCursorStore {
+    v: u32,
+    entries: Vec<PersistedCursorStoreEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedCursorStoreEntry {
+    id: u64,
+    expires_at_unix_ms: u64,
+    payload_b64: String,
+}
+
+fn cursor_store_persist_path() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var("CONTEXT_MCP_CURSOR_STORE_PATH")
+        .or_else(|_| std::env::var("CONTEXT_FINDER_MCP_CURSOR_STORE_PATH"))
+    {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+
+    let home = dirs::home_dir()?;
+    let preferred = home
+        .join(CONTEXT_DIR_NAME)
+        .join("cache")
+        .join("cursor_store_v1.json");
+    if preferred.exists() {
+        return Some(preferred);
+    }
+    let legacy = home
+        .join(LEGACY_CONTEXT_DIR_NAME)
+        .join("cache")
+        .join("cursor_store_v1.json");
+    if legacy.exists() {
+        return Some(legacy);
+    }
+    Some(preferred)
 }
 
 #[derive(Default)]
 struct SessionDefaults {
     root: Option<PathBuf>,
     root_display: Option<String>,
+    focus_file: Option<String>,
+    // Working-set: ephemeral, per-connection state (no disk). Used to avoid repeating the same
+    // anchors/snippets across multiple calls in one agent session.
+    seen_snippet_files: VecDeque<String>,
+    seen_snippet_files_set: HashSet<String>,
 }
 
 impl SessionDefaults {
     fn clone_root(&self) -> Option<(PathBuf, String)> {
         Some((self.root.clone()?, self.root_display.clone()?))
     }
+
+    fn set_root(&mut self, root: PathBuf, root_display: String, focus_file: Option<String>) {
+        let root_changed = match self.root.as_ref() {
+            Some(prev) => prev != &root,
+            None => true,
+        };
+        self.root = Some(root);
+        self.root_display = Some(root_display);
+        self.focus_file = focus_file;
+        if root_changed {
+            self.clear_working_set();
+        }
+    }
+
+    fn clear_working_set(&mut self) {
+        self.seen_snippet_files.clear();
+        self.seen_snippet_files_set.clear();
+    }
+
+    fn note_seen_snippet_file(&mut self, file: &str) {
+        const MAX_SEEN: usize = 160;
+
+        let trimmed = file.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if !self.seen_snippet_files_set.insert(trimmed.to_string()) {
+            return;
+        }
+        self.seen_snippet_files.push_back(trimmed.to_string());
+        while self.seen_snippet_files.len() > MAX_SEEN {
+            if let Some(old) = self.seen_snippet_files.pop_front() {
+                self.seen_snippet_files_set.remove(&old);
+            }
+        }
+    }
 }
 
 fn trimmed_non_empty(input: Option<&str>) -> Option<&str> {
     input.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn resolve_root_from_absolute_hints(hints: &[String]) -> Option<PathBuf> {
+    for hint in hints {
+        let trimmed = hint.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = Path::new(trimmed);
+        if !path.is_absolute() {
+            continue;
+        }
+        if let Ok(root) = canonicalize_root_path(path) {
+            return Some(root);
+        }
+    }
+    None
+}
+
+fn collect_relative_hints(hints: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for hint in hints {
+        let trimmed = hint.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let trimmed = trimmed.replace('\\', "/");
+        if Path::new(&trimmed).is_absolute() {
+            continue;
+        }
+        if is_glob_hint(&trimmed) {
+            continue;
+        }
+        if !looks_like_path_hint(&trimmed) {
+            continue;
+        }
+        out.push(trimmed);
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+fn hint_score_for_root(root: &Path, hints: &[String]) -> usize {
+    let mut score = 0usize;
+    for hint in hints {
+        if root.join(hint).exists() {
+            score = score.saturating_add(1);
+        }
+    }
+    score
+}
+
+fn is_glob_hint(value: &str) -> bool {
+    value.contains('*') || value.contains('?')
+}
+
+fn looks_like_path_hint(value: &str) -> bool {
+    value.contains('/') || value.starts_with('.') || value.contains('.')
 }
 
 fn env_root_override() -> Option<(String, String)> {
@@ -636,7 +2233,40 @@ fn canonicalize_root(raw: &str) -> Result<PathBuf, String> {
 }
 
 fn canonicalize_root_path(path: &Path) -> Result<PathBuf, String> {
-    path.canonicalize().map_err(|err| err.to_string())
+    let canonical = path.canonicalize().map_err(|err| err.to_string())?;
+
+    // Agent-native UX: callers often pass a "current file" path as `path`.
+    // Treat that as a hint within the project and prefer the enclosing git root (when present),
+    // otherwise fall back to the file's parent directory.
+    let (base, is_file) = match std::fs::metadata(&canonical) {
+        Ok(meta) if meta.is_file() => (
+            canonical
+                .parent()
+                .map(PathBuf::from)
+                .ok_or_else(|| "Invalid path: file has no parent directory".to_string())?,
+            true,
+        ),
+        _ => (canonical, false),
+    };
+
+    if is_file {
+        if let Some(git_root) = find_git_root(&base) {
+            return Ok(git_root);
+        }
+    }
+
+    Ok(base)
+}
+
+fn rel_path_string(path: &Path) -> Option<String> {
+    let raw = path.to_string_lossy().to_string();
+    let normalized = raw.replace('\\', "/");
+    let trimmed = normalized.trim().trim_start_matches("./");
+    if trimmed.is_empty() || trimmed == "." {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn find_git_root(start: &Path) -> Option<PathBuf> {
@@ -644,6 +2274,66 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
         .ancestors()
         .find(|candidate| candidate.join(".git").exists())
         .map(PathBuf::from)
+}
+
+fn root_path_from_mcp_uri(uri: &str) -> Option<PathBuf> {
+    let uri = uri.trim();
+    if uri.is_empty() {
+        return None;
+    }
+
+    // Only local file:// URIs are meaningful for a filesystem-indexing MCP server.
+    let rest = uri.strip_prefix("file://")?;
+    let decoded = percent_decode_utf8(rest)?;
+
+    // file:///abs/path  -> "/abs/path"
+    // file://localhost/abs/path -> "/abs/path"
+    let decoded = decoded.strip_prefix("localhost").unwrap_or(&decoded);
+    if !decoded.starts_with('/') {
+        return None;
+    }
+
+    #[cfg(not(windows))]
+    let path = decoded.to_string();
+
+    // Windows file URIs are often "file:///C:/path" (leading slash before drive).
+    #[cfg(windows)]
+    let path = {
+        let mut path = decoded.to_string();
+        if path.len() >= 3
+            && path.as_bytes()[0] == b'/'
+            && path.as_bytes()[2] == b':'
+            && path.as_bytes()[1].is_ascii_alphabetic()
+        {
+            path = path[1..].to_string();
+        }
+        path
+    };
+
+    Some(PathBuf::from(path))
+}
+
+fn percent_decode_utf8(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                let hi = *bytes.get(i + 1)?;
+                let lo = *bytes.get(i + 2)?;
+                let hi = (hi as char).to_digit(16)? as u8;
+                let lo = (lo as char).to_digit(16)? as u8;
+                out.push((hi << 4) | lo);
+                i += 3;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 struct EngineCache {
@@ -688,6 +2378,10 @@ impl EngineCache {
         }
         self.order.push_back(root.to_path_buf());
     }
+
+    fn recent_roots(&self) -> Vec<PathBuf> {
+        self.order.iter().rev().cloned().collect()
+    }
 }
 
 struct EngineSlot {
@@ -715,12 +2409,127 @@ struct ProjectEngine {
     root: PathBuf,
     context_search: MultiModelContextSearch,
     chunk_lookup: HashMap<String, usize>,
-    available_models: Vec<String>,
+    primary_model_id: String,
+    semantic_index_cache_capacity: usize,
+    semantic_index_lru: VecDeque<String>,
     canonical_index_mtime: SystemTime,
     graph_language: Option<GraphLanguage>,
 }
 
+#[derive(Debug, Default)]
+struct EnsureSemanticModels {
+    missing_models: Vec<String>,
+    stale_models: Vec<String>,
+}
+
 impl ProjectEngine {
+    fn loaded_model_ids(&self) -> Vec<String> {
+        self.context_search.hybrid().loaded_model_ids()
+    }
+
+    async fn ensure_semantic_models_loaded(
+        &mut self,
+        project_watermark: &context_indexer::Watermark,
+        model_ids: &[String],
+    ) -> Result<EnsureSemanticModels> {
+        let mut out = EnsureSemanticModels::default();
+
+        let mut required: Vec<String> = model_ids
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .collect();
+        required.sort();
+        required.dedup();
+
+        let required_set: HashSet<String> = required.iter().cloned().collect();
+
+        for model_id in required {
+            if model_id == self.primary_model_id {
+                continue;
+            }
+
+            if self.context_search.hybrid().has_semantic_index(&model_id) {
+                self.touch_semantic_lru(&model_id);
+                continue;
+            }
+
+            let store_path = index_path_for_model(&self.root, &model_id);
+            if !store_path.exists() {
+                out.missing_models.push(model_id);
+                continue;
+            }
+
+            let mut index_corrupt = false;
+            let mut watermark = None;
+            match read_index_watermark(&store_path).await {
+                Ok(Some(PersistedIndexWatermark {
+                    watermark: mark, ..
+                })) => {
+                    watermark = Some(mark);
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    index_corrupt = true;
+                }
+            }
+
+            let assessment = context_indexer::assess_staleness(
+                project_watermark,
+                true,
+                index_corrupt,
+                watermark.as_ref(),
+            );
+            if assessment.stale {
+                out.stale_models.push(model_id);
+                continue;
+            }
+
+            let index = VectorIndex::load(&store_path)
+                .await
+                .with_context(|| format!("Failed to load index {}", store_path.display()))?;
+            self.context_search
+                .hybrid_mut()
+                .insert_semantic_index(model_id.clone(), index);
+            self.touch_semantic_lru(&model_id);
+        }
+
+        self.evict_semantic_models(&required_set);
+
+        Ok(out)
+    }
+
+    fn touch_semantic_lru(&mut self, model_id: &str) {
+        if model_id == self.primary_model_id {
+            return;
+        }
+        self.semantic_index_lru.retain(|m| m != model_id);
+        self.semantic_index_lru.push_back(model_id.to_string());
+    }
+
+    fn evict_semantic_models(&mut self, required: &HashSet<String>) {
+        let max_extra = self.semantic_index_cache_capacity.saturating_sub(1);
+        while self.semantic_index_lru.len() > max_extra {
+            let mut evicted = None;
+            for candidate in &self.semantic_index_lru {
+                if !required.contains(candidate) {
+                    evicted = Some(candidate.clone());
+                    break;
+                }
+            }
+
+            let Some(model_id) = evicted else {
+                break;
+            };
+
+            self.semantic_index_lru.retain(|m| m != &model_id);
+            self.context_search
+                .hybrid_mut()
+                .remove_semantic_index(&model_id);
+        }
+    }
+
     async fn ensure_graph(&mut self, language: GraphLanguage) -> Result<()> {
         if self.graph_language == Some(language) && self.context_search.assembler().is_some() {
             return Ok(());
@@ -769,9 +2578,7 @@ struct GraphCache {
 impl GraphCache {
     fn new(project_root: &Path) -> Self {
         Self {
-            path: project_root
-                .join(".context-finder")
-                .join("graph_cache.json"),
+            path: context_dir_for_project_root(project_root).join("graph_cache.json"),
         }
     }
 
@@ -938,7 +2745,7 @@ impl CachedGraph {
     }
 }
 
-async fn compute_engine_signature(root: &Path, profile: &SearchProfile) -> Result<EngineSignature> {
+async fn compute_engine_signature(root: &Path, models: &[String]) -> Result<EngineSignature> {
     let corpus_path = corpus_path_for_project_root(root);
     let corpus_mtime_ms = tokio::fs::metadata(&corpus_path)
         .await
@@ -946,12 +2753,17 @@ async fn compute_engine_signature(root: &Path, profile: &SearchProfile) -> Resul
         .ok()
         .map(unix_ms);
 
-    let default_model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
-    let mut models = Vec::new();
-    models.push(default_model_id);
-    models.extend(semantic_model_roster(profile));
+    let mut models: Vec<String> = models
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .collect();
     models.sort();
     models.dedup();
+    if models.is_empty() {
+        models.push(current_model_id().unwrap_or_else(|_| "bge-small".to_string()));
+    }
 
     let mut index_mtimes_ms = Vec::with_capacity(models.len());
     for model_id in models {
@@ -975,15 +2787,13 @@ async fn build_project_engine(
     profile: &SearchProfile,
     signature: EngineSignature,
 ) -> Result<ProjectEngine> {
-    let sources = load_semantic_indexes(root, profile).await?;
-    let mut available_models: Vec<String> = sources.iter().map(|(id, _)| id.clone()).collect();
-    available_models.sort();
-
-    let canonical_model_id = available_models
+    let sources = load_semantic_indexes(root).await?;
+    let canonical_model_id = sources
         .first()
-        .cloned()
+        .map(|(id, _)| id.clone())
         .ok_or_else(|| anyhow::anyhow!("No semantic indices available"))?;
     let canonical_index_path = index_path_for_model(root, &canonical_model_id);
+    let primary_model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
     let canonical_index_mtime = tokio::fs::metadata(&canonical_index_path)
         .await
         .with_context(|| format!("Failed to stat {}", canonical_index_path.display()))?
@@ -1006,7 +2816,9 @@ async fn build_project_engine(
         root: root.to_path_buf(),
         context_search,
         chunk_lookup,
-        available_models,
+        primary_model_id,
+        semantic_index_cache_capacity: engine_semantic_index_cache_capacity_from_env(),
+        semantic_index_lru: VecDeque::new(),
         canonical_index_mtime,
         graph_language: None,
     })
@@ -1187,6 +2999,11 @@ where
 
 mod router;
 
+fn strip_structured_content(mut result: CallToolResult) -> CallToolResult {
+    result.structured_content = None;
+    result
+}
+
 #[tool_router]
 impl ContextFinderService {
     /// Tool capabilities handshake (versions, budgets, start route).
@@ -1197,7 +3014,22 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<CapabilitiesRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::capabilities::capabilities(self, request).await
+        Ok(strip_structured_content(
+            router::capabilities::capabilities(self, request).await?,
+        ))
+    }
+
+    /// `.context` legend and tool usage notes.
+    #[tool(
+        description = "Explain the `.context` output legend (A/R/N/M) and recommended usage patterns. The only tool that returns a [LEGEND] block."
+    )]
+    pub async fn help(
+        &self,
+        Parameters(request): Parameters<HelpRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::help::help(self, request).await?,
+        ))
     }
 
     /// Get project structure overview
@@ -1208,18 +3040,22 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<MapRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::map::map(self, request).await
+        Ok(strip_structured_content(
+            router::map::map(self, request).await?,
+        ))
     }
 
     /// Repo onboarding pack (map + key docs slices + next actions).
     #[tool(
-        description = "Build a repo onboarding pack: map + key docs (via file slices) + next actions. Returns a single bounded JSON response for fast project adoption."
+        description = "Build a repo onboarding pack: map + key docs (via file slices) + next actions. Returns a single bounded `.context` response for fast project adoption."
     )]
     pub async fn repo_onboarding_pack(
         &self,
         Parameters(request): Parameters<RepoOnboardingPackRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::repo_onboarding_pack::repo_onboarding_pack(self, request).await
+        Ok(strip_structured_content(
+            router::repo_onboarding_pack::repo_onboarding_pack(self, request).await?,
+        ))
     }
 
     /// Bounded exact text search (literal substring), as a safe `rg` replacement.
@@ -1230,7 +3066,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<TextSearchRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::text_search::text_search(self, request).await
+        Ok(strip_structured_content(
+            router::text_search::text_search(self, request).await?,
+        ))
     }
 
     /// Read a bounded slice of a file within the project root (safe file access for agents).
@@ -1241,18 +3079,22 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<FileSliceRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::file_slice::file_slice(self, &request).await
+        Ok(strip_structured_content(
+            router::file_slice::file_slice(self, &request).await?,
+        ))
     }
 
-    /// Build a one-call semantic reading pack (file slice / grep context / context pack / onboarding).
+    /// Build a one-call semantic reading pack (file slice / grep context / context pack / onboarding / memory).
     #[tool(
-        description = "One-call semantic reading pack. A cognitive facade over file_slice/grep_context/context_pack/repo_onboarding_pack: returns the most relevant bounded slice(s) plus continuation cursors and next actions."
+        description = "One-call semantic reading pack. A cognitive facade over file_slice/grep_context/context_pack/repo_onboarding_pack (+ intent=memory for long-memory overview + key config/doc slices): returns the most relevant bounded slice(s) plus continuation cursors and next actions."
     )]
     pub async fn read_pack(
         &self,
         Parameters(request): Parameters<ReadPackRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::read_pack::read_pack(self, request).await
+        Ok(strip_structured_content(
+            router::read_pack::read_pack(self, request).await?,
+        ))
     }
 
     /// List project files within the project root (safe file enumeration for agents).
@@ -1263,7 +3105,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<ListFilesRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::list_files::list_files(self, request).await
+        Ok(strip_structured_content(
+            router::list_files::list_files(self, request).await?,
+        ))
     }
 
     /// Regex search with merged context hunks (grep-like).
@@ -1274,18 +3118,22 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<GrepContextRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::grep_context::grep_context(self, request).await
+        Ok(strip_structured_content(
+            router::grep_context::grep_context(self, request).await?,
+        ))
     }
 
-    /// Execute multiple Context Finder tools in a single call (agent-friendly batch).
+    /// Execute multiple Context tools in a single call (agent-friendly batch).
     #[tool(
-        description = "Execute multiple Context Finder tools in one call. Returns a single bounded JSON result with per-item status (partial success) and a global max_chars budget."
+        description = "Execute multiple Context tools in one call. Returns a single bounded `.context` response with per-item status (partial success) and a global max_chars budget."
     )]
     pub async fn batch(
         &self,
         Parameters(request): Parameters<BatchRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::batch::batch(self, request).await
+        Ok(strip_structured_content(
+            router::batch::batch(self, request).await?,
+        ))
     }
 
     /// Diagnose model/GPU/index configuration
@@ -1296,7 +3144,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<DoctorRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::doctor::doctor(self, request).await
+        Ok(strip_structured_content(
+            router::doctor::doctor(self, request).await?,
+        ))
     }
 
     /// Semantic code search
@@ -1307,7 +3157,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<SearchRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::search::search(self, request).await
+        Ok(strip_structured_content(
+            router::search::search(self, request).await?,
+        ))
     }
 
     /// Search with graph context
@@ -1318,29 +3170,22 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<ContextRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::context::context(self, request).await
+        Ok(strip_structured_content(
+            router::context::context(self, request).await?,
+        ))
     }
 
     /// Build a bounded context pack for agents (single-call context).
     #[tool(
-        description = "Build a bounded `context_pack` JSON for a query: primary hits + graph-related halo, under a strict character budget. Intended as the single-call payload for AI agents."
+        description = "Build a bounded context pack for a query: primary hits + graph-related halo, under a strict character budget. Intended as a single-call payload for AI agents."
     )]
     pub async fn context_pack(
         &self,
         Parameters(request): Parameters<ContextPackRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::context_pack::context_pack(self, request).await
-    }
-
-    /// Index a project
-    #[tool(
-        description = "Index a project directory for semantic search. Required before using search/context tools on a new project."
-    )]
-    pub async fn index(
-        &self,
-        Parameters(request): Parameters<IndexRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        router::index::index(self, request).await
+        Ok(strip_structured_content(
+            router::context_pack::context_pack(self, request).await?,
+        ))
     }
 
     /// Find all usages of a symbol (impact analysis)
@@ -1351,7 +3196,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<ImpactRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::impact::impact(self, request).await
+        Ok(strip_structured_content(
+            router::impact::impact(self, request).await?,
+        ))
     }
 
     /// Trace call path between two symbols
@@ -1362,7 +3209,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<TraceRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::trace::trace(self, request).await
+        Ok(strip_structured_content(
+            router::trace::trace(self, request).await?,
+        ))
     }
 
     /// Deep dive into a symbol
@@ -1373,7 +3222,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<ExplainRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::explain::explain(self, request).await
+        Ok(strip_structured_content(
+            router::explain::explain(self, request).await?,
+        ))
     }
 
     /// Project architecture overview
@@ -1384,7 +3235,9 @@ impl ContextFinderService {
         &self,
         Parameters(request): Parameters<OverviewRequest>,
     ) -> Result<CallToolResult, McpError> {
-        router::overview::overview(self, request).await
+        Ok(strip_structured_content(
+            router::overview::overview(self, request).await?,
+        ))
     }
 }
 
@@ -1925,11 +3778,15 @@ const fn document_kind_rank(kind: DocumentKind, prefer_code: bool) -> u8 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pack_enriched_results(
     profile: &SearchProfile,
     enriched: Vec<context_search::EnrichedResult>,
     max_chars: usize,
     max_related_per_primary: usize,
+    include_paths: &[String],
+    exclude_paths: &[String],
+    file_pattern: Option<&str>,
     related_mode: RelatedMode,
     query_tokens: &[String],
 ) -> (Vec<ContextPackItem>, ContextPackBudget) {
@@ -1940,9 +3797,33 @@ fn pack_enriched_results(
     let mut items: Vec<ContextPackItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
+    let mut related_queues: Vec<VecDeque<context_search::RelatedContext>> = Vec::new();
+    let mut selected_related: Vec<usize> = Vec::new();
+    let mut per_relationship: Vec<HashMap<String, usize>> = Vec::new();
+
+    fn truncate_to_byte_len_at_char_boundary(text: &mut String, max_bytes: usize) {
+        if text.len() <= max_bytes {
+            return;
+        }
+
+        let mut cut = max_bytes.min(text.len());
+        while cut > 0 && !text.is_char_boundary(cut) {
+            cut = cut.saturating_sub(1);
+        }
+        text.truncate(cut);
+    }
+
     for er in enriched {
         let primary = er.primary;
         if !seen.insert(primary.id.clone()) {
+            continue;
+        }
+        if !context_protocol::path_filters::path_allowed(
+            &primary.chunk.file_path,
+            include_paths,
+            exclude_paths,
+            file_pattern,
+        ) {
             continue;
         }
 
@@ -1950,7 +3831,22 @@ fn pack_enriched_results(
         let cost = estimate_item_chars(&primary_item);
         if used_chars.saturating_add(cost) > max_chars {
             truncated = true;
-            dropped_items += 1;
+
+            // Always return at least one anchor item. Even if the first primary chunk is huge,
+            // shrink it aggressively instead of returning `0 items` (which breaks agent flows).
+            if items.is_empty() {
+                const ANCHOR_ITEM_OVERHEAD_CHARS: usize = 512;
+                let mut anchor = primary_item;
+                anchor.imports.clear();
+                truncate_to_byte_len_at_char_boundary(
+                    &mut anchor.content,
+                    max_chars.saturating_sub(ANCHOR_ITEM_OVERHEAD_CHARS).max(1),
+                );
+                used_chars = estimate_item_chars(&anchor);
+                items.push(anchor);
+            } else {
+                dropped_items += 1;
+            }
             break;
         }
         used_chars += cost;
@@ -1958,46 +3854,67 @@ fn pack_enriched_results(
 
         let mut related = er.related;
         related.retain(|rc| !profile.is_rejected(&rc.chunk.file_path));
+        related.retain(|rc| {
+            context_protocol::path_filters::path_allowed(
+                &rc.chunk.file_path,
+                include_paths,
+                exclude_paths,
+                file_pattern,
+            )
+        });
         let related = prepare_related_contexts(related, related_mode, query_tokens);
+        related_queues.push(VecDeque::from(related));
+        selected_related.push(0);
+        per_relationship.push(HashMap::new());
+    }
 
-        let mut selected_related = 0usize;
-        let mut per_relationship: HashMap<String, usize> = HashMap::new();
-        for rc in related {
-            if selected_related >= max_related_per_primary {
-                break;
-            }
-
-            let kind = rc
-                .relationship_path
-                .first()
-                .cloned()
-                .unwrap_or_else(String::new);
-            let cap = relationship_cap(&kind);
-            let used = per_relationship.get(kind.as_str()).copied().unwrap_or(0);
-            if used >= cap {
+    'outer_related: while !truncated {
+        let mut added_any = false;
+        for idx in 0..related_queues.len() {
+            if selected_related[idx] >= max_related_per_primary {
                 continue;
             }
 
-            let id = chunk_id(&rc.chunk.file_path, rc.chunk.start_line, rc.chunk.end_line);
-            if !seen.insert(id.clone()) {
-                continue;
-            }
+            let queue = &mut related_queues[idx];
+            while let Some(rc) = queue.pop_front() {
+                let kind = rc
+                    .relationship_path
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(String::new);
+                let cap = relationship_cap(&kind);
+                let used = per_relationship[idx]
+                    .get(kind.as_str())
+                    .copied()
+                    .unwrap_or(0);
+                if used >= cap {
+                    continue;
+                }
 
-            let item = build_related_item(id, rc);
+                let id = chunk_id(&rc.chunk.file_path, rc.chunk.start_line, rc.chunk.end_line);
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
 
-            let cost = estimate_item_chars(&item);
-            if used_chars.saturating_add(cost) > max_chars {
-                truncated = true;
-                dropped_items += 1;
+                let item = build_related_item(id, rc);
+
+                let cost = estimate_item_chars(&item);
+                if used_chars.saturating_add(cost) > max_chars {
+                    truncated = true;
+                    dropped_items += 1;
+                    break 'outer_related;
+                }
+
+                used_chars += cost;
+                items.push(item);
+                *per_relationship[idx].entry(kind).or_insert(0) += 1;
+                selected_related[idx] += 1;
+                added_any = true;
                 break;
             }
-            used_chars += cost;
-            items.push(item);
-            *per_relationship.entry(kind).or_insert(0) += 1;
-            selected_related += 1;
         }
 
-        if truncated {
+        if !added_any {
             break;
         }
     }
@@ -2027,6 +3944,13 @@ fn chunk_id(file: &str, start_line: usize, end_line: usize) -> String {
     format!("{file}:{start_line}:{end_line}")
 }
 
+fn sanitize_score(score: f32) -> f32 {
+    if !score.is_finite() {
+        return 0.0;
+    }
+    score.clamp(0.0, 1.0)
+}
+
 fn build_primary_item(primary: context_search::SearchResult) -> ContextPackItem {
     let context_search::SearchResult { chunk, score, id } = primary;
     ContextPackItem {
@@ -2037,7 +3961,7 @@ fn build_primary_item(primary: context_search::SearchResult) -> ContextPackItem 
         end_line: chunk.end_line,
         symbol: chunk.metadata.symbol_name,
         chunk_type: chunk.metadata.chunk_type.map(|ct| ct.as_str().to_string()),
-        score,
+        score: sanitize_score(score),
         imports: chunk.metadata.context_imports,
         content: chunk.content,
         relationship: None,
@@ -2058,7 +3982,7 @@ fn build_related_item(id: String, rc: context_search::RelatedContext) -> Context
             .metadata
             .chunk_type
             .map(|ct| ct.as_str().to_string()),
-        score: rc.relevance_score,
+        score: sanitize_score(rc.relevance_score),
         imports: rc.chunk.metadata.context_imports,
         content: rc.chunk.content,
         relationship: Some(rc.relationship_path),
@@ -2077,6 +4001,7 @@ mod tests {
     use context_code_chunker::ChunkMetadata;
     use context_search::{EnrichedResult, RelatedContext};
     use context_vector_store::SearchResult;
+    use tempfile::tempdir;
 
     #[test]
     fn word_boundary_match_hits_only_whole_identifier() {
@@ -2124,6 +4049,135 @@ mod tests {
         assert!(excluded.is_empty());
     }
 
+    #[test]
+    fn context_pack_prefers_more_primary_items_under_tight_budgets() {
+        let make_chunk =
+            |file: &str, start: usize, end: usize, symbol: &str, content_len: usize| {
+                let content = "x".repeat(content_len);
+                context_code_chunker::CodeChunk::new(
+                    file.to_string(),
+                    start,
+                    end,
+                    content,
+                    ChunkMetadata::default()
+                        .symbol_name(symbol)
+                        .chunk_type(context_code_chunker::ChunkType::Function),
+                )
+            };
+
+        let primary = |file: &str, id: &str, symbol: &str| SearchResult {
+            chunk: make_chunk(file, 1, 10, symbol, 40),
+            score: 1.0,
+            id: id.to_string(),
+        };
+
+        let related = |file: &str, symbol: &str| RelatedContext {
+            chunk: make_chunk(file, 1, 200, symbol, 1_000),
+            relationship_path: vec!["Calls".to_string()],
+            distance: 1,
+            relevance_score: 0.5,
+        };
+
+        let enriched = vec![
+            EnrichedResult {
+                primary: primary("src/a.rs", "src/a.rs:1:10", "a"),
+                related: vec![related("src/a_related.rs", "a_related")],
+                total_lines: 10,
+                strategy: context_graph::AssemblyStrategy::Direct,
+            },
+            EnrichedResult {
+                primary: primary("src/b.rs", "src/b.rs:1:10", "b"),
+                related: vec![related("src/b_related.rs", "b_related")],
+                total_lines: 10,
+                strategy: context_graph::AssemblyStrategy::Direct,
+            },
+            EnrichedResult {
+                primary: primary("src/c.rs", "src/c.rs:1:10", "c"),
+                related: vec![related("src/c_related.rs", "c_related")],
+                total_lines: 10,
+                strategy: context_graph::AssemblyStrategy::Direct,
+            },
+        ];
+
+        let profile = SearchProfile::general();
+        let max_chars = 900;
+        let (items, budget) = pack_enriched_results(
+            &profile,
+            enriched,
+            max_chars,
+            3,
+            &[],
+            &[],
+            None,
+            RelatedMode::Explore,
+            &[],
+        );
+
+        let primary_count = items.iter().filter(|i| i.role == "primary").count();
+        assert_eq!(primary_count, 3, "expected all primaries to fit");
+        assert!(
+            items.iter().take(3).all(|i| i.role == "primary"),
+            "expected primaries to be emitted before related items"
+        );
+        assert!(
+            budget.used_chars <= max_chars,
+            "expected budget.used_chars <= max_chars"
+        );
+        assert!(
+            budget.truncated,
+            "expected related items to trigger truncation under tight max_chars"
+        );
+    }
+
+    #[test]
+    fn context_pack_never_returns_zero_items_when_first_chunk_is_huge() {
+        let chunk = context_code_chunker::CodeChunk::new(
+            "src/big.rs".to_string(),
+            1,
+            999,
+            "x".repeat(10_000),
+            ChunkMetadata::default()
+                .symbol_name("huge")
+                .chunk_type(context_code_chunker::ChunkType::Function),
+        );
+
+        let enriched = vec![EnrichedResult {
+            primary: SearchResult {
+                chunk,
+                score: 1.0,
+                id: "src/big.rs:1:999".to_string(),
+            },
+            related: vec![],
+            total_lines: 999,
+            strategy: context_graph::AssemblyStrategy::Direct,
+        }];
+
+        let profile = SearchProfile::general();
+        let max_chars = 1_000;
+        let (items, budget) = pack_enriched_results(
+            &profile,
+            enriched,
+            max_chars,
+            0,
+            &[],
+            &[],
+            None,
+            RelatedMode::Explore,
+            &[],
+        );
+
+        assert_eq!(items.len(), 1, "expected an anchor item");
+        assert_eq!(items[0].role, "primary");
+        assert!(
+            !items[0].content.is_empty(),
+            "anchor content should be non-empty"
+        );
+        assert!(
+            budget.truncated,
+            "expected truncation when first chunk exceeds max_chars"
+        );
+    }
+
     #[tokio::test]
     async fn map_works_without_index_and_has_no_side_effects() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -2140,20 +4194,20 @@ mod tests {
         std::fs::create_dir_all(root.join("docs")).unwrap();
         std::fs::write(root.join("docs").join("README.md"), "# Hello\n").unwrap();
 
-        assert!(!root.join(".context-finder").exists());
+        assert!(!root.join(".context").exists());
 
         let result = compute_map_result(root, &root_display, 1, 20, 0)
             .await
             .unwrap();
-        assert_eq!(result.total_files, 2);
-        assert!(result.total_chunks > 0);
+        assert_eq!(result.total_files, Some(2));
+        assert!(result.total_chunks.unwrap_or(0) > 0);
         assert!(result.directories.iter().any(|d| d.path == "src"));
         assert!(result.directories.iter().any(|d| d.path == "docs"));
         assert!(!result.truncated);
         assert!(result.next_cursor.is_none());
 
         // `map` must not create indexes/corpus.
-        assert!(!root.join(".context-finder").exists());
+        assert!(!root.join(".context").exists());
     }
 
     #[tokio::test]
@@ -2170,12 +4224,12 @@ mod tests {
 
         std::fs::write(root.join("README.md"), "Root\n").unwrap();
 
-        assert!(!root.join(".context-finder").exists());
+        assert!(!root.join(".context").exists());
 
-        let result = compute_list_files_result(root, &root_display, None, 50, 20_000, None)
+        let result = compute_list_files_result(root, &root_display, None, 50, 20_000, false, None)
             .await
             .unwrap();
-        assert_eq!(result.source, "filesystem");
+        assert_eq!(result.source.as_deref(), Some("filesystem"));
         assert!(result.files.contains(&"src/main.rs".to_string()));
         assert!(result.files.contains(&"docs/README.md".to_string()));
         assert!(result.files.contains(&"README.md".to_string()));
@@ -2183,7 +4237,7 @@ mod tests {
         assert!(result.next_cursor.is_none());
 
         let filtered =
-            compute_list_files_result(root, &root_display, Some("docs"), 50, 20_000, None)
+            compute_list_files_result(root, &root_display, Some("docs"), 50, 20_000, false, None)
                 .await
                 .unwrap();
         assert_eq!(filtered.files, vec!["docs/README.md".to_string()]);
@@ -2191,14 +4245,14 @@ mod tests {
         assert!(filtered.next_cursor.is_none());
 
         let globbed =
-            compute_list_files_result(root, &root_display, Some("src/*"), 50, 20_000, None)
+            compute_list_files_result(root, &root_display, Some("src/*"), 50, 20_000, false, None)
                 .await
                 .unwrap();
         assert_eq!(globbed.files, vec!["src/main.rs".to_string()]);
         assert!(!globbed.truncated);
         assert!(globbed.next_cursor.is_none());
 
-        let limited = compute_list_files_result(root, &root_display, None, 1, 20_000, None)
+        let limited = compute_list_files_result(root, &root_display, None, 1, 20_000, false, None)
             .await
             .unwrap();
         assert!(limited.truncated);
@@ -2206,14 +4260,14 @@ mod tests {
         assert_eq!(limited.files.len(), 1);
         assert!(limited.next_cursor.is_some());
 
-        let tiny = compute_list_files_result(root, &root_display, None, 50, 3, None)
+        let tiny = compute_list_files_result(root, &root_display, None, 50, 3, false, None)
             .await
             .unwrap();
         assert!(tiny.truncated);
         assert_eq!(tiny.truncation, Some(ListFilesTruncation::MaxChars));
-        assert!(tiny.next_cursor.is_none());
+        assert!(tiny.next_cursor.is_some());
 
-        assert!(!root.join(".context-finder").exists());
+        assert!(!root.join(".context").exists());
     }
 
     #[test]
@@ -2436,5 +4490,25 @@ mod tests {
             &query_tokens,
         );
         assert_eq!(prepared[0].chunk.file_path, "src/hit.rs");
+    }
+
+    #[test]
+    fn canonicalize_root_prefers_git_root_for_file_hint() {
+        let dir = tempdir().expect("temp dir");
+        std::fs::create_dir(dir.path().join(".git")).expect("create .git");
+
+        let nested = dir.path().join("sub").join("inner");
+        std::fs::create_dir_all(&nested).expect("create nested dir");
+        let file = nested.join("main.rs");
+        std::fs::write(&file, "fn main() {}\n").expect("write file");
+
+        let resolved = canonicalize_root_path(&file).expect("canonicalize root");
+        assert_eq!(resolved, dir.path().canonicalize().expect("canonical root"));
+    }
+
+    #[test]
+    fn root_path_from_mcp_uri_parses_file_uri() {
+        let out = root_path_from_mcp_uri("file:///tmp/foo%20bar").expect("parse file uri");
+        assert_eq!(out, PathBuf::from("/tmp/foo bar"));
     }
 }

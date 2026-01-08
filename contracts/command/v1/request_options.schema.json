@@ -15,7 +15,7 @@
       "type": "integer",
       "minimum": 0,
       "description": "Time budget for automatic (re)index (best-effort). 0 disables auto-index even when stale_policy=auto.",
-      "default": 3000
+      "default": 15000
     },
     "allow_filesystem_fallback": {
       "type": "boolean",
@@ -40,4 +40,3 @@
     }
   }
 }
-

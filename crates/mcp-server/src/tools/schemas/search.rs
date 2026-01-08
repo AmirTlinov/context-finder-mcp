@@ -3,6 +3,8 @@ use context_protocol::ToolNextAction;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
+use super::response_mode::ResponseMode;
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SearchRequest {
     /// Search query (semantic search)
@@ -19,14 +21,21 @@ pub struct SearchRequest {
     #[schemars(description = "Maximum number of results (1-50)")]
     pub limit: Option<usize>,
 
-    /// Automatically build or refresh the semantic index before executing (default: true)
+    /// Response mode:
+    /// - "facts" (default): keeps meta/index_state for freshness, strips next_actions to reduce noise.
+    /// - "full": includes meta/index_state and next_actions (when applicable).
+    /// - "minimal": strips index_state and next_actions, but keeps provenance meta (`root_fingerprint`).
+    #[schemars(description = "Response mode: 'facts' (default), 'full', or 'minimal'")]
+    pub response_mode: Option<ResponseMode>,
+
+    /// Automatically build/refresh the semantic index when needed.
     #[schemars(
         description = "Automatically build or refresh the semantic index before executing (default: true)."
     )]
     pub auto_index: Option<bool>,
 
-    /// Auto-index time budget in milliseconds (default: 3000)
-    #[schemars(description = "Auto-index time budget in milliseconds (default: 3000).")]
+    /// Auto-index time budget in milliseconds when auto_index=true.
+    #[schemars(description = "Auto-index time budget in milliseconds (default: 15000).")]
     pub auto_index_budget_ms: Option<u64>,
 }
 

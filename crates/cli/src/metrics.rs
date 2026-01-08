@@ -10,18 +10,70 @@ use std::time::SystemTime;
 use tokio::task::JoinHandle;
 
 #[derive(Clone)]
+struct DualIntGauge {
+    primary: IntGauge,
+    legacy: IntGauge,
+}
+
+impl DualIntGauge {
+    fn new(name: &str, legacy: &str, help: &str) -> Result<Self> {
+        Ok(Self {
+            primary: IntGauge::with_opts(Opts::new(name, help))?,
+            legacy: IntGauge::with_opts(Opts::new(legacy, help))?,
+        })
+    }
+
+    fn register(&self, registry: &Registry) -> Result<()> {
+        registry.register(Box::new(self.primary.clone()))?;
+        registry.register(Box::new(self.legacy.clone()))?;
+        Ok(())
+    }
+
+    fn set(&self, value: i64) {
+        self.primary.set(value);
+        self.legacy.set(value);
+    }
+}
+
+#[derive(Clone)]
+struct DualGauge {
+    primary: Gauge,
+    legacy: Gauge,
+}
+
+impl DualGauge {
+    fn new(name: &str, legacy: &str, help: &str) -> Result<Self> {
+        Ok(Self {
+            primary: Gauge::with_opts(Opts::new(name, help))?,
+            legacy: Gauge::with_opts(Opts::new(legacy, help))?,
+        })
+    }
+
+    fn register(&self, registry: &Registry) -> Result<()> {
+        registry.register(Box::new(self.primary.clone()))?;
+        registry.register(Box::new(self.legacy.clone()))?;
+        Ok(())
+    }
+
+    fn set(&self, value: f64) {
+        self.primary.set(value);
+        self.legacy.set(value);
+    }
+}
+
+#[derive(Clone)]
 pub struct MetricsExporter {
     _registry: Arc<Registry>,
-    has_watcher: IntGauge,
-    indexing: IntGauge,
-    pending_events: IntGauge,
-    consecutive_failures: IntGauge,
-    last_duration_ms: IntGauge,
-    last_success_unix_ms: IntGauge,
-    files_per_second: Gauge,
-    index_size_bytes: IntGauge,
-    duration_p95_ms: IntGauge,
-    alert_log_len: IntGauge,
+    has_watcher: DualIntGauge,
+    indexing: DualIntGauge,
+    pending_events: DualIntGauge,
+    consecutive_failures: DualIntGauge,
+    last_duration_ms: DualIntGauge,
+    last_success_unix_ms: DualIntGauge,
+    files_per_second: DualGauge,
+    index_size_bytes: DualIntGauge,
+    duration_p95_ms: DualIntGauge,
+    alert_log_len: DualIntGauge,
     _server_handle: Arc<JoinHandle<()>>,
 }
 
@@ -30,61 +82,71 @@ impl MetricsExporter {
         let addr: SocketAddr = bind.parse()?;
         let registry = Arc::new(Registry::new());
 
-        let has_watcher = IntGauge::with_opts(Opts::new(
+        let has_watcher = DualIntGauge::new(
+            "context_watcher_present",
             "contextfinder_watcher_present",
             "1 when StreamingIndexer is active",
-        ))?;
-        let indexing = IntGauge::with_opts(Opts::new(
+        )?;
+        let indexing = DualIntGauge::new(
+            "context_indexing_active",
             "contextfinder_indexing_active",
             "1 when incremental indexing is running",
-        ))?;
-        let pending_events = IntGauge::with_opts(Opts::new(
+        )?;
+        let pending_events = DualIntGauge::new(
+            "context_pending_events",
             "contextfinder_pending_events",
             "Number of file events waiting to be processed",
-        ))?;
-        let consecutive_failures = IntGauge::with_opts(Opts::new(
+        )?;
+        let consecutive_failures = DualIntGauge::new(
+            "context_consecutive_failures",
             "contextfinder_consecutive_failures",
             "Number of consecutive indexing failures",
-        ))?;
-        let last_duration_ms = IntGauge::with_opts(Opts::new(
+        )?;
+        let last_duration_ms = DualIntGauge::new(
+            "context_last_index_duration_ms",
             "contextfinder_last_index_duration_ms",
             "Duration of the last indexing cycle",
-        ))?;
-        let last_success_unix_ms = IntGauge::with_opts(Opts::new(
+        )?;
+        let last_success_unix_ms = DualIntGauge::new(
+            "context_last_success_unix_ms",
             "contextfinder_last_success_unix_ms",
             "Unix timestamp (ms) of the last successful cycle",
-        ))?;
-        let files_per_second = Gauge::with_opts(Opts::new(
+        )?;
+        let files_per_second = DualGauge::new(
+            "context_files_per_second",
             "contextfinder_files_per_second",
             "Indexing throughput (files/sec)",
-        ))?;
-        let index_size_bytes = IntGauge::with_opts(Opts::new(
+        )?;
+        let index_size_bytes = DualIntGauge::new(
+            "context_index_size_bytes",
             "contextfinder_index_size_bytes",
             "Size of index.json (bytes)",
-        ))?;
-        let duration_p95_ms = IntGauge::with_opts(Opts::new(
+        )?;
+        let duration_p95_ms = DualIntGauge::new(
+            "context_duration_p95_ms",
             "contextfinder_duration_p95_ms",
             "P95 indexing duration",
-        ))?;
-        let alert_log_len = IntGauge::with_opts(Opts::new(
+        )?;
+        let alert_log_len = DualIntGauge::new(
+            "context_alert_log_len",
             "contextfinder_alert_log_len",
             "Number of entries in the alert log",
-        ))?;
+        )?;
 
         for metric in [
-            has_watcher.clone(),
-            indexing.clone(),
-            pending_events.clone(),
-            consecutive_failures.clone(),
-            last_duration_ms.clone(),
-            last_success_unix_ms.clone(),
-            index_size_bytes.clone(),
-            duration_p95_ms.clone(),
-            alert_log_len.clone(),
+            &has_watcher,
+            &indexing,
+            &pending_events,
+            &consecutive_failures,
+            &last_duration_ms,
+            &last_success_unix_ms,
+            &index_size_bytes,
+            &duration_p95_ms,
+            &alert_log_len,
         ] {
-            registry.register(Box::new(metric))?;
+            metric.register(&registry)?;
         }
-        registry.register(Box::new(files_per_second.clone()))?;
+        files_per_second.register(&registry)?;
 
         let server_registry = Arc::clone(&registry);
         let make_service = make_service_fn(move |_| {

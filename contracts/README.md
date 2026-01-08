@@ -1,6 +1,6 @@
 # Contracts
 
-This directory is the **source of truth** for Context Finder’s external interfaces.
+This directory is the **source of truth** for Context’s external interfaces.
 Anything that can be called by another process (CLI JSON, HTTP, gRPC, MCP tools) must be specified
 here first, then implemented in code.
 
@@ -17,9 +17,9 @@ here first, then implemented in code.
 
 **What:** the stable request/response envelope used by:
 
-- `context-finder command --json '{...}'`
-- `context-finder serve-http` (`POST /command`)
-- `context-finder serve-grpc` (JSON payload passthrough; see `proto/command.proto`)
+- `context command --json '{...}'`
+- `context serve-http` (`POST /command`)
+- `context serve-grpc` (JSON payload passthrough; see `proto/command.proto`)
 
 **Contracts (v1):**
 
@@ -46,7 +46,7 @@ Primary code source:
 
 ### HTTP API
 
-**What:** `context-finder serve-http` HTTP surface.
+**What:** `context serve-http` HTTP surface.
 
 **Contract (v1):**
 
@@ -58,7 +58,7 @@ Primary code source:
 
 ### gRPC API
 
-**What:** `context-finder serve-grpc` gRPC surface.
+**What:** `context serve-grpc` gRPC surface.
 
 **Contracts:**
 

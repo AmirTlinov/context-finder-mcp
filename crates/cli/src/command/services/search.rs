@@ -28,7 +28,7 @@ use context_vector_store::{
 use itertools::Itertools;
 use log::{debug, warn};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::time::{Instant, SystemTime};
 
@@ -806,7 +806,10 @@ impl SearchService {
             items,
             budget,
             next_actions: Vec::new(),
-            meta: context_indexer::ToolMeta { index_state: None },
+            meta: context_indexer::ToolMeta {
+                index_state: None,
+                root_fingerprint: Some(context_indexer::root_fingerprint(&project_root)),
+            },
         };
         enforce_context_pack_budget(&mut output)?;
 
@@ -1344,6 +1347,10 @@ fn pack_enriched_results(
     let mut items: Vec<ContextPackItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
+    let mut related_queues: Vec<VecDeque<RelatedContext>> = Vec::new();
+    let mut selected_related: Vec<usize> = Vec::new();
+    let mut per_relationship: Vec<HashMap<String, usize>> = Vec::new();
+
     for er in enriched {
         let primary = er.primary;
         let primary_id = primary.id.clone();
@@ -1390,77 +1397,90 @@ fn pack_enriched_results(
         });
         filtered_out += before_filters.saturating_sub(related.len());
         let related = prepare_related_contexts(related, related_mode, query_tokens);
+        related_queues.push(VecDeque::from(related));
+        selected_related.push(0);
+        per_relationship.push(HashMap::new());
+    }
 
-        let relationship_cap = |kind: &str| -> usize {
-            match kind {
-                "Calls" => 6,
-                "Uses" => 6,
-                "Contains" => 4,
-                "Extends" => 3,
-                "Imports" => 2,
-                "TestedBy" => 2,
-                _ => 2,
-            }
-        };
+    fn relationship_cap(kind: &str) -> usize {
+        match kind {
+            "Calls" => 6,
+            "Uses" => 6,
+            "Contains" => 4,
+            "Extends" => 3,
+            "Imports" => 2,
+            "TestedBy" => 2,
+            _ => 2,
+        }
+    }
 
-        let mut selected_related = 0usize;
-        let mut per_relationship: HashMap<String, usize> = HashMap::new();
-        for rc in related {
-            if selected_related >= max_related_per_primary {
-                break;
-            }
-
-            let kind = rc
-                .relationship_path
-                .first()
-                .cloned()
-                .unwrap_or_else(String::new);
-            let cap = relationship_cap(&kind);
-            let used = per_relationship.get(kind.as_str()).copied().unwrap_or(0);
-            if used >= cap {
+    'outer_related: while !truncated {
+        let mut added_any = false;
+        for idx in 0..related_queues.len() {
+            if selected_related[idx] >= max_related_per_primary {
                 continue;
             }
 
-            let id = format!(
-                "{}:{}:{}",
-                rc.chunk.file_path, rc.chunk.start_line, rc.chunk.end_line
-            );
-            if !seen.insert(id.clone()) {
-                continue;
-            }
+            let queue = &mut related_queues[idx];
+            while let Some(rc) = queue.pop_front() {
+                let kind = rc
+                    .relationship_path
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(String::new);
+                let cap = relationship_cap(&kind);
+                let used = per_relationship[idx]
+                    .get(kind.as_str())
+                    .copied()
+                    .unwrap_or(0);
+                if used >= cap {
+                    continue;
+                }
 
-            let item = ContextPackItem {
-                id,
-                role: "related".to_string(),
-                file: rc.chunk.file_path.clone(),
-                start_line: rc.chunk.start_line,
-                end_line: rc.chunk.end_line,
-                symbol: rc.chunk.metadata.symbol_name.clone(),
-                chunk_type: rc
-                    .chunk
-                    .metadata
-                    .chunk_type
-                    .map(|ct| ct.as_str().to_string()),
-                score: rc.relevance_score,
-                imports: rc.chunk.metadata.context_imports.clone(),
-                content: rc.chunk.content,
-                relationship: Some(rc.relationship_path),
-                distance: Some(rc.distance),
-            };
+                let id = format!(
+                    "{}:{}:{}",
+                    rc.chunk.file_path, rc.chunk.start_line, rc.chunk.end_line
+                );
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
 
-            let cost = estimate_item_chars(&item);
-            if used_chars.saturating_add(cost) > max_chars {
-                truncated = true;
-                dropped_items += 1;
+                let item = ContextPackItem {
+                    id,
+                    role: "related".to_string(),
+                    file: rc.chunk.file_path.clone(),
+                    start_line: rc.chunk.start_line,
+                    end_line: rc.chunk.end_line,
+                    symbol: rc.chunk.metadata.symbol_name.clone(),
+                    chunk_type: rc
+                        .chunk
+                        .metadata
+                        .chunk_type
+                        .map(|ct| ct.as_str().to_string()),
+                    score: rc.relevance_score,
+                    imports: rc.chunk.metadata.context_imports.clone(),
+                    content: rc.chunk.content,
+                    relationship: Some(rc.relationship_path),
+                    distance: Some(rc.distance),
+                };
+
+                let cost = estimate_item_chars(&item);
+                if used_chars.saturating_add(cost) > max_chars {
+                    truncated = true;
+                    dropped_items += 1;
+                    break 'outer_related;
+                }
+
+                used_chars += cost;
+                items.push(item);
+                *per_relationship[idx].entry(kind).or_insert(0) += 1;
+                selected_related[idx] += 1;
+                added_any = true;
                 break;
             }
-            used_chars += cost;
-            items.push(item);
-            *per_relationship.entry(kind).or_insert(0) += 1;
-            selected_related += 1;
         }
 
-        if truncated {
+        if !added_any {
             break;
         }
     }

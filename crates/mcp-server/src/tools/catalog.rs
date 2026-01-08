@@ -12,6 +12,10 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Handshake: versions, default budgets, and start route.",
     },
     ToolDescriptor {
+        name: "help",
+        summary: "Explain the `.context` legend (A/R/N/M) and best practices.",
+    },
+    ToolDescriptor {
         name: "repo_onboarding_pack",
         summary: "Map + key docs + next_actions (best first call).",
     },
@@ -72,10 +76,6 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Architecture snapshot (layers, entry points).",
     },
     ToolDescriptor {
-        name: "index",
-        summary: "Build or refresh the semantic index.",
-    },
-    ToolDescriptor {
         name: "doctor",
         summary: "Diagnostics for model/GPU/index state.",
     },
@@ -88,7 +88,7 @@ pub(crate) fn tool_inventory_json(version: &str) -> serde_json::Value {
         .collect();
 
     json!({
-        "binary": "context-finder-mcp",
+        "binary": "context-mcp",
         "version": version,
         "count": tools.len(),
         "tools": tools,
@@ -96,13 +96,13 @@ pub(crate) fn tool_inventory_json(version: &str) -> serde_json::Value {
 }
 
 pub(crate) fn tool_instructions() -> String {
-    let mut lines = Vec::new();
-    lines.push("Context Finder provides semantic code search for AI agents.".to_string());
-    lines.push(
+    let mut lines = vec![
+        "Context provides semantic code search for AI agents.".to_string(),
         "Recommended flow: repo_onboarding_pack → read_pack → context_pack; use batch for multi-step queries."
             .to_string(),
-    );
-    lines.push("Tools:".to_string());
+        "Use help for the `.context` legend (A/R/N/M).".to_string(),
+        "Tools:".to_string(),
+    ];
     for tool in TOOL_CATALOG {
         lines.push(format!("- {}: {}", tool.name, tool.summary));
     }

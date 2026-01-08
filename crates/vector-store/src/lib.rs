@@ -54,8 +54,10 @@ mod corpus;
 mod embedding_cache;
 mod embeddings;
 mod error;
+pub mod gpu_env;
 mod graph_node_store;
 mod hnsw_index;
+mod paths;
 mod store;
 mod templates;
 mod types;
@@ -65,6 +67,11 @@ pub use embeddings::current_model_id;
 pub use embeddings::model_dir;
 pub use embeddings::EmbeddingModel;
 pub use embeddings::{EmbedRequest, ModelRegistry};
+pub use paths::{
+    context_dir_for_project_root, find_context_dir_from_path, is_context_dir_name,
+    CONTEXT_CACHE_DIR_NAME, CONTEXT_DIR_NAME, LEGACY_CONTEXT_CACHE_DIR_NAME,
+    LEGACY_CONTEXT_DIR_NAME,
+};
 pub use error::{Result, VectorStoreError};
 pub use graph_node_store::{
     GraphNodeDoc, GraphNodeHit, GraphNodeStore, GraphNodeStoreMeta, GRAPH_NODE_STORE_SCHEMA_VERSION,

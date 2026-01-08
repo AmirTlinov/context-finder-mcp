@@ -4,9 +4,10 @@ use context_indexer::{FileScanner, ToolMeta};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use super::cursor::{encode_cursor, CURSOR_VERSION};
+use super::cursor::{cursor_fingerprint, encode_cursor, CURSOR_VERSION};
 use super::paths::normalize_relative_path;
 use super::schemas::map::{DirectoryInfo, MapCursorV1, MapResult};
+use super::secrets::is_potential_secret_path;
 use super::ContextFinderService;
 
 const fn chunker_config_for_map() -> ChunkerConfig {
@@ -102,19 +103,36 @@ fn compute_top_symbols(tree_symbols: &HashMap<String, Vec<String>>, path: &str) 
 fn build_directory_infos(
     tree_files: &HashMap<String, HashSet<String>>,
     tree_symbols: &HashMap<String, Vec<String>>,
-    tree_chunks: HashMap<String, usize>,
+    tree_chunks: &HashMap<String, usize>,
     total_chunks: usize,
 ) -> Vec<DirectoryInfo> {
-    tree_chunks
-        .into_iter()
-        .map(|(path, chunks)| DirectoryInfo {
-            files: tree_files
-                .get(&path)
-                .map_or(0, std::collections::HashSet::len),
-            coverage_pct: compute_coverage_pct(chunks, total_chunks),
-            top_symbols: compute_top_symbols(tree_symbols, &path),
-            path,
-            chunks,
+    let mut keys: Vec<String> = Vec::with_capacity(tree_files.len().max(tree_chunks.len()));
+    let mut seen: HashSet<String> = HashSet::new();
+    for key in tree_files.keys() {
+        if seen.insert(key.clone()) {
+            keys.push(key.clone());
+        }
+    }
+    for key in tree_chunks.keys() {
+        if seen.insert(key.clone()) {
+            keys.push(key.clone());
+        }
+    }
+
+    keys.into_iter()
+        .map(|path| {
+            let chunks = tree_chunks.get(&path).copied().unwrap_or(0);
+            DirectoryInfo {
+                files: Some(
+                    tree_files
+                        .get(&path)
+                        .map_or(0, std::collections::HashSet::len),
+                ),
+                coverage_pct: Some(compute_coverage_pct(chunks, total_chunks)),
+                top_symbols: Some(compute_top_symbols(tree_symbols, &path)),
+                path,
+                chunks: Some(chunks),
+            }
         })
         .collect()
 }
@@ -136,6 +154,9 @@ async fn populate_map_from_filesystem(
         let Some(rel_path) = normalize_relative_path(root, &file) else {
             continue;
         };
+        if is_potential_secret_path(&rel_path) {
+            continue;
+        }
 
         let key = directory_key(&rel_path, depth);
         tree_files.entry(key).or_default().insert(rel_path.clone());
@@ -190,7 +211,12 @@ pub(super) async fn compute_map_result(
     let mut total_chunks = 0usize;
 
     if let Some(corpus) = ContextFinderService::load_chunk_corpus(root).await? {
-        for chunks in corpus.files().values() {
+        for (file, chunks) in corpus.files() {
+            if is_potential_secret_path(file) {
+                continue;
+            }
+            let key = directory_key(file, depth);
+            tree_files.entry(key).or_default().insert(file.clone());
             for chunk in chunks {
                 absorb_chunk_for_map(
                     &mut tree_files,
@@ -222,7 +248,7 @@ pub(super) async fn compute_map_result(
         .sum();
 
     let mut directories =
-        build_directory_infos(&tree_files, &tree_symbols, tree_chunks, total_chunks);
+        build_directory_infos(&tree_files, &tree_symbols, &tree_chunks, total_chunks);
 
     directories.sort_by(|a, b| b.chunks.cmp(&a.chunks).then_with(|| a.path.cmp(&b.path)));
 
@@ -236,8 +262,10 @@ pub(super) async fn compute_map_result(
         Some(encode_cursor(&MapCursorV1 {
             v: CURSOR_VERSION,
             tool: "map".to_string(),
-            root: root_display.to_string(),
+            root: Some(root_display.to_string()),
+            root_hash: Some(cursor_fingerprint(root_display)),
             depth,
+            limit,
             offset: end,
         })?)
     } else {
@@ -247,14 +275,14 @@ pub(super) async fn compute_map_result(
     let directories = directories[offset..end].to_vec();
 
     Ok(MapResult {
-        total_files,
-        total_chunks,
-        total_lines,
+        total_files: Some(total_files),
+        total_chunks: Some(total_chunks),
+        total_lines: Some(total_lines),
         directories,
         truncated,
         next_cursor,
         next_actions: None,
-        meta: ToolMeta { index_state: None },
+        meta: Some(ToolMeta::default()),
     })
 }
 

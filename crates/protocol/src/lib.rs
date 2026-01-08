@@ -2,6 +2,8 @@ use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod path_filters;
+
 pub const CAPABILITIES_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, JsonSchema)]
@@ -57,7 +59,7 @@ impl Default for DefaultBudgets {
             file_slice_max_chars: 20_000,
             grep_context_max_chars: 20_000,
             list_files_max_chars: 20_000,
-            auto_index_budget_ms: 3_000,
+            auto_index_budget_ms: 15_000,
         }
     }
 }

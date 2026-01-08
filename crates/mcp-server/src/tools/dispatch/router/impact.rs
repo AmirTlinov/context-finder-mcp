@@ -1,7 +1,8 @@
 use super::super::{
     AutoIndexPolicy, CallToolResult, Content, ContextFinderService, ImpactRequest, ImpactResult,
-    McpError, SymbolLocation, UsageInfo,
+    McpError, ResponseMode, SymbolLocation, UsageInfo,
 };
+use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::util::path_has_extension_ignore_ascii_case;
 use context_code_chunker::CodeChunk;
 use context_graph::CodeGraph;
@@ -9,15 +10,13 @@ use context_indexer::ToolMeta;
 use petgraph::graph::NodeIndex;
 use std::collections::HashSet;
 
-use super::error::{internal_error_with_meta, invalid_request_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, internal_error_with_meta, invalid_request_with_meta,
+    meta_for_request,
+};
+use super::semantic_fallback::{grep_fallback_hunks, is_semantic_unavailable_error};
 const MAX_DIRECT: usize = 200;
 const MAX_TRANSITIVE: usize = 200;
-
-fn success_payload(result: &ImpactResult) -> CallToolResult {
-    CallToolResult::success(vec![Content::text(
-        context_protocol::serialize_json(result).unwrap_or_default(),
-    )])
-}
 
 fn best_effort_text_only(symbol: String, chunks: &[CodeChunk]) -> ImpactResult {
     let direct = ContextFinderService::find_text_usages(chunks, &symbol, None, MAX_DIRECT);
@@ -34,7 +33,7 @@ fn best_effort_text_only(symbol: String, chunks: &[CodeChunk]) -> ImpactResult {
         tests: Vec::new(),
         public_api: false,
         mermaid,
-        meta: ToolMeta { index_state: None },
+        meta: ToolMeta::default(),
     }
 }
 
@@ -161,22 +160,126 @@ pub(in crate::tools::dispatch) async fn impact(
     service: &ContextFinderService,
     request: ImpactRequest,
 ) -> Result<CallToolResult, McpError> {
+    let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
     let depth = request.depth.unwrap_or(2).clamp(1, 3);
-    let root = match service.resolve_root(request.path.as_deref()).await {
-        Ok((root, _)) => root,
+    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+        Ok((root, root_display)) => (root, root_display),
         Err(message) => {
-            let meta = meta_for_request(service, request.path.as_deref()).await;
+            let meta = if response_mode == ResponseMode::Minimal {
+                ToolMeta::default()
+            } else {
+                meta_for_request(service, request.path.as_deref()).await
+            };
             return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
         }
     };
 
     let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);
-    let (mut engine, meta) = match service.prepare_semantic_engine(&root, policy).await {
+    let (mut engine, meta) = match service
+        .prepare_semantic_engine_for_query(&root, policy, &request.symbol)
+        .await
+    {
         Ok(engine) => engine,
         Err(e) => {
+            let message = format!("Error: {e}");
             let meta = service.tool_meta(&root).await;
-            return Ok(internal_error_with_meta(format!("Error: {e}"), meta));
+            let meta_for_output = if response_mode == ResponseMode::Minimal {
+                ToolMeta {
+                    root_fingerprint: meta.root_fingerprint,
+                    ..ToolMeta::default()
+                }
+            } else {
+                meta
+            };
+
+            if is_semantic_unavailable_error(&message) {
+                let budgets = super::super::mcp_default_budgets();
+                let max_hunks = 12usize;
+                let symbol = request.symbol.clone();
+                let hunks = match grep_fallback_hunks(
+                    &root,
+                    &root_display,
+                    &symbol,
+                    response_mode,
+                    max_hunks,
+                    budgets.grep_context_max_chars,
+                )
+                .await
+                {
+                    Ok(hunks) => hunks,
+                    Err(err) => {
+                        return Ok(internal_error_with_meta(
+                            format!("{message} (fallback grep failed: {err:#})"),
+                            meta_for_output,
+                        ));
+                    }
+                };
+
+                let direct: Vec<UsageInfo> = hunks
+                    .iter()
+                    .map(|hunk| UsageInfo {
+                        file: hunk.file.clone(),
+                        line: hunk.start_line,
+                        symbol: symbol.clone(),
+                        relationship: "TextMatch".to_string(),
+                    })
+                    .collect();
+
+                let files_affected = direct
+                    .iter()
+                    .map(|usage| usage.file.as_str())
+                    .collect::<HashSet<_>>()
+                    .len();
+
+                let result = ImpactResult {
+                    symbol,
+                    definition: None,
+                    total_usages: direct.len(),
+                    files_affected,
+                    direct,
+                    transitive: Vec::new(),
+                    tests: Vec::new(),
+                    public_api: false,
+                    mermaid: String::new(),
+                    meta: meta_for_output.clone(),
+                };
+
+                let mut doc = ContextDocBuilder::new();
+                let answer = if response_mode == ResponseMode::Full {
+                    format!("impact: {} hits (fallback)", result.total_usages)
+                } else {
+                    format!("impact: {} hits", result.total_usages)
+                };
+                doc.push_answer(&answer);
+                doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                if response_mode == ResponseMode::Full {
+                    doc.push_note("diagnostic: semantic index unavailable; using lexical fallback");
+                }
+                for hunk in &hunks {
+                    doc.push_ref_header(&hunk.file, hunk.start_line, Some("TextMatch"));
+                    doc.push_block_smart(&hunk.content);
+                    doc.push_blank();
+                }
+
+                let output = CallToolResult::success(vec![Content::text(doc.finish())]);
+                return Ok(attach_structured_content(
+                    output,
+                    &result,
+                    meta_for_output,
+                    "impact",
+                ));
+            }
+
+            return Ok(internal_error_with_meta(message, meta_for_output));
         }
+    };
+    let meta_for_output = if response_mode == ResponseMode::Minimal {
+        ToolMeta {
+            root_fingerprint: meta.root_fingerprint,
+            ..ToolMeta::default()
+        }
+    } else {
+        meta.clone()
     };
 
     let symbol = request.symbol;
@@ -245,7 +348,7 @@ pub(in crate::tools::dispatch) async fn impact(
                             tests,
                             public_api,
                             mermaid,
-                            meta: ToolMeta { index_state: None },
+                            meta: ToolMeta::default(),
                         }
                     }
                 }
@@ -256,7 +359,93 @@ pub(in crate::tools::dispatch) async fn impact(
         best_effort_text_only(symbol, chunks)
     };
 
+    let needs_filesystem_fallback = result.total_usages == 0 && result.symbol.trim().len() >= 3;
+
     drop(engine);
-    result.meta = meta;
-    Ok(success_payload(&result))
+
+    if needs_filesystem_fallback {
+        // If the graph didn't know the symbol (common for schema-defined types or concepts
+        // mentioned only in docs), fall back to a bounded filesystem grep so agents still get
+        // actionable locations instead of a false "0 usages".
+        let budgets = super::super::mcp_default_budgets();
+        let max_hunks = 12usize;
+
+        if let Ok(hunks) = grep_fallback_hunks(
+            &root,
+            &root_display,
+            &result.symbol,
+            response_mode,
+            max_hunks,
+            budgets.grep_context_max_chars,
+        )
+        .await
+        {
+            let mut seen: HashSet<(String, usize)> = result
+                .direct
+                .iter()
+                .chain(result.transitive.iter())
+                .map(|usage| (usage.file.clone(), usage.line))
+                .collect();
+
+            for hunk in hunks {
+                if result.direct.len() >= MAX_DIRECT {
+                    break;
+                }
+                let key = (hunk.file.clone(), hunk.start_line);
+                if !seen.insert(key) {
+                    continue;
+                }
+                result.direct.push(UsageInfo {
+                    file: hunk.file,
+                    line: hunk.start_line,
+                    symbol: result.symbol.clone(),
+                    relationship: "TextMatch".to_string(),
+                });
+            }
+
+            result.total_usages = result.direct.len() + result.transitive.len();
+            result.files_affected = count_files_affected(&result.direct, &result.transitive);
+            if !result.direct.is_empty() {
+                result.mermaid = ContextFinderService::generate_impact_mermaid(
+                    &result.symbol,
+                    &result.direct,
+                    &result.transitive,
+                );
+            }
+        }
+    }
+    result.meta = meta_for_output;
+
+    let mut doc = ContextDocBuilder::new();
+    doc.push_answer(&format!(
+        "impact: {} usages={} files={} public_api={}",
+        result.symbol, result.total_usages, result.files_affected, result.public_api
+    ));
+    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    if let Some(def) = result.definition.as_ref() {
+        doc.push_ref_header(&def.file, def.line, Some("definition"));
+    }
+    if !result.direct.is_empty() {
+        doc.push_note(&format!("direct: {}", result.direct.len()));
+        for usage in &result.direct {
+            doc.push_ref_header(&usage.file, usage.line, Some(&usage.relationship));
+        }
+    }
+    if !result.transitive.is_empty() {
+        doc.push_note(&format!("transitive: {}", result.transitive.len()));
+        for usage in &result.transitive {
+            doc.push_ref_header(&usage.file, usage.line, Some(&usage.relationship));
+        }
+    }
+    if response_mode == ResponseMode::Full && !result.mermaid.trim().is_empty() {
+        doc.push_note("mermaid:");
+        doc.push_block_smart(&result.mermaid);
+    }
+    let output = CallToolResult::success(vec![Content::text(doc.finish())]);
+    Ok(attach_structured_content(
+        output,
+        &result,
+        result.meta.clone(),
+        "impact",
+    ))
 }

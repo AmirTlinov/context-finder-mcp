@@ -353,7 +353,7 @@ pub fn classify_path_kind(path: &str) -> DocumentKind {
     let path = std::path::Path::new(path);
     let ext = path.extension().and_then(|e| e.to_str());
 
-    if has_extension(ext, &["md", "mdx"]) {
+    if has_extension(ext, &["md", "mdx", "rst", "adoc", "txt", "context"]) {
         return DocumentKind::Docs;
     }
     if has_extension(ext, &["toml", "yaml", "yml", "json", "ini", "cfg", "conf"]) {

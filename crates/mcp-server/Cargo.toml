@@ -1,11 +1,15 @@
 [package]
-name = "context-finder-mcp"
+name = "context-mcp"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "MCP server for Context Finder - semantic code search for AI agents"
+description = "MCP server for Context - semantic code search for AI agents"
+
+[[bin]]
+name = "context-mcp"
+path = "src/main.rs"
 
 [[bin]]
 name = "context-finder-mcp"
@@ -23,7 +27,7 @@ context-protocol = { path = "../protocol" }
 petgraph = "0.6"
 
 # MCP SDK
-rmcp = { version = "0.8", features = ["server", "transport-io", "macros"] }
+rmcp = { version = "0.8", features = ["client", "server", "transport-io", "macros"] }
 
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
@@ -35,6 +39,7 @@ schemars = "1.0.0-alpha.17"
 sha2 = "0.10"
 regex = "1.11"
 base64 = "0.22"
+flate2 = "1.0"
 
 # Error handling
 anyhow.workspace = true
@@ -46,6 +51,7 @@ env_logger.workspace = true
 
 # Utilities
 dirs = "5.0"
+libc = "0.2"
 
 [dev-dependencies]
 rmcp = { version = "0.8", features = ["client", "transport-child-process"] }

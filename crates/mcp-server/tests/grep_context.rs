@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
-use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use serde_json::Value;
+use rmcp::{
+    model::{CallToolRequestParam, CallToolResult},
+    service::ServiceExt,
+    transport::TokioChildProcess,
+};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
@@ -37,6 +40,15 @@ fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
     anyhow::bail!("failed to locate context-finder-mcp binary")
 }
 
+fn tool_text(result: &CallToolResult) -> Result<&str> {
+    result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("tool did not return text output")
+}
+
 #[tokio::test]
 async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
@@ -45,6 +57,7 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -87,6 +100,7 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
         "max_hunks": 10,
         "max_chars": 20_000,
         "case_sensitive": true,
+        "response_mode": "full",
     });
     let result = tokio::time::timeout(
         Duration::from_secs(10),
@@ -99,51 +113,21 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
     .context("timeout calling grep_context")??;
 
     assert_ne!(result.is_error, Some(true), "grep_context returned error");
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.as_text())
-        .map(|t| t.text.as_str())
-        .context("grep_context did not return text content")?;
-    let json: Value =
-        serde_json::from_str(text).context("grep_context output is not valid JSON")?;
-
-    assert_eq!(json.get("pattern").and_then(Value::as_str), Some("TARGET"));
-    assert_eq!(json.get("truncated").and_then(Value::as_bool), Some(false));
-
-    let hunks = json
-        .get("hunks")
-        .and_then(Value::as_array)
-        .context("missing hunks array")?;
-    assert!(hunks.len() >= 2, "expected at least two hunks");
-
-    let a_hunk = hunks
-        .iter()
-        .find(|h| h.get("file").and_then(Value::as_str) == Some("src/a.txt"))
-        .context("missing hunk for src/a.txt")?;
-    assert_eq!(a_hunk.get("start_line").and_then(Value::as_u64), Some(3));
-
-    let match_lines: Vec<u64> = a_hunk
-        .get("match_lines")
-        .and_then(Value::as_array)
-        .context("src/a.txt missing match_lines")?
-        .iter()
-        .filter_map(Value::as_u64)
-        .collect();
-    assert_eq!(match_lines, vec![5, 7]);
-
-    let end_line = a_hunk
-        .get("end_line")
-        .and_then(Value::as_u64)
-        .context("src/a.txt missing end_line")?;
-    assert!(end_line >= 9, "expected merged range to include line 9");
-
-    let content = a_hunk
-        .get("content")
-        .and_then(Value::as_str)
-        .context("src/a.txt missing content")?;
-    assert!(content.contains("line 5: TARGET"));
-    assert!(content.contains("line 7: TARGET"));
+    let text = tool_text(&result)?;
+    assert!(
+        text.contains("pattern=TARGET"),
+        "expected grep_context summary to include pattern=TARGET"
+    );
+    assert!(
+        text.contains("R: src/a.txt:3"),
+        "expected merged hunk to start at line 3"
+    );
+    assert!(text.contains("line 5: TARGET"));
+    assert!(text.contains("line 7: TARGET"));
+    assert!(
+        text.contains("line 9: filler"),
+        "expected merged range to include line 9"
+    );
 
     assert!(
         !root.join(".context-finder").exists(),
@@ -162,6 +146,7 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
     cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
     cmd.env("CONTEXT_FINDER_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
     cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
@@ -194,6 +179,7 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
         "max_hunks": 10,
         "max_chars": 8000,
         "case_sensitive": false,
+        "response_mode": "full",
     });
     let result = tokio::time::timeout(
         Duration::from_secs(10),
@@ -206,52 +192,301 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
     .context("timeout calling grep_context")??;
 
     assert_ne!(result.is_error, Some(true), "grep_context returned error");
-    let text = result
-        .content
-        .first()
-        .and_then(|c| c.as_text())
-        .map(|t| t.text.as_str())
-        .context("grep_context did not return text content")?;
-    let json: Value =
-        serde_json::from_str(text).context("grep_context output is not valid JSON")?;
-
-    assert_eq!(
-        json.get("case_sensitive").and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(json.get("truncated").and_then(Value::as_bool), Some(true));
-    assert_eq!(
-        json.get("truncation").and_then(Value::as_str),
-        Some("max_chars")
-    );
-
-    let hunks = json
-        .get("hunks")
-        .and_then(Value::as_array)
-        .context("missing hunks array")?;
-    assert_eq!(hunks.len(), 1);
-    let hunk = hunks.first().context("expected a single hunk")?;
-    assert_eq!(
-        hunk.get("file").and_then(Value::as_str),
-        Some("src/main.txt")
-    );
-
-    let content = hunk
-        .get("content")
-        .and_then(Value::as_str)
-        .context("missing content")?;
+    let text = tool_text(&result)?;
     assert!(
-        content.contains("TARGETTARGETTARGETTARGET"),
-        "expected match line in content, got: {content:?}"
+        text.contains("TARGETTARGETTARGETTARGET"),
+        "expected match line in output"
     );
+    assert!(text.contains("\nM: "), "expected truncation cursor (M:)");
     assert!(
-        !content.contains(&long_tail),
-        "expected last context line to be truncated"
+        !text.contains(&long_tail),
+        "expected long tail to be truncated"
     );
 
     assert!(
         !root.join(".context-finder").exists(),
         "grep_context created .context-finder side effects"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn grep_context_budget_trimming_keeps_match_line_visible() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+
+    // Place the match far from the start so naive "keep first half" trimming would eventually
+    // drop it and return only prelude lines (bad UX). The tool should keep at least one match
+    // line visible even under tight max_chars budgets.
+    let mut lines = Vec::new();
+    for i in 1..=220usize {
+        if i == 150 {
+            lines.push(format!("line {i}: TARGET"));
+        } else {
+            lines.push(format!("line {i}: filler filler filler filler filler"));
+        }
+    }
+    std::fs::write(root.join("src").join("main.txt"), lines.join("\n") + "\n")
+        .context("write main.txt")?;
+
+    let args = serde_json::json!( {
+        "path": root.to_string_lossy(),
+        "pattern": "TARGET",
+        "file": "src/main.txt",
+        "before": 120,
+        "after": 120,
+        "max_hunks": 1,
+        "max_chars": 800,
+        "format": "plain",
+        "response_mode": "minimal",
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "grep_context".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling grep_context")??;
+
+    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    let text = tool_text(&result)?;
+    assert!(
+        text.contains("line 150: TARGET"),
+        "expected TARGET match line to remain visible under trimming"
+    );
+    assert!(text.contains("\nM: "), "expected truncation cursor (M:)");
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn grep_context_minimal_small_budget_still_returns_payload_hunks() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+
+    let mut content = String::new();
+    let noisy = "\\\"\\\\\\\"".repeat(18);
+    content.push_str(&format!("TARGET {noisy} {}\n", "x".repeat(40)));
+    for i in 2..=200usize {
+        content.push_str(&format!("line {i} {noisy} {}\n", "y".repeat(40)));
+    }
+    std::fs::write(root.join("src").join("main.txt"), content).context("write main.txt")?;
+
+    let args = serde_json::json!({
+        "path": root.to_string_lossy(),
+        "pattern": "TARGET",
+        "file": "src/main.txt",
+        "before": 0,
+        "after": 5000,
+        "max_matches": 10_000,
+        "max_hunks": 10,
+        "max_chars": 1500,
+        "case_sensitive": true,
+        "response_mode": "minimal",
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "grep_context".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling grep_context")??;
+
+    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    let text = tool_text(&result)?;
+    assert!(
+        text.contains("pattern=TARGET"),
+        "expected grep_context summary to include pattern=TARGET"
+    );
+    assert!(text.contains("TARGET"), "expected match text in output");
+    assert!(text.contains("\nM: "), "expected truncation cursor (M:)");
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn grep_context_supports_literal_mode_and_cursor_only_continuation() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("src").join("main.txt"), "a+b\nab\naaab\na+b\n")
+        .context("write main.txt")?;
+
+    let first_args = serde_json::json!({
+        "path": root.to_string_lossy(),
+        "pattern": "a+b",
+        "literal": true,
+        "file": "src/main.txt",
+        "before": 0,
+        "after": 0,
+        "max_matches": 100,
+        "max_hunks": 1,
+        "max_chars": 20_000,
+        "case_sensitive": true,
+        "response_mode": "full",
+    });
+    let first = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "grep_context".into(),
+            arguments: first_args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling grep_context")??;
+
+    assert_ne!(first.is_error, Some(true), "grep_context returned error");
+    let first_text = tool_text(&first)?;
+    assert!(first_text.contains("1:* a+b"));
+    let cursor = first_text
+        .lines()
+        .find_map(|line| {
+            let cursor = line.strip_prefix("M: ")?;
+            cursor.starts_with("cfcs1:").then(|| cursor.to_string())
+        })
+        .context("missing cursor (M:) line")?;
+
+    let second = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "grep_context".into(),
+            arguments: serde_json::json!({
+                "path": root.to_string_lossy(),
+                "cursor": cursor,
+            })
+            .as_object()
+            .cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling grep_context (cursor-only)")??;
+    assert_ne!(
+        second.is_error,
+        Some(true),
+        "grep_context returned error (cursor-only)"
+    );
+    let second_text = tool_text(&second)?;
+    assert!(
+        !second_text.contains("\nM: "),
+        "did not expect a cursor line in cursor-only continuation response"
+    );
+    assert!(second_text.contains("4:* a+b"));
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn grep_context_tight_budget_max_chars_truncation_still_returns_cursor() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+
+    // Create many small hunks with long per-hunk metadata (file paths).
+    // This can overflow the JSON `max_chars` budget even if the total hunk `content` stays small.
+    for i in 0..40usize {
+        let file = format!(
+            "file_{i:04}_this_is_a_very_long_file_name_used_to_stress_json_envelope_overhead.txt"
+        );
+        std::fs::write(root.join("src").join(file), "TARGET\n").context("write src file")?;
+    }
+
+    let args = serde_json::json!({
+        "path": root.to_string_lossy(),
+        "pattern": "TARGET",
+        "file_pattern": "src/*",
+        "before": 0,
+        "after": 0,
+        "max_matches": 10_000,
+        "max_hunks": 10_000,
+        "max_chars": 800,
+        "case_sensitive": true,
+        "response_mode": "minimal",
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "grep_context".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling grep_context")??;
+
+    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    assert!(
+        tool_text(&result)?.contains("TARGET"),
+        "expected at least one match under tight budget"
+    );
+    assert!(
+        tool_text(&result)?.contains("\nM: "),
+        "expected truncation cursor (M:)"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
