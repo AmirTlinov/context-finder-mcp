@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use context_vector_store::context_dir_for_project_root;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -52,13 +53,20 @@ fn index_creates_indexes_for_requested_models() {
     let index_response = run_cli(root, index_request);
     assert_eq!(index_response["status"], "ok");
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        root.join(".context-finder/indexes/bge-small/index.json")
+        context_dir
+            .join("indexes")
+            .join("bge-small")
+            .join("index.json")
             .exists(),
         "default model index should exist"
     );
     assert!(
-        root.join(".context-finder/indexes/bge-base/index.json")
+        context_dir
+            .join("indexes")
+            .join("bge-base")
+            .join("index.json")
             .exists(),
         "requested model index should exist"
     );
@@ -86,7 +94,11 @@ fn incremental_index_purges_deleted_files() {
     let index_response = run_cli(root, index_request);
     assert_eq!(index_response["status"], "ok");
 
-    let index_path = root.join(".context-finder/indexes/bge-small/index.json");
+    let context_dir = context_dir_for_project_root(root);
+    let index_path = context_dir
+        .join("indexes")
+        .join("bge-small")
+        .join("index.json");
     let raw = fs::read_to_string(index_path).unwrap();
     let parsed: Value = serde_json::from_str(&raw).unwrap();
     let id_map = parsed["id_map"].as_object().expect("id_map map");
@@ -99,7 +111,7 @@ fn incremental_index_purges_deleted_files() {
         );
     }
 
-    let corpus_path = root.join(".context-finder/corpus.json");
+    let corpus_path = context_dir.join("corpus.json");
     assert!(corpus_path.exists(), "chunk corpus should exist");
     let corpus_raw = fs::read_to_string(corpus_path).unwrap();
     let corpus: Value = serde_json::from_str(&corpus_raw).unwrap();

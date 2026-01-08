@@ -102,16 +102,16 @@ context-finder list-symbols . --file "crates/cli/src/main.rs" --json --quiet
 ```bash
 # Evaluate MRR/recall/latency/bytes + artifacts
 context-finder eval . --dataset datasets/golden_smoke.json --cache-mode warm \
-  --out-json .context-finder/eval.smoke.json \
-  --out-md .context-finder/eval.smoke.md \
+  --out-json .agents/mcp/context/eval.smoke.json \
+  --out-md .agents/mcp/context/eval.smoke.md \
   --json
 
 # A/B comparison across profiles/model sets
 context-finder eval-compare . --dataset datasets/golden_smoke.json \
   --a-profile general --b-profile general \
   --a-models bge-small --b-models embeddinggemma-300m \
-  --out-json .context-finder/eval.compare.json \
-  --out-md .context-finder/eval.compare.md \
+  --out-json .agents/mcp/context/eval.compare.json \
+  --out-md .agents/mcp/context/eval.compare.md \
   --json
 ```
 

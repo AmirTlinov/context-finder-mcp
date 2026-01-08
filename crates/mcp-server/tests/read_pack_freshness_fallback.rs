@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{
     model::CallToolRequestParam,
     service::{RoleClient, RunningService, ServiceExt},
@@ -98,13 +99,14 @@ async fn read_pack_query_falls_back_to_filesystem_when_index_is_stale() -> Resul
     )
     .context("write src/main.rs")?;
 
+    let context_dir = context_dir_for_project_root(root);
     // Create a stale semantic index marker: index.json exists but watermark.json is missing.
     // This should make meta.index_state.stale=true (WatermarkMissing) without requiring a real
     // index build.
-    std::fs::create_dir_all(root.join(".context-finder/indexes/bge-small"))
+    std::fs::create_dir_all(context_dir.join("indexes").join("bge-small"))
         .context("mkdir stale index dir")?;
     std::fs::write(
-        root.join(".context-finder/indexes/bge-small/index.json"),
+        context_dir.join("indexes").join("bge-small").join("index.json"),
         "{}\n",
     )
     .context("write fake index.json")?;

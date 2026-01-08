@@ -55,7 +55,7 @@ context-finder/
                               │
                               ▼
                       Persist to disk
-                    `.context-finder/`
+           `.agents/mcp/context/.context/` (preferred)
 ```
 
 ### 2) Querying
@@ -123,7 +123,7 @@ Key points:
 
 - Embeddings are computed via ONNX Runtime (CUDA by default).
 - CPU fallback is allowed only when `CONTEXT_FINDER_ALLOW_CPU=1`.
-- Index is stored per model id under `.context-finder/indexes/<model_id>/`.
+- Index is stored per model id under `.agents/mcp/context/.context/indexes/<model_id>/` (preferred; legacy `.context/` and `.context-finder/` are supported).
 
 ### Search (`crates/search`)
 
@@ -153,7 +153,7 @@ Key points:
 
 - `.gitignore`-aware scanning (crate `ignore`).
 - Incremental rebuild via mtimes snapshot + file watcher.
-- Persists a health snapshot to `.context-finder/health.json`.
+- Persists a health snapshot to `.agents/mcp/context/.context/health.json`.
 
 ### CLI (`crates/cli`)
 
@@ -180,7 +180,7 @@ For the tool list and examples, see `README.md`.
 ## On-disk layout (per project)
 
 ```
-.context-finder/
+.agents/mcp/context/.context/   # preferred (legacy: .context/, .context-finder/)
 ├── corpus.json                     # chunk corpus (text + metadata)
 ├── indexes/
 │   └── <model_id>/
@@ -208,7 +208,7 @@ The project prefers "configuration at the edges" over hard-coded constants:
 
 - Chunking behavior: `ChunkerConfig` (see `crates/code-chunker/src/config.rs`).
 - Retrieval/rerank behavior: `SearchProfile` in `profiles/*.json` (see `profiles/general.json` for a full example).
-- Per-project overrides: `.context-finder/config.json` and `.context-finder/profiles/`.
+- Per-project overrides: `.agents/mcp/context/.context/config.json` and `.agents/mcp/context/.context/profiles/` (legacy `.context/` / `.context-finder/` still work).
 
 ## Algorithms
 
@@ -248,6 +248,6 @@ Graph-aware modes expand primary hits with "related" chunks:
 | Aspect | Trade-off | Mitigation |
 |--------|-----------|------------|
 | Memory | vector index + corpus can be large | shard via multiple models/profiles; prefer incremental indexing |
-| Cold start | initial index build cost | keep `.context-finder/` cached; use daemon-loop |
+| Cold start | initial index build cost | keep `.agents/mcp/context/.context/` cached; use daemon-loop |
 | Language support | depends on tree-sitter grammars | fall back to non-AST modes where needed |
 | Real-time updates | watcher has debounce/latency | acceptable for dev; run `index --force` when needed |

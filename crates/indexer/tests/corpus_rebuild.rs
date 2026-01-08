@@ -1,16 +1,16 @@
 use context_indexer::{ModelIndexSpec, MultiModelProjectIndexer, ProjectIndexer};
-use context_vector_store::{EmbeddingTemplates, VectorIndex};
+use context_vector_store::{context_dir_for_project_root, EmbeddingTemplates, VectorIndex};
 use tempfile::TempDir;
 
 fn index_path(root: &std::path::Path, model_id: &str) -> std::path::PathBuf {
-    root.join(".context-finder")
+    context_dir_for_project_root(root)
         .join("indexes")
         .join(model_id)
         .join("index.json")
 }
 
 fn corpus_path(root: &std::path::Path) -> std::path::PathBuf {
-    root.join(".context-finder").join("corpus.json")
+    context_dir_for_project_root(root).join("corpus.json")
 }
 
 fn has_chunk_for_file(index: &VectorIndex, file_prefix: &str) -> bool {

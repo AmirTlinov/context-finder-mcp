@@ -2513,7 +2513,11 @@ const MODULE_MEMORY_FILE_CANDIDATES: &[&str] = &[
 ];
 
 fn is_disallowed_memory_file(candidate: &str) -> bool {
-    crate::tools::secrets::is_potential_secret_path(candidate)
+    let rel = candidate.trim().replace('\\', "/");
+    if rel == ".agents" || rel.starts_with(".agents/") {
+        return true;
+    }
+    crate::tools::secrets::is_potential_secret_path(&rel)
 }
 
 fn push_memory_candidate(out: &mut Vec<String>, seen: &mut HashSet<String>, candidate: &str) {
@@ -3060,6 +3064,7 @@ fn list_immediate_subdirs(root: &Path, max: usize) -> Vec<String> {
                 name.as_str(),
                 "target"
                     | "node_modules"
+                    | ".agents"
                     | ".context"
                     | ".context-finder"
                     | ".git"

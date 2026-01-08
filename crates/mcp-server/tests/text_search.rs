@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -61,9 +62,12 @@ async fn text_search_works_without_index_and_is_bounded() -> Result<()> {
     )
     .context("write main.rs")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before text_search"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before text_search"
     );
 
     let args = serde_json::json!({
@@ -103,8 +107,10 @@ async fn text_search_works_without_index_and_is_bounded() -> Result<()> {
 
     // Must not create indexes/corpus as a side effect.
     assert!(
-        !root.join(".context-finder").exists(),
-        "text_search created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "text_search created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -140,9 +146,12 @@ async fn text_search_respects_max_chars_and_supports_cursor_only_continuation() 
     }
     std::fs::write(root.join("src").join("main.rs"), content).context("write main.rs")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before text_search"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before text_search"
     );
 
     let max_chars = 320usize;
@@ -229,8 +238,10 @@ async fn text_search_respects_max_chars_and_supports_cursor_only_continuation() 
 
     // Must not create indexes/corpus as a side effect.
     assert!(
-        !root.join(".context-finder").exists(),
-        "text_search created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "text_search created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

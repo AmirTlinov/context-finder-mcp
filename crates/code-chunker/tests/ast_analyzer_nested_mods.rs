@@ -1,5 +1,4 @@
 use context_code_chunker::{ChunkType, Chunker, ChunkerConfig};
-use std::path::PathBuf;
 
 fn chunk(code: &str) -> Vec<context_code_chunker::CodeChunk> {
     let config = ChunkerConfig {
@@ -40,11 +39,7 @@ mod api {
 
 #[test]
 fn real_embeddings_rs_has_method_chunks() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("vector-store/src/embeddings.rs");
-    let code = std::fs::read_to_string(&path).expect("read embeddings.rs");
+    let code = include_str!("../../vector-store/src/embeddings.rs");
 
     let chunks = chunk(&code);
     let has_cosine = chunks.iter().any(|c| {

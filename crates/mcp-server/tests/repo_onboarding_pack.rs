@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -104,8 +105,11 @@ async fn repo_onboarding_pack_returns_map_docs_and_next_actions() -> Result<()> 
     std::fs::write(root.join("docs").join("README.md"), "# Docs\n")
         .context("write docs/README.md")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context").exists() && !root.join(".context-finder").exists(),
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
         "temp project unexpectedly has a context dir before repo_onboarding_pack"
     );
 
@@ -150,7 +154,7 @@ async fn repo_onboarding_pack_returns_map_docs_and_next_actions() -> Result<()> 
     );
 
     assert!(
-        root.join(".context").exists(),
+        context_dir_for_project_root(root).exists(),
         "repo_onboarding_pack should auto-refresh the index"
     );
 

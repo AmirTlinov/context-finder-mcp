@@ -87,7 +87,7 @@ struct Cli {
     cuda_mem_limit_mb: Option<usize>,
 
     /// Cache directory for compare_search and heavy ops
-    #[arg(long, global = true, default_value = ".context/cache")]
+    #[arg(long, global = true, default_value = ".agents/mcp/context/.context/cache")]
     cache_dir: String,
 
     /// Cache TTL in seconds
@@ -537,14 +537,34 @@ fn parse_cache_backend(value: &str) -> Result<CacheBackend> {
 }
 
 fn resolve_cache_dir(raw: &str) -> PathBuf {
-    if raw == ".context/cache" {
+    const DEFAULT: &str = ".agents/mcp/context/.context/cache";
+    const LEGACY: &str = ".context/cache";
+    const LEGACY_FINDER: &str = ".context-finder/cache";
+
+    if raw == DEFAULT {
         let preferred = PathBuf::from(raw);
         if preferred.exists() {
             return preferred;
         }
-        let legacy = PathBuf::from(".context-finder/cache");
-        if legacy.exists() {
-            return legacy;
+        let legacy_context = PathBuf::from(LEGACY);
+        if legacy_context.exists() {
+            return legacy_context;
+        }
+        let legacy_finder = PathBuf::from(LEGACY_FINDER);
+        if legacy_finder.exists() {
+            return legacy_finder;
+        }
+        return preferred;
+    }
+
+    if raw == LEGACY {
+        let preferred = PathBuf::from(raw);
+        if preferred.exists() {
+            return preferred;
+        }
+        let legacy_finder = PathBuf::from(LEGACY_FINDER);
+        if legacy_finder.exists() {
+            return legacy_finder;
         }
         return preferred;
     }

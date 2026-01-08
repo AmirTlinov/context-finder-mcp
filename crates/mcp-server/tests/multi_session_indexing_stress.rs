@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -168,8 +169,7 @@ async fn concurrent_isolated_servers_index_same_project_without_corruption() -> 
     r2?;
 
     // Ensure the index file is parseable after concurrent indexing attempts.
-    let index_path = root
-        .join(".context")
+    let index_path = context_dir_for_project_root(root)
         .join("indexes")
         .join("bge-small")
         .join("index.json");

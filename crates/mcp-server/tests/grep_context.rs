@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{
     model::{CallToolRequestParam, CallToolResult},
     service::ServiceExt,
@@ -85,9 +86,12 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
     )
     .context("write b.txt")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before grep_context"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before grep_context"
     );
 
     let args = serde_json::json!({
@@ -130,8 +134,10 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
     );
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "grep_context created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "grep_context created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -164,9 +170,12 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
     )
     .context("write main.txt")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before grep_context"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before grep_context"
     );
 
     let args = serde_json::json!({
@@ -204,8 +213,10 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
     );
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "grep_context created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "grep_context created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

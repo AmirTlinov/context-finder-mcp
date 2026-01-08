@@ -18,6 +18,8 @@ Thumbs.db
 __pycache__/
 
 # Project specific
+.agents/
+.context/
 .context-finder/
 .fastembed_cache/
 .tasks/

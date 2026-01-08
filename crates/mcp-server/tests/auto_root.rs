@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -85,9 +86,12 @@ async fn list_files_uses_env_root_when_path_missing() -> Result<()> {
         "expected src/a.rs in list_files output"
     );
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "list_files created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "list_files created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

@@ -4194,7 +4194,12 @@ mod tests {
         std::fs::create_dir_all(root.join("docs")).unwrap();
         std::fs::write(root.join("docs").join("README.md"), "# Hello\n").unwrap();
 
-        assert!(!root.join(".context").exists());
+        let context_dir = context_vector_store::context_dir_for_project_root(root);
+        assert!(
+            !context_dir.exists()
+                && !root.join(".context").exists()
+                && !root.join(".context-finder").exists()
+        );
 
         let result = compute_map_result(root, &root_display, 1, 20, 0)
             .await
@@ -4207,7 +4212,11 @@ mod tests {
         assert!(result.next_cursor.is_none());
 
         // `map` must not create indexes/corpus.
-        assert!(!root.join(".context").exists());
+        assert!(
+            !context_dir.exists()
+                && !root.join(".context").exists()
+                && !root.join(".context-finder").exists()
+        );
     }
 
     #[tokio::test]
@@ -4224,7 +4233,12 @@ mod tests {
 
         std::fs::write(root.join("README.md"), "Root\n").unwrap();
 
-        assert!(!root.join(".context").exists());
+        let context_dir = context_vector_store::context_dir_for_project_root(root);
+        assert!(
+            !context_dir.exists()
+                && !root.join(".context").exists()
+                && !root.join(".context-finder").exists()
+        );
 
         let result = compute_list_files_result(root, &root_display, None, 50, 20_000, false, None)
             .await
@@ -4267,7 +4281,11 @@ mod tests {
         assert_eq!(tiny.truncation, Some(ListFilesTruncation::MaxChars));
         assert!(tiny.next_cursor.is_some());
 
-        assert!(!root.join(".context").exists());
+        assert!(
+            !context_dir.exists()
+                && !root.join(".context").exists()
+                && !root.join(".context-finder").exists()
+        );
     }
 
     #[test]

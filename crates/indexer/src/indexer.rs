@@ -1851,18 +1851,13 @@ struct Point {
         assert!(result.is_err(), "expected model resolution to fail");
 
         // No partial commits: corpus + indices must not exist.
+        let context_dir = context_vector_store::context_dir_for_project_root(temp_dir.path());
         assert!(
-            !temp_dir
-                .path()
-                .join(".context")
-                .join("corpus.json")
-                .exists(),
+            !context_dir.join("corpus.json").exists(),
             "corpus.json should not be written when indexing fails"
         );
         assert!(
-            !temp_dir
-                .path()
-                .join(".context")
+            !context_dir
                 .join("indexes")
                 .join("bge-small")
                 .join("index.json")
@@ -1870,9 +1865,7 @@ struct Point {
             "index.json should not be written when indexing fails"
         );
         assert!(
-            !temp_dir
-                .path()
-                .join(".context")
+            !context_dir
                 .join("indexes")
                 .join("bge-small")
                 .join("watermark.json")

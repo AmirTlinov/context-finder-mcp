@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -62,8 +63,11 @@ async fn context_pack_auto_indexes_missing_project() -> Result<()> {
     )
     .context("write lib.rs")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context").exists() && !root.join(".context-finder").exists(),
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
         "temp project unexpectedly has a context dir before context_pack"
     );
 
@@ -94,10 +98,10 @@ async fn context_pack_auto_indexes_missing_project() -> Result<()> {
         "context_pack must return `.context` output"
     );
 
-    let indexes_dir = root.join(".context").join("indexes");
+    let indexes_dir = context_dir_for_project_root(root).join("indexes");
     assert!(
         indexes_dir.exists(),
-        "context_pack did not create .context/indexes"
+        "context_pack did not create project context indexes dir"
     );
     let mut found_index_json = false;
     for entry in std::fs::read_dir(&indexes_dir).context("read indexes dir")? {

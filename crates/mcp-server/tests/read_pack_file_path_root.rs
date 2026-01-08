@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -51,9 +52,12 @@ async fn read_pack_memory_accepts_file_path_as_root_hint() -> Result<()> {
     )
     .context("write PHILOSOPHY.context")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before read_pack"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before read_pack"
     );
 
     let mut cmd = Command::new(bin);
@@ -107,8 +111,10 @@ async fn read_pack_memory_accepts_file_path_as_root_hint() -> Result<()> {
     );
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "read_pack created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "read_pack created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

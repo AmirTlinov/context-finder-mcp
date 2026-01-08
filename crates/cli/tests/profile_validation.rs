@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use context_vector_store::context_dir_for_project_root;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -34,9 +35,11 @@ fn setup_repo() -> tempfile::TempDir {
         "#,
     )
     .unwrap();
-    fs::create_dir_all(root.join(".context-finder").join("profiles")).unwrap();
+
+    let context_dir = context_dir_for_project_root(root);
+    fs::create_dir_all(context_dir.join("profiles")).unwrap();
     fs::write(
-        root.join(".context-finder/profiles/bad.json"),
+        context_dir.join("profiles/bad.json"),
         r#"
         {
           "schema_version": 1,

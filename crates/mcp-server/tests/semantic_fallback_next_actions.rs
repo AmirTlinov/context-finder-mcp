@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use context_code_chunker::{ChunkMetadata, ChunkType, CodeChunk};
 use context_indexer::{compute_project_watermark, write_index_watermark};
-use context_vector_store::StoredChunk;
+use context_vector_store::{context_dir_for_project_root, StoredChunk};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -72,8 +72,7 @@ async fn search_full_mode_suggests_grep_context_when_semantic_disabled_and_no_hi
     let mut id_map: HashMap<usize, String> = HashMap::new();
     id_map.insert(1, id.to_string());
 
-    let index_dir = root
-        .join(".context-finder")
+    let index_dir = context_dir_for_project_root(root)
         .join("indexes")
         .join("unknown-model");
     std::fs::create_dir_all(&index_dir).context("mkdir index dir")?;

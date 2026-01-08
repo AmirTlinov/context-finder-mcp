@@ -151,15 +151,15 @@ Measure quality instead of guessing: run MRR/recall/latency/bytes on a JSON data
 
 ```bash
 context-finder eval . --dataset datasets/golden_smoke.json --json \
-  --out-json .context-finder/eval.smoke.json \
-  --out-md .context-finder/eval.smoke.md
+  --out-json .agents/mcp/context/eval.smoke.json \
+  --out-md .agents/mcp/context/eval.smoke.md
 
 context-finder eval-compare . --dataset datasets/golden_smoke.json \
   --a-profile general --b-profile general \
   --a-models bge-small --b-models embeddinggemma-300m \
   --json \
-  --out-json .context-finder/eval.compare.json \
-  --out-md .context-finder/eval.compare.md
+  --out-json .agents/mcp/context/eval.compare.json \
+  --out-md .agents/mcp/context/eval.compare.md
 ```
 
 ## Server Modes
@@ -294,7 +294,7 @@ If you are using Context Finder as a daily navigation/memory tool, start with th
 This calls `read_pack` with defaults (see the full schema via `context-finder-mcp --print-tools` or the MCP tool schema in `crates/mcp-server/src/tools/schemas/read_pack.rs`):
 - `intent: "memory"` (returns a memory pack)
 - `response_mode: "facts"` (low-noise daily mode: returns mostly project content; avoids diagnostic meta and helper guidance)
-- `auto_index: false` for `memory`/`onboarding` (no `.context-finder` side effects unless you ask)
+- `auto_index: false` for `memory`/`onboarding` (no `.agents/mcp/context/.context` side effects unless you ask)
 - `auto_index: false` by default for `recall`, but per-question `deep` is an explicit opt-in and may auto-index unless you explicitly disable it
 - `auto_index: true` for `query` (so semantic packs work out of the box)
 
@@ -316,7 +316,7 @@ All MCP tool errors are reported in `.context` text (`A: error: <code>` + a shor
 
 External memory overlay (default convention):
 
-- BranchMind context pack file: `.context-finder/branchmind/context_pack.json` (the `context_pack` *result* JSON).
+- BranchMind context pack file: `.agents/mcp/context/.context/branchmind/context_pack.json` (preferred; legacy `.context/…` and `.context-finder/…` are supported).
 - Codex CLI worklog cache: stored under your Codex home (e.g. `~/.codex/.context-finder/external_memory/codex_cli/*`, keyed by project root), derived from `~/.codex/sessions` / `$CODEX_HOME/sessions` (project-scoped via session cwd prefix; deduped + bounded; never written into the repo).
 
 ### Recall mini-language (per question)
@@ -600,7 +600,7 @@ All commands support these options:
 | `--model-dir` | Model directory (overrides `CONTEXT_FINDER_MODEL_DIR`) | `./models` |
 | `--cuda-device` | CUDA device ID | unset |
 | `--cuda-mem-limit-mb` | CUDA memory arena limit (MB) | unset |
-| `--cache-dir` | Cache directory | `.context-finder/cache` |
+| `--cache-dir` | Cache directory | `.agents/mcp/context/.context/cache` |
 | `--cache-ttl-seconds` | Cache TTL in seconds | `86400` |
 | `--cache-backend` | Cache backend: `file` or `memory` | `file` |
 | `--profile` | Search heuristics profile | `quality` |
@@ -730,7 +730,7 @@ context-finder index . --cuda-mem-limit-mb 2048
 
 ```bash
 # Check if index exists
-ls .context-finder/
+ls .agents/mcp/context/.context/
 
 # Force reindex
 context-finder index . --force

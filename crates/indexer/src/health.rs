@@ -7,8 +7,9 @@ use tokio::fs;
 
 const MAX_FAILURES: usize = 5;
 
-/// Snapshot persisted to `.context/health.json` so other processes can
-/// report the last successful indexing run.
+/// Snapshot persisted to `.agents/mcp/context/.context/health.json` (preferred; legacy `.context/…`
+/// and `.context-finder/…` are supported) so other processes can report the last successful
+/// indexing run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthSnapshot {
     pub last_success_unix_ms: u64,

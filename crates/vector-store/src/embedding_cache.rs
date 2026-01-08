@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::paths::{find_context_dir_from_path, CONTEXT_DIR_NAME};
+use crate::paths::{default_context_dir_rel, find_context_dir_from_path};
 use std::path::{Path, PathBuf};
 
 const CACHE_MAGIC: &[u8; 4] = b"EC01";
@@ -12,7 +12,7 @@ pub struct EmbeddingCache {
 impl EmbeddingCache {
     pub fn for_store_path(store_path: &Path) -> Self {
         let context_dir = find_context_dir_from_path(store_path)
-            .unwrap_or_else(|| PathBuf::from(CONTEXT_DIR_NAME));
+            .unwrap_or_else(default_context_dir_rel);
         Self {
             base_dir: context_dir.join("cache").join("embeddings"),
         }

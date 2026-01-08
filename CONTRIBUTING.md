@@ -45,7 +45,7 @@ See `contracts/README.md` and `AGENTS.md`.
 ## Models and caches
 
 - Do not commit downloaded model assets under `models/**`.
-- Do not commit local caches (`.context/`, `.fastembed_cache/`, `.deps/`, etc.).
+- Do not commit local caches (`.agents/mcp/context/.context/` (preferred), legacy `.context/` / `.context-finder/`, `.fastembed_cache/`, `.deps/`, etc.).
 
 ## Benchmarks and datasets
 

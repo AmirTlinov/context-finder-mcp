@@ -52,7 +52,7 @@ impl CommandContext {
         if merged.is_none() {
             hints.push(Hint {
                 kind: HintKind::Info,
-                text: "Config not found — using defaults. Create .context/config.json to pin settings."
+                text: "Config not found — using defaults. Create .agents/mcp/context/.context/config.json to pin settings."
                     .to_string(),
             });
         }

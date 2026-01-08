@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{
     model::CallToolRequestParam,
     service::{RoleClient, RunningService, ServiceExt},
@@ -72,7 +73,7 @@ async fn read_pack_query_includes_branchmind_external_memory_overlay() -> Result
     )
     .context("write src/main.rs")?;
 
-    let bm_dir = root.join(".context-finder/branchmind");
+    let bm_dir = context_dir_for_project_root(root).join("branchmind");
     std::fs::create_dir_all(&bm_dir).context("mkdir branchmind dir")?;
     let bm_file = bm_dir.join("context_pack.json");
 

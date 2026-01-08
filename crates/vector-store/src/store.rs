@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::hnsw_index::HnswIndex;
 use crate::templates::{DocumentTemplates, EmbeddingTemplates};
 use crate::types::{SearchResult, StoredChunk};
-use crate::paths::{find_context_dir_from_path, CONTEXT_DIR_NAME};
+use crate::paths::{default_context_dir_rel, find_context_dir_from_path};
 use crate::ChunkCorpus;
 use context_code_chunker::CodeChunk;
 use serde::{Deserialize, Serialize};
@@ -1064,7 +1064,7 @@ fn corpus_path_for_store_path(store_path: &Path) -> PathBuf {
     if let Some(dir) = find_context_dir_from_path(store_path) {
         return dir.join("corpus.json");
     }
-    PathBuf::from(CONTEXT_DIR_NAME).join("corpus.json")
+    default_context_dir_rel().join("corpus.json")
 }
 
 async fn load_meta_info(store_path: &Path) -> Option<StoreMetaInfo> {
@@ -1167,7 +1167,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store_path = tmp
             .path()
-            .join(".context/indexes/bge-small/index.json");
+            .join(crate::paths::default_context_dir_rel())
+            .join("indexes")
+            .join("bge-small")
+            .join("index.json");
         tokio::fs::create_dir_all(store_path.parent().unwrap())
             .await
             .unwrap();

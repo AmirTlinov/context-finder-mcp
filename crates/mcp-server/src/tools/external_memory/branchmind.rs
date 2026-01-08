@@ -1,10 +1,41 @@
 use crate::tools::schemas::read_pack::ReadPackExternalMemoryResult;
 use crate::tools::schemas::response_mode::ResponseMode;
+use context_vector_store::{context_dir_for_project_root, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
 use serde_json::Value;
 use std::path::Path;
 
-const DEFAULT_BRANCHMIND_CONTEXT_PACK_REL: &str = ".context/branchmind/context_pack.json";
-const LEGACY_BRANCHMIND_CONTEXT_PACK_REL: &str = ".context-finder/branchmind/context_pack.json";
+fn candidate_context_pack_paths(root: &Path) -> Vec<(String, std::path::PathBuf)> {
+    let preferred = context_dir_for_project_root(root)
+        .join("branchmind")
+        .join("context_pack.json");
+
+    let mut out = Vec::new();
+    out.push((
+        preferred
+            .strip_prefix(root)
+            .unwrap_or(&preferred)
+            .to_string_lossy()
+            .to_string(),
+        preferred,
+    ));
+
+    // Backward compatibility: older Context Finder builds historically wrote under repo-root
+    // `.context/` or `.context-finder/`, while newer versions prefer
+    // `.agents/mcp/context/.context/`.
+    for dir in [CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME] {
+        let candidate = root.join(dir).join("branchmind").join("context_pack.json");
+        out.push((
+            candidate
+                .strip_prefix(root)
+                .unwrap_or(&candidate)
+                .to_string_lossy()
+                .to_string(),
+            candidate,
+        ));
+    }
+
+    out
+}
 
 pub(super) async fn overlay_for_query(
     root: &Path,
@@ -16,16 +47,19 @@ pub(super) async fn overlay_for_query(
         return None;
     }
 
-    let mut rel_path = DEFAULT_BRANCHMIND_CONTEXT_PACK_REL;
-    let path = root.join(rel_path);
-    let raw = match tokio::fs::read_to_string(&path).await {
-        Ok(raw) => raw,
-        Err(_) => {
-            rel_path = LEGACY_BRANCHMIND_CONTEXT_PACK_REL;
-            let legacy = root.join(rel_path);
-            tokio::fs::read_to_string(&legacy).await.ok()?
+    let mut rel_path: Option<String> = None;
+    let mut raw: Option<String> = None;
+    for (rel, path) in candidate_context_pack_paths(root) {
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) => {
+                rel_path = Some(rel);
+                raw = Some(text);
+                break;
+            }
+            Err(_) => continue,
         }
-    };
+    }
+    let raw = raw?;
     let parsed: Value = serde_json::from_str(&raw).ok()?;
 
     // Accept either:
@@ -56,7 +90,7 @@ pub(super) async fn overlay_for_query(
 
     Some(ReadPackExternalMemoryResult {
         source: "branchmind".to_string(),
-        path: Some(rel_path.to_string()),
+        path: rel_path,
         hits,
     })
 }
@@ -69,9 +103,16 @@ pub(super) async fn overlay_recent(
         return None;
     }
 
-    let rel_path = DEFAULT_BRANCHMIND_CONTEXT_PACK_REL;
-    let path = root.join(rel_path);
-    let raw = tokio::fs::read_to_string(&path).await.ok()?;
+    let mut rel_path: Option<String> = None;
+    let mut raw: Option<String> = None;
+    for (rel, path) in candidate_context_pack_paths(root) {
+        if let Ok(text) = tokio::fs::read_to_string(&path).await {
+            rel_path = Some(rel);
+            raw = Some(text);
+            break;
+        }
+    }
+    let raw = raw?;
     let parsed: Value = serde_json::from_str(&raw).ok()?;
     let pack = parsed.get("result").cloned().unwrap_or(parsed);
 
@@ -116,7 +157,7 @@ pub(super) async fn overlay_recent(
 
     Some(ReadPackExternalMemoryResult {
         source: "branchmind".to_string(),
-        path: Some(rel_path.to_string()),
+        path: rel_path,
         hits,
     })
 }

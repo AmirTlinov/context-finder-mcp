@@ -63,7 +63,7 @@ Notes:
 ## 5) Repository hygiene (hard rules)
 
 - Do not commit downloaded model assets under `models/**`.
-- Do not commit local caches (`.context/`, `.fastembed_cache/`, `.deps/`, etc.).
+- Do not commit local caches (`.agents/mcp/context/.context/` (preferred), legacy `.context/` / `.context-finder/`, `.fastembed_cache/`, `.deps/`, etc.).
 - Avoid churn: no formatting-only refactors, no mass renames.
 - When you add a new public knob (flag/env/config), document it in:
   - the relevant contract (if it affects an API surface)

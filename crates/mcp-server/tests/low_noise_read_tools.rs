@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{
     model::CallToolRequestParam,
     service::{RoleClient, RunningService, ServiceExt},
@@ -102,9 +103,12 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
     )
     .context("write main.rs")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before read tools"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before read tools"
     );
 
     let file_slice = call_tool_text(
@@ -177,8 +181,10 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
     assert!(map.starts_with("[CONTENT]\n"));
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "read tools created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "read tools created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

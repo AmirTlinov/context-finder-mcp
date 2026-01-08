@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use context_code_chunker::{ChunkMetadata, CodeChunk};
-use context_vector_store::ChunkCorpus;
+use context_vector_store::{context_dir_for_project_root, ChunkCorpus};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -107,9 +107,12 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
     )
     .context("write main.rs")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before map"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before map"
     );
 
     let map_args = serde_json::json!({
@@ -142,8 +145,10 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
     );
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "map created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "map created project context side effects"
     );
 
     let doctor_args =
@@ -179,10 +184,9 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
     );
 
     // Create a minimal corpus + index to validate drift diagnostics without requiring embedding models.
+    let context_dir = context_dir_for_project_root(root);
     std::fs::create_dir_all(
-        root.join(".context-finder")
-            .join("indexes")
-            .join("bge-small"),
+        context_dir.join("indexes").join("bge-small"),
     )
     .context("mkdir indexes")?;
 
@@ -198,12 +202,12 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         )],
     );
     corpus
-        .save(root.join(".context-finder").join("corpus.json"))
+        .save(context_dir.join("corpus.json"))
         .await
         .context("save corpus")?;
 
     std::fs::write(
-        root.join(".context-finder")
+        context_dir
             .join("indexes")
             .join("bge-small")
             .join("index.json"),
@@ -382,9 +386,12 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
     std::fs::write(root.join("src").join("main.rs"), "line-1\nline-2\nline-3\n")
         .context("write main.rs")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before file_slice"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before file_slice"
     );
 
     let slice_args = serde_json::json!({
@@ -424,8 +431,10 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
     );
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "file_slice created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "file_slice created project context side effects"
     );
 
     let outside_parent = root.parent().context("temp root has no parent")?;
@@ -499,9 +508,12 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
     std::fs::write(root.join("docs").join("README.md"), "# Hello\n").context("write docs")?;
     std::fs::write(root.join("README.md"), "Root\n").context("write root readme")?;
 
+    let context_dir = context_dir_for_project_root(root);
     assert!(
-        !root.join(".context-finder").exists(),
-        "temp project unexpectedly has .context-finder before list_files"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "temp project unexpectedly has a context dir before list_files"
     );
 
     let list_args = serde_json::json!({
@@ -568,8 +580,10 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
     );
 
     assert!(
-        !root.join(".context-finder").exists(),
-        "list_files created .context-finder side effects"
+        !context_dir.exists()
+            && !root.join(".context").exists()
+            && !root.join(".context-finder").exists(),
+        "list_files created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

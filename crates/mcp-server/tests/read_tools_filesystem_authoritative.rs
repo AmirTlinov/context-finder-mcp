@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use context_code_chunker::{ChunkMetadata, CodeChunk};
-use context_vector_store::ChunkCorpus;
+use context_vector_store::{context_dir_for_project_root, ChunkCorpus};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -83,9 +83,10 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
             ChunkMetadata::default(),
         )],
     );
-    std::fs::create_dir_all(root.join(".context-finder")).context("mkdir .context-finder")?;
+    let context_dir = context_dir_for_project_root(root);
+    std::fs::create_dir_all(&context_dir).context("mkdir project context dir")?;
     corpus
-        .save(root.join(".context-finder").join("corpus.json"))
+        .save(context_dir.join("corpus.json"))
         .await
         .context("save corpus")?;
 
