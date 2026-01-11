@@ -285,10 +285,7 @@ fn find_context_global_cuda_deps_dir() -> Option<PathBuf> {
     if preferred.join(ORT_PROVIDER_SO).exists() {
         return Some(preferred);
     }
-    let legacy = home
-        .join(".context-finder")
-        .join("deps")
-        .join("ort_cuda");
+    let legacy = home.join(".context-finder").join("deps").join("ort_cuda");
     if legacy.join(ORT_PROVIDER_SO).exists() {
         return Some(legacy);
     }

@@ -594,11 +594,7 @@ mod tests {
         fs::write(temp.path().join(".env"), b"SECRET=1\n").unwrap();
         fs::write(temp.path().join(".env.example"), b"EXAMPLE=1\n").unwrap();
         fs::create_dir_all(temp.path().join(".context")).unwrap();
-        fs::write(
-            temp.path().join(".context").join("corpus.json"),
-            b"{}",
-        )
-        .unwrap();
+        fs::write(temp.path().join(".context").join("corpus.json"), b"{}").unwrap();
 
         let scanner = FileScanner::new(temp.path());
         let files = scanner.scan();

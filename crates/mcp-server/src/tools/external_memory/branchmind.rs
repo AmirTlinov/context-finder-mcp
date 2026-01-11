@@ -1,6 +1,8 @@
 use crate::tools::schemas::read_pack::ReadPackExternalMemoryResult;
 use crate::tools::schemas::response_mode::ResponseMode;
-use context_vector_store::{context_dir_for_project_root, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
+use context_vector_store::{
+    context_dir_for_project_root, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME,
+};
 use serde_json::Value;
 use std::path::Path;
 

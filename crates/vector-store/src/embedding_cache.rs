@@ -11,8 +11,8 @@ pub struct EmbeddingCache {
 
 impl EmbeddingCache {
     pub fn for_store_path(store_path: &Path) -> Self {
-        let context_dir = find_context_dir_from_path(store_path)
-            .unwrap_or_else(default_context_dir_rel);
+        let context_dir =
+            find_context_dir_from_path(store_path).unwrap_or_else(default_context_dir_rel);
         Self {
             base_dir: context_dir.join("cache").join("embeddings"),
         }

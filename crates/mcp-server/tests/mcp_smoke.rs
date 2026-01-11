@@ -185,10 +185,8 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
 
     // Create a minimal corpus + index to validate drift diagnostics without requiring embedding models.
     let context_dir = context_dir_for_project_root(root);
-    std::fs::create_dir_all(
-        context_dir.join("indexes").join("bge-small"),
-    )
-    .context("mkdir indexes")?;
+    std::fs::create_dir_all(context_dir.join("indexes").join("bge-small"))
+        .context("mkdir indexes")?;
 
     let mut corpus = ChunkCorpus::new();
     corpus.set_file_chunks(

@@ -1020,13 +1020,11 @@ fn build_cuda_ep() -> Result<ort::execution_providers::ExecutionProviderDispatch
     let report = gpu_env::bootstrap_cuda_env_best_effort();
     let mut cuda = CUDAExecutionProvider::default();
 
-    if let Ok(device) = env::var("CONTEXT_CUDA_DEVICE")
-        .or_else(|_| env::var("CONTEXT_FINDER_CUDA_DEVICE"))
+    if let Ok(device) =
+        env::var("CONTEXT_CUDA_DEVICE").or_else(|_| env::var("CONTEXT_FINDER_CUDA_DEVICE"))
     {
         let parsed: i32 = device.parse().map_err(|e| {
-            VectorStoreError::EmbeddingError(format!(
-                "Invalid CONTEXT_CUDA_DEVICE '{device}': {e}"
-            ))
+            VectorStoreError::EmbeddingError(format!("Invalid CONTEXT_CUDA_DEVICE '{device}': {e}"))
         })?;
         cuda = cuda.with_device_id(parsed);
     }

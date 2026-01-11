@@ -5,7 +5,9 @@ use context_code_chunker::{Chunker, ChunkerConfig};
 use context_vector_store::current_model_id;
 use context_vector_store::EmbeddingTemplates;
 use context_vector_store::VectorStore;
-use context_vector_store::{context_dir_for_project_root, corpus_path_for_project_root, ChunkCorpus};
+use context_vector_store::{
+    context_dir_for_project_root, corpus_path_for_project_root, ChunkCorpus,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};

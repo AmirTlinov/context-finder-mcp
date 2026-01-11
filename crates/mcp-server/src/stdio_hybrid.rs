@@ -154,10 +154,7 @@ fn frame_dump_from_env() -> Option<Arc<Mutex<FrameDump>>> {
 
     let path = PathBuf::from(trimmed);
     let final_path = if path.is_dir() {
-        path.join(format!(
-            "context_mcp_frames_{}.jsonl",
-            std::process::id()
-        ))
+        path.join(format!("context_mcp_frames_{}.jsonl", std::process::id()))
     } else {
         path
     };

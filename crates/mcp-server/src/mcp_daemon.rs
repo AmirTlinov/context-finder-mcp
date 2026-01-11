@@ -7,9 +7,10 @@ use context_vector_store::{CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
 use rmcp::service::TxJsonRpcMessage;
 use rmcp::transport::Transport;
 use rmcp::ServiceExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fs::OpenOptions;
+use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
@@ -65,7 +66,7 @@ impl Drop for DaemonSpawnLock {
 async fn acquire_daemon_spawn_lock(socket: &Path) -> Result<DaemonSpawnLock> {
     let lock_path = daemon_lock_path(socket);
     tokio::task::spawn_blocking(move || -> Result<DaemonSpawnLock> {
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
@@ -78,6 +79,7 @@ async fn acquire_daemon_spawn_lock(socket: &Path) -> Result<DaemonSpawnLock> {
             return Err(std::io::Error::last_os_error())
                 .with_context(|| format!("acquire daemon lock at {}", lock_path.display()));
         }
+        write_spawn_lock_metadata(&mut file);
         Ok(DaemonSpawnLock(file))
     })
     .await
@@ -87,7 +89,7 @@ async fn acquire_daemon_spawn_lock(socket: &Path) -> Result<DaemonSpawnLock> {
 async fn try_acquire_daemon_spawn_lock(socket: &Path) -> Result<Option<DaemonSpawnLock>> {
     let lock_path = daemon_lock_path(socket);
     tokio::task::spawn_blocking(move || -> Result<Option<DaemonSpawnLock>> {
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
@@ -97,6 +99,7 @@ async fn try_acquire_daemon_spawn_lock(socket: &Path) -> Result<Option<DaemonSpa
         let fd = file.as_raw_fd();
         let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
         if rc == 0 {
+            write_spawn_lock_metadata(&mut file);
             return Ok(Some(DaemonSpawnLock(file)));
         }
 
@@ -108,6 +111,118 @@ async fn try_acquire_daemon_spawn_lock(socket: &Path) -> Result<Option<DaemonSpa
     })
     .await
     .context("join daemon try-lock task")?
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct SpawnLockMetadata {
+    pid: u32,
+    exe: Option<String>,
+    version: Option<String>,
+    acquired_at_ms: Option<u64>,
+}
+
+fn write_spawn_lock_metadata(file: &mut std::fs::File) {
+    // Best-effort: the lock itself is the primary mechanism; metadata is for recovery + debugging.
+    let payload = SpawnLockMetadata {
+        pid: std::process::id(),
+        exe: std::env::current_exe()
+            .ok()
+            .map(|p| p.to_string_lossy().to_string()),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        acquired_at_ms: system_time_to_unix_ms(std::time::SystemTime::now()),
+    };
+
+    if file.set_len(0).is_err() {
+        return;
+    }
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        return;
+    }
+    let Ok(buf) = serde_json::to_vec(&payload) else {
+        return;
+    };
+    if file.write_all(&buf).is_err() {
+        return;
+    }
+    let _ = file.flush();
+}
+
+async fn read_spawn_lock_metadata(socket: &Path) -> Option<SpawnLockMetadata> {
+    let lock_path = daemon_lock_path(socket);
+    let bytes = tokio::fs::read(&lock_path).await.ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+async fn pid_looks_like_context_mcp_process(pid: i32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(cmdline) = tokio::fs::read(format!("/proc/{pid}/cmdline")).await else {
+            return false;
+        };
+        let parts: Vec<&[u8]> = cmdline
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .collect();
+        let joined = parts
+            .iter()
+            .map(|p| String::from_utf8_lossy(p).to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (joined.contains("context-mcp") || joined.contains("context-finder-mcp"))
+            && !joined.contains("daemon")
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+async fn recover_stuck_spawn_lock(socket: &Path) -> Option<()> {
+    // Recovery policy:
+    // - Only act when the spawn lock is busy *and* no daemon is connectable (caller already proved
+    //   that), so we don't interfere with healthy backends.
+    // - Only target a lock holder that is clearly our own proxy process *and* is in a stopped
+    //   state (SIGSTOP / job control). This is a known failure mode: a stopped process can hold
+    //   the flock forever, wedging daemon startup for every other session.
+    // - Prefer SIGCONT first (non-destructive). If still stopped after a short grace period,
+    //   terminate to unblock startup.
+    let info = read_spawn_lock_metadata(socket).await?;
+    let pid = info.pid as i32;
+    if pid <= 0 {
+        return None;
+    }
+    if !pid_looks_like_context_mcp_process(pid).await {
+        return None;
+    }
+    if process_is_stopped(pid).await != Some(true) {
+        return None;
+    }
+
+    if logging_enabled() {
+        log::warn!(
+            "MCP daemon spawn lock appears wedged by a stopped proxy (pid={pid}); attempting recovery"
+        );
+    }
+
+    unsafe {
+        let _ = libc::kill(pid, libc::SIGCONT);
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    if process_is_stopped(pid).await == Some(true) {
+        unsafe {
+            let _ = libc::kill(pid, libc::SIGTERM);
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        if process_alive(pid) {
+            unsafe {
+                let _ = libc::kill(pid, libc::SIGKILL);
+            }
+        }
+    }
+
+    Some(())
 }
 
 fn logging_enabled() -> bool {
@@ -581,7 +696,14 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
 
         if !session.root_established {
             let mut established = false;
-            if let Some(root) = default_root {
+            if session.client_supports_roots {
+                // When the client supports MCP roots, avoid injecting a proxy-cwd derived
+                // `path`: the daemon will establish the per-connection root via `roots/list`.
+                //
+                // This matters for multi-session safety: some hosts reuse a single MCP server
+                // process across multiple sessions/projects, so a sticky proxy cwd can cause
+                // cross-project mixups.
+            } else if let Some(root) = default_root {
                 established = ensure_tool_call_has_path(value, root);
             }
             if established {
@@ -1006,6 +1128,24 @@ pub async fn ensure_daemon(socket: &Path) -> Result<()> {
     // Still not connectable. Try one more time to become the "winner" who can recover stale state.
     if let Some(_spawn_lock) = try_acquire_daemon_spawn_lock(socket).await? {
         return ensure_daemon_locked(socket).await;
+    }
+
+    // Recovery: the spawn lock can be held forever if a proxy process is SIGSTOP'd mid-startup.
+    // That wedges the shared backend and forces every other session into the expensive in-process
+    // fallback. Attempt a best-effort recovery, then retry once.
+    //
+    // This is intentionally conservative: we only act on a *stopped* process that looks like our
+    // own proxy binary, and only when no daemon is connectable.
+    if recover_stuck_spawn_lock(socket).await.is_some() {
+        for _ in 0..SINGLE_INSTANCE_RETRIES {
+            if UnixStream::connect(socket).await.is_ok() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(SINGLE_INSTANCE_WAIT_MS)).await;
+        }
+        if let Some(_spawn_lock) = try_acquire_daemon_spawn_lock(socket).await? {
+            return ensure_daemon_locked(socket).await;
+        }
     }
 
     anyhow::bail!("MCP daemon startup in progress (lock busy)")

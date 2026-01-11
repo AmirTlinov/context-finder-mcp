@@ -1,6 +1,6 @@
 use crate::error::{Result, VectorStoreError};
-use context_code_chunker::CodeChunk;
 use crate::paths::context_dir_for_project_root;
+use context_code_chunker::CodeChunk;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};

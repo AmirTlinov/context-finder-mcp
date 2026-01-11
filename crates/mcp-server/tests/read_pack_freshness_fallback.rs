@@ -106,7 +106,10 @@ async fn read_pack_query_falls_back_to_filesystem_when_index_is_stale() -> Resul
     std::fs::create_dir_all(context_dir.join("indexes").join("bge-small"))
         .context("mkdir stale index dir")?;
     std::fs::write(
-        context_dir.join("indexes").join("bge-small").join("index.json"),
+        context_dir
+            .join("indexes")
+            .join("bge-small")
+            .join("index.json"),
         "{}\n",
     )
     .context("write fake index.json")?;

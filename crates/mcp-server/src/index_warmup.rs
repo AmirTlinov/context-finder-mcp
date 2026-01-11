@@ -4,7 +4,9 @@ use context_indexer::{
     StreamingIndexerConfig, Watermark,
 };
 use context_search::SearchProfile;
-use context_vector_store::{context_dir_for_project_root, corpus_path_for_project_root, current_model_id};
+use context_vector_store::{
+    context_dir_for_project_root, corpus_path_for_project_root, current_model_id,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

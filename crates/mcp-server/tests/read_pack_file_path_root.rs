@@ -44,8 +44,11 @@ async fn read_pack_memory_accepts_file_path_as_root_hint() -> Result<()> {
     let tmp = tempfile::tempdir().context("tempdir")?;
     let root = tmp.path();
 
-    std::fs::write(root.join("AGENTS.context"), "[LEGEND]\n[CONTENT]\nA: hello\n")
-        .context("write AGENTS.context")?;
+    std::fs::write(
+        root.join("AGENTS.context"),
+        "[LEGEND]\n[CONTENT]\nA: hello\n",
+    )
+    .context("write AGENTS.context")?;
     std::fs::write(
         root.join("PHILOSOPHY.context"),
         "[LEGEND]\n[CONTENT]\nA: philosophy\n",
@@ -128,8 +131,11 @@ async fn read_pack_memory_surfaces_focus_file_when_root_is_set_by_file_path() ->
     let tmp = tempfile::tempdir().context("tempdir")?;
     let root = tmp.path();
 
-    std::fs::write(root.join("AGENTS.context"), "[LEGEND]\n[CONTENT]\nA: hello\n")
-        .context("write AGENTS.context")?;
+    std::fs::write(
+        root.join("AGENTS.context"),
+        "[LEGEND]\n[CONTENT]\nA: hello\n",
+    )
+    .context("write AGENTS.context")?;
     std::fs::create_dir_all(root.join(".git")).context("create .git")?;
     std::fs::create_dir_all(root.join("src")).context("create src")?;
     std::fs::write(

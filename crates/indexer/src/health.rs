@@ -53,12 +53,11 @@ pub async fn write_health_snapshot(
         .join(model_id_dir_name(&model_id))
         .join("index.json");
     let index_size_bytes = tokio::fs::metadata(index_path).await.ok().map(|m| m.len());
-    let graph_cache_size_bytes = tokio::fs::metadata(
-        context_dir_for_project_root(root).join("graph_cache.json"),
-    )
-    .await
-    .ok()
-    .map(|m| m.len());
+    let graph_cache_size_bytes =
+        tokio::fs::metadata(context_dir_for_project_root(root).join("graph_cache.json"))
+            .await
+            .ok()
+            .map(|m| m.len());
     let files_per_sec = if stats.time_ms > 0 {
         #[allow(clippy::cast_precision_loss)]
         Some(stats.files as f32 / (stats.time_ms as f32 / 1000.0))

@@ -7328,8 +7328,10 @@ pub(in crate::tools::dispatch) async fn read_pack(
     if let Some(file) = request.file.as_deref() {
         hints.push(file.to_string());
     }
-    let (root, root_display) =
-        match service.resolve_root_with_hints(request.path.as_deref(), &hints).await {
+    let (root, root_display) = match service
+        .resolve_root_with_hints(request.path.as_deref(), &hints)
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
             return Ok(invalid_request_with_meta(

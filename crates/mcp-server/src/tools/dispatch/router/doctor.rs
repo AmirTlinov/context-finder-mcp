@@ -516,7 +516,7 @@ mod tests {
         let next_actions = structured
             .get("next_actions")
             .and_then(|v| v.as_array())
-            .expect("next_actions array");
+            .unwrap_or_else(|| panic!("next_actions array (structured={structured:?})"));
 
         assert!(
             !next_actions.iter().any(|action| action
@@ -546,9 +546,9 @@ mod tests {
             .as_ref()
             .expect("structured content");
 
-        let obs = structured
-            .get("observability")
-            .expect("observability field present in full mode");
+        let obs = structured.get("observability").unwrap_or_else(|| {
+            panic!("observability field present in full mode (structured={structured:?})")
+        });
         let indexing = obs.get("indexing").expect("indexing observability");
         assert!(
             indexing

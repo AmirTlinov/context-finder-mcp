@@ -371,7 +371,8 @@ async fn refresh_cache(
             continue;
         };
 
-        let extracted = extract_candidates_from_jsonl_lines(project_root, lines, &meta, response_mode);
+        let extracted =
+            extract_candidates_from_jsonl_lines(project_root, lines, &meta, response_mode);
         for cand in extracted {
             if !seen_hashes.insert(cand.content_sha256.clone()) {
                 continue;
@@ -2223,10 +2224,12 @@ fn scoped_patch_path(project_root: &Path, raw: &str) -> Option<String> {
 
     // Reject traversal / absolute-ish relative paths. Even if a session started under this
     // project root, we do not want memory overlays to surface edits to sibling repos.
-    if path
-        .components()
-        .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-    {
+    if path.components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         return None;
     }
 
@@ -2517,8 +2520,7 @@ async fn cache_path_for_project(codex_home: &Path, project_root: &Path) -> Optio
         }
     };
     Some(
-        base
-            .join("external_memory")
+        base.join("external_memory")
             .join("codex_cli")
             .join(format!("sessions_{key}.json")),
     )

@@ -1,5 +1,5 @@
-use std::env;
 use crate::paths::{CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
+use std::env;
 use std::path::{Path, PathBuf};
 
 const ORT_PROVIDER_SO: &str = "libonnxruntime_providers_cuda.so";

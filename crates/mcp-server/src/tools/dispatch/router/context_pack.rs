@@ -770,8 +770,10 @@ pub(in crate::tools::dispatch) async fn context_pack(
             hints.push(pattern.to_string());
         }
     }
-    let (root, root_display) =
-        match service.resolve_root_with_hints(inputs.path.as_deref(), &hints).await {
+    let (root, root_display) = match service
+        .resolve_root_with_hints(inputs.path.as_deref(), &hints)
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
             let meta = meta_for_request(service, inputs.path.as_deref()).await;

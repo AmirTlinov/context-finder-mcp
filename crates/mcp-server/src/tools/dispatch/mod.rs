@@ -84,7 +84,7 @@ use std::env;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 /// Context MCP Service
 #[derive(Clone)]
@@ -97,6 +97,9 @@ pub struct ContextFinderService {
     state: Arc<ServiceState>,
     /// Per-connection session defaults (do not share across multi-agent sessions).
     session: Arc<Mutex<SessionDefaults>>,
+    /// Signals when `initialize -> roots/list` has either populated a session root or definitively
+    /// finished (success or failure). Used to avoid racing the first tool call.
+    roots_notify: Arc<Notify>,
     /// Whether to fall back to the server process cwd when no root hint is available.
     ///
     /// This is safe for in-process (per-agent) servers, but unsafe for the shared daemon
@@ -123,6 +126,7 @@ impl ContextFinderService {
             tool_router: Self::tool_router(),
             state: Arc::new(ServiceState::new()),
             session: Arc::new(Mutex::new(SessionDefaults::default())),
+            roots_notify: Arc::new(Notify::new()),
             allow_cwd_root_fallback,
         }
     }
@@ -133,6 +137,7 @@ impl ContextFinderService {
             tool_router: self.tool_router.clone(),
             state: self.state.clone(),
             session: Arc::new(Mutex::new(SessionDefaults::default())),
+            roots_notify: Arc::new(Notify::new()),
             allow_cwd_root_fallback: self.allow_cwd_root_fallback,
         }
     }
@@ -168,10 +173,6 @@ impl ContextFinderService {
         hints: &[String],
     ) -> Result<(PathBuf, String), String> {
         self.resolve_root_impl_with_hints(raw_path, hints).await
-    }
-
-    async fn resolve_root_impl(&self, raw_path: Option<&str>) -> Result<(PathBuf, String), String> {
-        self.resolve_root_impl_with_hints(raw_path, &[]).await
     }
 
     async fn resolve_root_impl_with_hints(
@@ -220,6 +221,27 @@ impl ContextFinderService {
 
         if let Some((root, root_display)) = self.session.lock().await.clone_root() {
             return Ok((root, root_display));
+        }
+
+        // Race guard: MCP roots are populated asynchronously after initialize. Some clients send
+        // the first tool call immediately after initialize, before `roots/list` completes.
+        //
+        // In shared daemon mode, failing fast can accidentally route the call using stale session
+        // state (when a transport is reused), or force clients to redundantly pass `path` even when
+        // they support roots. Prefer a small bounded wait to let `roots/list` establish the
+        // per-connection session root.
+        let roots_pending = { self.session.lock().await.roots_pending };
+        if roots_pending {
+            let wait_ms = if self.allow_cwd_root_fallback {
+                150
+            } else {
+                900
+            };
+            let notify = self.roots_notify.clone();
+            let _ = tokio::time::timeout(Duration::from_millis(wait_ms), notify.notified()).await;
+            if let Some((root, root_display)) = self.session.lock().await.clone_root() {
+                return Ok((root, root_display));
+            }
         }
 
         if let Some((var, value)) = env_root_override() {
@@ -466,6 +488,15 @@ impl ServerHandler for ContextFinderService {
     > + Send
            + '_ {
         async move {
+            // Treat every initialize as a fresh logical MCP session. Some MCP clients reuse a
+            // long-lived server process (and/or transport) across multiple sessions, possibly in
+            // different working directories. Without a reset, the daemon can retain a previous
+            // session root and accidentally serve tool calls against the wrong project.
+            {
+                let mut session = self.session.lock().await;
+                session.reset_for_initialize(request.capabilities.roots.is_some());
+            }
+
             // Codex MCP client may be strict about the protocolVersion it requested during
             // initialization. rmcp defaults can lag behind, even when the tool surface is compatible.
             //
@@ -483,6 +514,7 @@ impl ServerHandler for ContextFinderService {
             if request.capabilities.roots.is_some() {
                 let peer = context.peer.clone();
                 let session = self.session.clone();
+                let roots_notify = self.roots_notify.clone();
                 tokio::spawn(async move {
                     // Give the client a moment to process the initialize response first.
                     tokio::time::sleep(Duration::from_millis(25)).await;
@@ -491,32 +523,34 @@ impl ServerHandler for ContextFinderService {
                         .await
                         .ok()
                         .and_then(|r| r.ok());
-                    let Some(roots) = roots else {
-                        return;
-                    };
 
-                    let Some(path) = roots
-                        .roots
-                        .iter()
-                        .find_map(|root| root_path_from_mcp_uri(&root.uri))
-                    else {
-                        return;
-                    };
-
-                    let root = match canonicalize_root_path(&path) {
-                        Ok(root) => root,
+                    let root = roots.as_ref().and_then(|roots| {
+                        roots
+                            .roots
+                            .iter()
+                            .find_map(|root| root_path_from_mcp_uri(&root.uri))
+                    });
+                    let root = root.and_then(|path| match canonicalize_root_path(&path) {
+                        Ok(root) => Some(root),
                         Err(err) => {
                             log::debug!("Ignoring invalid MCP root {path:?}: {err}");
-                            return;
+                            None
                         }
-                    };
+                    });
 
-                    let root_display = root.to_string_lossy().to_string();
                     let mut session = session.lock().await;
-                    if session.root.is_none() {
-                        session.root = Some(root);
-                        session.root_display = Some(root_display);
+                    if let Some(root) = root {
+                        let root_display = root.to_string_lossy().to_string();
+                        // Only set the session root if the tool call path did not already
+                        // establish one. Explicit per-call `path` should win over workspace roots.
+                        if session.root.is_none() {
+                            session.root = Some(root);
+                            session.root_display = Some(root_display);
+                        }
                     }
+                    session.roots_pending = false;
+                    drop(session);
+                    roots_notify.notify_waiters();
                 });
             }
 
@@ -2105,6 +2139,7 @@ struct SessionDefaults {
     root: Option<PathBuf>,
     root_display: Option<String>,
     focus_file: Option<String>,
+    roots_pending: bool,
     // Working-set: ephemeral, per-connection state (no disk). Used to avoid repeating the same
     // anchors/snippets across multiple calls in one agent session.
     seen_snippet_files: VecDeque<String>,
@@ -2114,6 +2149,14 @@ struct SessionDefaults {
 impl SessionDefaults {
     fn clone_root(&self) -> Option<(PathBuf, String)> {
         Some((self.root.clone()?, self.root_display.clone()?))
+    }
+
+    fn reset_for_initialize(&mut self, roots_pending: bool) {
+        self.root = None;
+        self.root_display = None;
+        self.focus_file = None;
+        self.roots_pending = roots_pending;
+        self.clear_working_set();
     }
 
     fn set_root(&mut self, root: PathBuf, root_display: String, focus_file: Option<String>) {
@@ -4032,6 +4075,7 @@ mod tests {
     use context_search::{EnrichedResult, RelatedContext};
     use context_vector_store::SearchResult;
     use tempfile::tempdir;
+    use tokio::time::Duration;
 
     #[test]
     fn word_boundary_match_hits_only_whole_identifier() {
@@ -4077,6 +4121,38 @@ mod tests {
             10,
         );
         assert!(excluded.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_root_waits_for_initialize_roots_list() {
+        let dir = tempdir().expect("temp dir");
+        let canonical_root = dir.path().canonicalize().expect("canonical root");
+        let canonical_root_clone = canonical_root.clone();
+        let canonical_display = canonical_root.to_string_lossy().to_string();
+
+        let service = ContextFinderService::new_daemon();
+        {
+            let mut session = service.session.lock().await;
+            session.reset_for_initialize(true);
+        }
+
+        let session_arc = service.session.clone();
+        let notify = service.roots_notify.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let mut session = session_arc.lock().await;
+            session.root = Some(canonical_root_clone);
+            session.root_display = Some(canonical_display);
+            session.roots_pending = false;
+            drop(session);
+            notify.notify_waiters();
+        });
+
+        let (root, _) = service
+            .resolve_root_no_daemon_touch(None)
+            .await
+            .expect("root must resolve after roots/list");
+        assert_eq!(root, canonical_root);
     }
 
     #[test]

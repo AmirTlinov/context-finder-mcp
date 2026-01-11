@@ -481,7 +481,7 @@ fn is_watchable_dir(root: &Path, path: &Path) -> bool {
     true
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn spawn_index_loop(
     indexer: Arc<ProjectIndexer>,
     config: StreamingIndexerConfig,
@@ -616,7 +616,7 @@ fn spawn_index_loop(
     });
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn spawn_multi_model_index_loop(
     indexer: Arc<MultiModelProjectIndexer>,
     config: StreamingIndexerConfig,

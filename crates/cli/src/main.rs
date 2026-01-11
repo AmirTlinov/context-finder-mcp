@@ -87,7 +87,11 @@ struct Cli {
     cuda_mem_limit_mb: Option<usize>,
 
     /// Cache directory for compare_search and heavy ops
-    #[arg(long, global = true, default_value = ".agents/mcp/context/.context/cache")]
+    #[arg(
+        long,
+        global = true,
+        default_value = ".agents/mcp/context/.context/cache"
+    )]
     cache_dir: String,
 
     /// Cache TTL in seconds

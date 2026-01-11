@@ -41,7 +41,7 @@ mod api {
 fn real_embeddings_rs_has_method_chunks() {
     let code = include_str!("../../vector-store/src/embeddings.rs");
 
-    let chunks = chunk(&code);
+    let chunks = chunk(code);
     let has_cosine = chunks.iter().any(|c| {
         c.metadata.chunk_type == Some(ChunkType::Method)
             && c.metadata.symbol_name.as_deref() == Some("cosine_similarity")
