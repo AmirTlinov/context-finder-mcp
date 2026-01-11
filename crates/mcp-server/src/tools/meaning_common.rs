@@ -1,4 +1,5 @@
 use anyhow::Result;
+use context_code_chunker::{Chunker, ChunkerConfig};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -40,6 +41,15 @@ pub(super) enum EvidenceKind {
     Entrypoint,
     Contract,
     Boundary(BoundaryKind),
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct OutlineSymbol {
+    pub(super) kind: &'static str,
+    pub(super) name: String,
+    pub(super) start_line: usize,
+    pub(super) end_line: usize,
+    pub(super) confidence: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -824,6 +834,98 @@ pub(super) fn shrink_pack(pack: &mut String) -> bool {
     rebuilt.push('\n');
     *pack = rebuilt;
     true
+}
+
+pub(super) async fn extract_code_outline(root: &Path, focus_rel: &str) -> Vec<OutlineSymbol> {
+    const MAX_FILE_BYTES: u64 = 512 * 1024;
+    const MAX_SYMBOLS: usize = 8;
+
+    let focus_lc = focus_rel.to_ascii_lowercase();
+    if !is_code_file_candidate(&focus_lc) {
+        return Vec::new();
+    }
+
+    let abs = root.join(focus_rel);
+    let Ok(meta) = tokio::fs::metadata(&abs).await else {
+        return Vec::new();
+    };
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return Vec::new();
+    }
+
+    let outline = tokio::task::spawn_blocking(move || {
+        let chunker = Chunker::new(ChunkerConfig {
+            // Outline is a “meaning read”: avoid pulling long docs into the metadata.
+            include_documentation: false,
+            ..ChunkerConfig::default()
+        });
+        let chunks = chunker.chunk_file(abs).ok()?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut symbols: Vec<(u8, OutlineSymbol)> = Vec::new();
+        for chunk in chunks {
+            let Some(chunk_type) = chunk.metadata.chunk_type else {
+                continue;
+            };
+            if !chunk_type.is_declaration() {
+                continue;
+            }
+
+            let name = chunk.metadata.qualified_name.as_ref().cloned().or_else(|| {
+                let symbol = chunk.metadata.symbol_name.as_ref()?.trim();
+                if symbol.is_empty() {
+                    return None;
+                }
+                if let Some(scope) = chunk.metadata.parent_scope.as_ref().map(|s| s.trim()) {
+                    if !scope.is_empty() {
+                        return Some(format!("{scope}.{symbol}"));
+                    }
+                }
+                Some(symbol.to_string())
+            });
+            let Some(name) = name else {
+                continue;
+            };
+
+            let key = format!(
+                "{}:{}:{}:{}",
+                chunk.file_path, chunk.start_line, chunk.end_line, name
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+
+            symbols.push((
+                chunk_type.priority(),
+                OutlineSymbol {
+                    kind: chunk_type.as_str(),
+                    name,
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    confidence: 1.0,
+                },
+            ));
+        }
+
+        symbols.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.start_line.cmp(&b.1.start_line))
+                .then_with(|| a.1.name.cmp(&b.1.name))
+        });
+
+        let out = symbols
+            .into_iter()
+            .map(|(_, s)| s)
+            .take(MAX_SYMBOLS)
+            .collect::<Vec<_>>();
+        Some(out)
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+
+    outline
 }
 
 #[derive(Default)]

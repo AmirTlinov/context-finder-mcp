@@ -21,7 +21,7 @@ Context is meant to be **more convenient than shell probing** *by design*:
 - **Cursor-first continuation:** if it doesn’t fit, you continue with `cursor` — `read_pack` supports cursor-only continuation, and cursors are kept compact (server-backed when needed) to avoid blowing your context window.
 - **Noise-zero by default:** default `response_mode: "facts"` (or `"minimal"`) keeps output mostly *project content*, not tool chatter.
 - **Safe defaults:** root-locked file IO + conservative secret denylist; hidden configs are indexed only via allowlist (no accidental `.env` leaks; opt-in via `allow_secrets: true` when you explicitly need it).
-- **Multi-agent friendly:** shared MCP backend is the default (one warm engine cache + cursor store across many sessions). Set `CONTEXT_FINDER_MCP_SHARED=0` only if you explicitly want an isolated per-session server (mostly useful in tests).
+- **Multi-agent friendly:** shared MCP backend is the default (one warm engine cache + cursor store across many sessions). In shared-daemon mode the server **fails closed** if it cannot resolve a single project root (no guessing from relative hints), to prevent cross-project contamination. Set `CONTEXT_FINDER_MCP_SHARED=0` only if you explicitly want an isolated per-session server (mostly useful in tests).
 
 ## What you get
 

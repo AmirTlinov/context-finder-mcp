@@ -6,9 +6,10 @@ use std::path::Path;
 
 use super::meaning_common::{
     build_ev_file_index, classify_boundaries, classify_files, contract_kind, detect_brokers,
-    detect_channel_mentions, directory_key, extract_asyncapi_flows, hash_and_count_lines,
-    infer_actor_by_path, infer_flow_actor, json_string, shrink_pack, BoundaryCandidate,
-    BoundaryKind, BrokerCandidate, CognitivePack, EvidenceItem, EvidenceKind, FlowEdge,
+    detect_channel_mentions, directory_key, extract_asyncapi_flows, extract_code_outline,
+    hash_and_count_lines, infer_actor_by_path, infer_flow_actor, json_string, shrink_pack,
+    BoundaryCandidate, BoundaryKind, BrokerCandidate, CognitivePack, EvidenceItem, EvidenceKind,
+    FlowEdge,
 };
 use super::paths::normalize_relative_path;
 use super::schemas::meaning_focus::{MeaningFocusBudget, MeaningFocusRequest, MeaningFocusResult};
@@ -81,6 +82,12 @@ pub(super) async fn compute_meaning_focus_result(
         Some(format!("{focus_dir}/"))
     };
 
+    let outline = if canonical.is_dir() {
+        Vec::new()
+    } else {
+        extract_code_outline(root, &focus_rel).await
+    };
+
     let query = request
         .query
         .as_deref()
@@ -145,7 +152,7 @@ pub(super) async fn compute_meaning_focus_result(
         &entrypoints,
         &contracts,
         &boundaries,
-        EventEvidenceInputs {
+        FocusEvidenceInputs {
             flows: &flows,
             brokers: &brokers,
         },
@@ -178,6 +185,9 @@ pub(super) async fn compute_meaning_focus_result(
     for broker in &brokers {
         dict_paths.insert(broker.file.clone());
     }
+    for symbol in &outline {
+        dict_paths.insert(symbol.name.clone());
+    }
     for boundary in &boundaries {
         dict_paths.insert(boundary.file.clone());
     }
@@ -192,6 +202,18 @@ pub(super) async fn compute_meaning_focus_result(
     let d_dir = cp.dict_id(&focus_dir);
     let d_file = cp.dict_id(&focus_rel);
     cp.push_line(&format!("FOCUS dir={d_dir} file={d_file}"));
+
+    if !outline.is_empty() {
+        cp.push_line("S OUTLINE");
+        for symbol in &outline {
+            let d_name = cp.dict_id(&symbol.name);
+            let conf = format!("{:.2}", symbol.confidence.clamp(0.0, 1.0));
+            cp.push_line(&format!(
+                "SYM kind={} name={d_name} file={d_file} L{}-L{} conf={conf}",
+                symbol.kind, symbol.start_line, symbol.end_line
+            ));
+        }
+    }
 
     cp.push_line("S MAP");
     for (path, files) in &map_rows {
@@ -430,12 +452,11 @@ fn build_next_actions(root_display: &str, first_ev: Option<&EvidenceItem>) -> Ve
     }]
 }
 
-struct EventEvidenceInputs<'a> {
+struct FocusEvidenceInputs<'a> {
     flows: &'a [FlowEdge],
     brokers: &'a [BrokerCandidate],
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn collect_focus_evidence(
     root: &Path,
     focus_is_dir: bool,
@@ -443,7 +464,7 @@ async fn collect_focus_evidence(
     entrypoints: &[String],
     contracts: &[String],
     boundaries: &[BoundaryCandidate],
-    event: EventEvidenceInputs<'_>,
+    focus: FocusEvidenceInputs<'_>,
 ) -> Vec<EvidenceItem> {
     let mut out: Vec<EvidenceItem> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
@@ -486,7 +507,7 @@ async fn collect_focus_evidence(
     // Ensure event-driven claims have at least one evidence anchor (contract and/or actor).
     let mut must_contracts: Vec<String> = Vec::new();
     let mut must_entrypoints: Vec<String> = Vec::new();
-    for flow in event.flows {
+    for flow in focus.flows {
         if must_contracts.len() < 2 && !must_contracts.iter().any(|c| c == &flow.contract_file) {
             must_contracts.push(flow.contract_file.clone());
         }
@@ -515,7 +536,7 @@ async fn collect_focus_evidence(
     }
 
     // Ensure broker config claims have evidence anchors.
-    for broker in event.brokers.iter().take(2) {
+    for broker in focus.brokers.iter().take(2) {
         if !seen.insert(broker.file.as_str()) {
             continue;
         }

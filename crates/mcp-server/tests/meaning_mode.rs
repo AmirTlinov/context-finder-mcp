@@ -265,6 +265,14 @@ async fn meaning_focus_emits_focus_section_and_is_bounded() -> Result<()> {
     );
 
     let pack = extract_cp_pack(text)?;
+    assert!(
+        pack.contains("S OUTLINE"),
+        "expected S OUTLINE section in CP"
+    );
+    assert!(
+        pack.lines().any(|line| line.starts_with("SYM ")),
+        "expected at least one SYM line in CP"
+    );
     let max_chars = 1200usize;
     let used_chars = pack.chars().count();
     assert!(

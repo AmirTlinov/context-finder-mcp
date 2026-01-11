@@ -481,6 +481,12 @@ impl MeaningService {
             Some(format!("{focus_dir}/"))
         };
 
+        let outline = if canonical.is_dir() {
+            Vec::new()
+        } else {
+            extract_code_outline(&project_ctx.root, &focus_rel).await
+        };
+
         let query = payload
             .query
             .as_deref()
@@ -696,6 +702,18 @@ impl MeaningService {
         let d_dir = cp.dict_id(&focus_dir);
         let d_file = cp.dict_id(&focus_rel);
         cp.push_line(&format!("FOCUS dir={d_dir} file={d_file}"));
+
+        if !outline.is_empty() {
+            cp.push_line("S OUTLINE");
+            for symbol in &outline {
+                let d_name = cp.dict_id(&symbol.name);
+                let conf = format!("{:.2}", symbol.confidence.clamp(0.0, 1.0));
+                cp.push_line(&format!(
+                    "SYM kind={} name={d_name} file={d_file} L{}-L{} conf={conf}",
+                    symbol.kind, symbol.start_line, symbol.end_line
+                ));
+            }
+        }
 
         cp.push_line("S MAP");
         for (path, files, chunks) in &map_rows {
@@ -1544,6 +1562,105 @@ fn extract_asyncapi_summary_yaml_like(content: &str) -> AsyncApiSummary {
 
 fn count_leading_spaces(s: &str) -> usize {
     s.as_bytes().iter().take_while(|&&b| b == b' ').count()
+}
+
+#[derive(Debug, Clone)]
+struct OutlineSymbol {
+    kind: &'static str,
+    name: String,
+    start_line: usize,
+    end_line: usize,
+    confidence: f32,
+}
+
+async fn extract_code_outline(root: &Path, focus_rel: &str) -> Vec<OutlineSymbol> {
+    const MAX_FILE_BYTES: u64 = 512 * 1024;
+    const MAX_SYMBOLS: usize = 8;
+
+    let focus_lc = focus_rel.to_ascii_lowercase();
+    if !is_code_file_candidate(&focus_lc) {
+        return Vec::new();
+    }
+
+    let abs = root.join(focus_rel);
+    let Ok(meta) = tokio::fs::metadata(&abs).await else {
+        return Vec::new();
+    };
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return Vec::new();
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let chunker = context_code_chunker::Chunker::new(context_code_chunker::ChunkerConfig {
+            // Outline is a “meaning read”: avoid pulling long docs into the metadata.
+            include_documentation: false,
+            ..context_code_chunker::ChunkerConfig::default()
+        });
+        let chunks = chunker.chunk_file(abs).ok()?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut symbols: Vec<(u8, OutlineSymbol)> = Vec::new();
+        for chunk in chunks {
+            let Some(chunk_type) = chunk.metadata.chunk_type else {
+                continue;
+            };
+            if !chunk_type.is_declaration() {
+                continue;
+            }
+
+            let name = chunk.metadata.qualified_name.as_ref().cloned().or_else(|| {
+                let symbol = chunk.metadata.symbol_name.as_ref()?.trim();
+                if symbol.is_empty() {
+                    return None;
+                }
+                if let Some(scope) = chunk.metadata.parent_scope.as_ref().map(|s| s.trim()) {
+                    if !scope.is_empty() {
+                        return Some(format!("{scope}.{symbol}"));
+                    }
+                }
+                Some(symbol.to_string())
+            });
+            let Some(name) = name else {
+                continue;
+            };
+
+            let key = format!(
+                "{}:{}:{}:{}",
+                chunk.file_path, chunk.start_line, chunk.end_line, name
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+
+            symbols.push((
+                chunk_type.priority(),
+                OutlineSymbol {
+                    kind: chunk_type.as_str(),
+                    name,
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    confidence: 1.0,
+                },
+            ));
+        }
+
+        symbols.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.start_line.cmp(&b.1.start_line))
+                .then_with(|| a.1.name.cmp(&b.1.name))
+        });
+        Some(
+            symbols
+                .into_iter()
+                .map(|(_, s)| s)
+                .take(MAX_SYMBOLS)
+                .collect::<Vec<_>>(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default()
 }
 
 async fn detect_channel_mentions(
