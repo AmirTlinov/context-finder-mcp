@@ -7,7 +7,7 @@ use std::path::Path;
 use super::meaning_common::{
     build_ev_file_index, classify_boundaries, classify_files, contract_kind, directory_key,
     extract_asyncapi_flows, hash_and_count_lines, json_string, shrink_pack, BoundaryCandidate,
-    BoundaryKind, CognitivePack, EvidenceItem, EvidenceKind, FlowDirection,
+    BoundaryKind, CognitivePack, EvidenceItem, EvidenceKind,
 };
 use super::paths::normalize_relative_path;
 use super::schemas::meaning_pack::{MeaningPackBudget, MeaningPackRequest, MeaningPackResult};
@@ -87,6 +87,9 @@ pub(super) async fn compute_meaning_pack_result(
     for file in &contracts {
         dict_paths.insert(file.clone());
     }
+    for flow in &flows {
+        dict_paths.insert(flow.channel.clone());
+    }
     for boundary in &boundaries {
         dict_paths.insert(boundary.file.clone());
     }
@@ -142,6 +145,42 @@ pub(super) async fn compute_meaning_pack_result(
             cp.push_line(&format!(
                 "CONTRACT kind={} file={d}{ev}",
                 contract_kind(file)
+            ));
+        }
+    }
+
+    if !flows.is_empty() {
+        cp.push_line("S FLOWS");
+        for flow in &flows {
+            let contract_d = cp.dict_id(&flow.contract_file);
+            let chan_d = cp.dict_id(&flow.channel);
+            let actor = infer_flow_actor(&flow.contract_file, &entrypoints);
+            let actor_field = actor
+                .as_deref()
+                .map(|file| format!(" actor={}", cp.dict_id(file)))
+                .unwrap_or_default();
+            let conf = if actor.is_some() { 0.85 } else { 1.0 };
+            let proto_field = flow
+                .protocol
+                .as_deref()
+                .map(|p| format!(" proto={p}"))
+                .unwrap_or_default();
+            let ev_field = ev_file_index
+                .get(flow.contract_file.as_str())
+                .or_else(|| {
+                    actor
+                        .as_deref()
+                        .and_then(|file| ev_file_index.get(file.as_str()))
+                })
+                .map(|id| format!(" ev={id}"))
+                .unwrap_or_default();
+            cp.push_line(&format!(
+                "FLOW contract={contract_d} chan={chan_d} dir={}{}{} conf={:.2}{}",
+                flow.direction.as_str(),
+                proto_field,
+                actor_field,
+                conf,
+                ev_field
             ));
         }
     }
@@ -207,6 +246,51 @@ pub(super) async fn compute_meaning_pack_result(
 
     trim_to_budget(&mut result)?;
     Ok(result)
+}
+
+fn infer_flow_actor(contract_file: &str, entrypoints: &[String]) -> Option<String> {
+    if entrypoints.is_empty() {
+        return None;
+    }
+
+    // Root-level AsyncAPI: safe only when the repo clearly has a single entrypoint.
+    let Some((contract_dir, _)) = contract_file.rsplit_once('/') else {
+        return (entrypoints.len() == 1).then(|| entrypoints[0].clone());
+    };
+    if contract_dir.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<&String> = None;
+    let mut best_score: usize = 0;
+    for ep in entrypoints {
+        let ep_dir = ep.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let score = common_prefix_segments(contract_dir, ep_dir);
+        if score == 0 {
+            continue;
+        }
+        if score > best_score {
+            best = Some(ep);
+            best_score = score;
+            continue;
+        }
+        if score == best_score {
+            if let Some(current) = best {
+                if ep < current {
+                    best = Some(ep);
+                }
+            }
+        }
+    }
+    best.cloned()
+}
+
+fn common_prefix_segments(a: &str, b: &str) -> usize {
+    a.split('/')
+        .filter(|p| !p.is_empty())
+        .zip(b.split('/').filter(|p| !p.is_empty()))
+        .take_while(|(x, y)| x == y)
+        .count()
 }
 
 fn trim_to_budget(result: &mut MeaningPackResult) -> anyhow::Result<()> {
