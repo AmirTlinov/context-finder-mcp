@@ -9,7 +9,7 @@ if [[ ! -x "${CLI}" ]]; then
   CLI="./target/release/context-finder"
 fi
 if [[ ! -x "${CLI}" ]]; then
-  echo "[test_batch_search] CLI not found. Build it with: cargo build -p context-finder-cli" >&2
+  echo "[test_batch_search] CLI not found. Build it with: cargo build -p context-cli --bin context-finder" >&2
   exit 1
 fi
 

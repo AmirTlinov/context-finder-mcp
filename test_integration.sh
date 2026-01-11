@@ -6,7 +6,7 @@ cd "${ROOT_DIR}"
 
 CLI="${CLI:-./target/release/context-finder}"
 if [[ ! -x "${CLI}" ]]; then
-  echo "[test_integration] CLI not found at ${CLI}. Build it with: cargo build --release -p context-finder-cli" >&2
+  echo "[test_integration] CLI not found at ${CLI}. Build it with: cargo build --release -p context-cli --bin context-finder" >&2
   exit 1
 fi
 

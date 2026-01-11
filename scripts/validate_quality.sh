@@ -9,7 +9,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
 
 tmp_json="$(mktemp)"
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-finder-cli -- eval . \
+CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- eval . \
   --dataset datasets/golden_stub_smoke.json \
   --json --quiet > "${tmp_json}"
 
