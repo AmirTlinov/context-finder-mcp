@@ -47,6 +47,15 @@ Start with one of these:
 
 - `read_pack` — daily “project memory”: stable repo facts + key snippets under one `max_chars` budget.
 - `repo_onboarding_pack` — onboarding: map + a few key docs under one budget.
+- `meaning_pack` — meanings-first orientation: a compact “Cognitive Pack (CP)” with evidence pointers (high signal, low tokens).
+- `meaning_focus` — semantic zoom-in around a specific file/dir (scoped CP + evidence pointers).
+- `evidence_fetch` — fetch exact file text for evidence pointers only (verbatim + hash, detects staleness).
+
+Suggested “semantic zoom” flow:
+
+1) `meaning_pack` to get structure and the next best action.
+2) (optional) `meaning_focus` when you need to zoom in on a specific area before reading.
+3) `evidence_fetch` only for the specific EV pointers you need to verify or implement changes.
 
 ### Multi-session safety
 
@@ -57,6 +66,7 @@ When you have multiple agent sessions (or multiple repos open at once), prefer e
   1) per-connection session root (from MCP `roots/list`), then
   2) `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`, then
   3) (non-daemon only) server process cwd fallback.
+- If the client reports multiple workspace roots, Context Finder **does not guess** (fail-closed) and requires an explicit `path`.
 - Every tool response includes a `root_fingerprint` in tool meta so clients can detect cross-project mixups without exposing filesystem paths.
 - For human debugging, `response_mode=full` also prints `N: root_fingerprint=...` in the `.context` text output so you can eyeball provenance quickly.
 - Error responses also include this note when a root is known, so provenance is visible even when a call fails.

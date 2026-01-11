@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/meaning_pack.schema.json",
+  "title": "Meaning Pack Output (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "query", "format", "pack", "budget"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "query": { "type": "string" },
+    "format": {
+      "type": "string",
+      "description": "Compact meaning payload encoding (agent-first).",
+      "enum": ["cpv1"]
+    },
+    "pack": {
+      "type": "string",
+      "description": "Cognitive Pack (CP): ultra-compact meaning graph + evidence pointers. Intended for LLM consumption."
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_chars", "used_chars", "truncated"],
+      "properties": {
+        "max_chars": { "type": "integer", "minimum": 0 },
+        "used_chars": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "truncation": { "$ref": "./budget_truncation.schema.json" }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "description": "Optional next-step tool/actions for agents.",
+      "items": { "$ref": "./next_action.schema.json" },
+      "default": []
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional diagnostic metadata for agent tooling.",
+      "properties": {
+        "index_state": {
+          "anyOf": [{ "type": "null" }, { "$ref": "./index_state.schema.json" }],
+          "description": "Best-effort snapshot of the semantic index and freshness."
+        },
+        "root_fingerprint": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Stable fingerprint of the resolved project root (useful to detect cross-project context mixups without exposing paths)."
+        }
+      }
+    }
+  },
+  "$comment": "Rust source of truth: crates/cli/src/command/domain.rs::MeaningPackOutput (MEANING_PACK_VERSION=1)"
+}
+

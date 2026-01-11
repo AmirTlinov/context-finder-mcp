@@ -3,9 +3,9 @@ use super::super::{
     push_item_or_truncate, resolve_batch_refs, trim_output_to_budget, BatchBudget, BatchItemResult,
     BatchItemStatus, BatchRequest, BatchResult, BatchToolName, CallToolResult, CapabilitiesRequest,
     Content, ContextFinderService, ContextPackRequest, ContextRequest, DoctorRequest,
-    ExplainRequest, FileSliceRequest, GrepContextRequest, HelpRequest, ImpactRequest,
-    ListFilesRequest, MapRequest, McpError, OverviewRequest, ResponseMode, SearchRequest,
-    TextSearchRequest, ToolMeta, TraceRequest,
+    EvidenceFetchRequest, ExplainRequest, FileSliceRequest, GrepContextRequest, HelpRequest,
+    ImpactRequest, ListFilesRequest, MapRequest, McpError, MeaningFocusRequest, MeaningPackRequest,
+    OverviewRequest, ResponseMode, SearchRequest, TextSearchRequest, ToolMeta, TraceRequest,
 };
 use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::schemas::batch::BatchItem;
@@ -90,6 +90,9 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::Search => "search",
         BatchToolName::Context => "context",
         BatchToolName::ContextPack => "context_pack",
+        BatchToolName::MeaningPack => "meaning_pack",
+        BatchToolName::MeaningFocus => "meaning_focus",
+        BatchToolName::EvidenceFetch => "evidence_fetch",
         BatchToolName::Impact => "impact",
         BatchToolName::Trace => "trace",
         BatchToolName::Explain => "explain",
@@ -197,6 +200,21 @@ async fn dispatch_tool(
             ContextPackRequest,
             super::context_pack::context_pack,
             "context_pack"
+        ),
+        BatchToolName::MeaningPack => typed_call!(
+            MeaningPackRequest,
+            super::meaning_pack::meaning_pack,
+            "meaning_pack"
+        ),
+        BatchToolName::MeaningFocus => typed_call!(
+            MeaningFocusRequest,
+            super::meaning_focus::meaning_focus,
+            "meaning_focus"
+        ),
+        BatchToolName::EvidenceFetch => typed_call!(
+            EvidenceFetchRequest,
+            super::evidence_fetch::evidence_fetch,
+            "evidence_fetch"
         ),
         BatchToolName::Impact => typed_call!(ImpactRequest, super::impact::impact, "impact"),
         BatchToolName::Trace => typed_call!(TraceRequest, super::trace::trace, "trace"),

@@ -39,8 +39,11 @@ Notes:
 | `search`             | `SearchPayload`               | `SearchOutput`             |
 | `search_with_context`| `SearchWithContextPayload`    | `SearchOutput`             |
 | `context_pack`       | `ContextPackPayload`          | `ContextPackOutput`        |
+| `meaning_pack`       | `MeaningPackPayload`          | `MeaningPackOutput`        |
+| `meaning_focus`      | `MeaningFocusPayload`         | `MeaningPackOutput`        |
 | `task_pack`          | `TaskPackPayload`             | `TaskPackOutput`           |
 | `text_search`        | `TextSearchPayload`           | `TextSearchOutput`         |
+| `evidence_fetch`     | `EvidenceFetchPayload`        | `EvidenceFetchOutput`      |
 | `compare_search`     | `CompareSearchPayload`        | `ComparisonOutput`         |
 | `index`              | `IndexPayload`                | `IndexResponse`            |
 | `get_context`        | `GetContextPayload`           | `ContextOutput`            |

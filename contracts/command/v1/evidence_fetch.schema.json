@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/evidence_fetch.schema.json",
+  "title": "Evidence Fetch Output (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "items", "budget"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence_item" }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_chars", "used_chars", "truncated"],
+      "properties": {
+        "max_chars": { "type": "integer", "minimum": 0 },
+        "used_chars": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "truncation": { "$ref": "./budget_truncation.schema.json" }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "description": "Optional next-step tool/actions for agents.",
+      "items": { "$ref": "./next_action.schema.json" },
+      "default": []
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional diagnostic metadata for agent tooling.",
+      "properties": {
+        "index_state": {
+          "anyOf": [{ "type": "null" }, { "$ref": "./index_state.schema.json" }],
+          "description": "Best-effort snapshot of the semantic index and freshness."
+        },
+        "root_fingerprint": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Stable fingerprint of the resolved project root (useful to detect cross-project context mixups without exposing paths)."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence_pointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "start_line", "end_line"],
+      "properties": {
+        "file": { "type": "string", "description": "Repo-relative file path." },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "byte_start": { "type": "integer", "minimum": 0 },
+        "byte_end": { "type": "integer", "minimum": 0 },
+        "source_hash": {
+          "type": "string",
+          "description": "Hash of the file bytes (invalidates evidence on change)."
+        }
+      }
+    },
+    "evidence_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence", "content", "truncated"],
+      "properties": {
+        "evidence": { "$ref": "#/$defs/evidence_pointer" },
+        "content": { "type": "string" },
+        "truncated": { "type": "boolean" },
+        "stale": {
+          "type": "boolean",
+          "description": "Whether source_hash mismatch was detected (best-effort).",
+          "default": false
+        }
+      }
+    }
+  },
+  "$comment": "Rust source of truth: crates/cli/src/command/domain.rs::EvidenceFetchOutput (EVIDENCE_FETCH_VERSION=1)"
+}
+

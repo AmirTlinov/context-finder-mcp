@@ -13,6 +13,8 @@ use std::path::PathBuf;
 pub const DEFAULT_LIMIT: usize = 10;
 pub const DEFAULT_CONTEXT_WINDOW: usize = 20;
 pub const BATCH_VERSION: u32 = 1;
+pub const MEANING_PACK_VERSION: u32 = 1;
+pub const EVIDENCE_FETCH_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 pub struct CommandRequest {
@@ -35,8 +37,11 @@ pub enum CommandAction {
     Search,
     SearchWithContext,
     ContextPack,
+    MeaningPack,
+    MeaningFocus,
     TaskPack,
     TextSearch,
+    EvidenceFetch,
     Batch,
     Capabilities,
     Index,
@@ -56,8 +61,11 @@ impl CommandAction {
             CommandAction::Search => "search",
             CommandAction::SearchWithContext => "search_with_context",
             CommandAction::ContextPack => "context_pack",
+            CommandAction::MeaningPack => "meaning_pack",
+            CommandAction::MeaningFocus => "meaning_focus",
             CommandAction::TaskPack => "task_pack",
             CommandAction::TextSearch => "text_search",
+            CommandAction::EvidenceFetch => "evidence_fetch",
             CommandAction::Batch => "batch",
             CommandAction::Capabilities => "capabilities",
             CommandAction::Index => "index",
@@ -654,6 +662,30 @@ pub struct ContextPackPayload {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct MeaningPackPayload {
+    /// Natural-language query describing what to orient on.
+    pub query: String,
+    #[serde(default)]
+    pub project: Option<PathBuf>,
+    /// Maximum UTF-8 characters for the output payload.
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MeaningFocusPayload {
+    /// Repo-relative file or directory path to focus on.
+    pub focus: String,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub project: Option<PathBuf>,
+    /// Maximum UTF-8 characters for the output payload.
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TaskPackPayload {
     pub intent: String,
     #[serde(default)]
@@ -754,6 +786,86 @@ pub struct GetContextPayload {
 
 fn default_window() -> usize {
     DEFAULT_CONTEXT_WINDOW
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EvidencePointer {
+    pub file: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    #[serde(default)]
+    pub byte_start: Option<usize>,
+    #[serde(default)]
+    pub byte_end: Option<usize>,
+    #[serde(default)]
+    pub source_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvidenceFetchPayload {
+    #[serde(default)]
+    pub project: Option<PathBuf>,
+    pub items: Vec<EvidencePointer>,
+    /// Maximum UTF-8 characters for the entire response payload.
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    /// Maximum lines per evidence item (soft cap).
+    #[serde(default)]
+    pub max_lines: Option<usize>,
+    /// When true, treat source_hash mismatches as an error.
+    #[serde(default)]
+    pub strict_hash: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MeaningPackBudget {
+    pub max_chars: usize,
+    pub used_chars: usize,
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<BudgetTruncation>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MeaningPackOutput {
+    pub version: u32,
+    pub query: String,
+    pub format: String,
+    pub pack: String,
+    pub budget: MeaningPackBudget,
+    #[serde(default)]
+    pub next_actions: Vec<ToolNextAction>,
+    #[serde(default)]
+    pub meta: context_indexer::ToolMeta,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvidenceFetchBudget {
+    pub max_chars: usize,
+    pub used_chars: usize,
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<BudgetTruncation>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvidenceFetchItem {
+    pub evidence: EvidencePointer,
+    pub content: String,
+    pub truncated: bool,
+    #[serde(default)]
+    pub stale: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvidenceFetchOutput {
+    pub version: u32,
+    pub items: Vec<EvidenceFetchItem>,
+    pub budget: EvidenceFetchBudget,
+    #[serde(default)]
+    pub next_actions: Vec<ToolNextAction>,
+    #[serde(default)]
+    pub meta: context_indexer::ToolMeta,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

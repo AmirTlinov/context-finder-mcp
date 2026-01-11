@@ -5,6 +5,7 @@ mod config;
 mod context;
 mod eval;
 mod index;
+mod meaning;
 mod repo_onboarding_pack;
 mod search;
 mod text_search;
@@ -25,6 +26,7 @@ pub struct Services {
     context: context::ContextService,
     eval: eval::EvalService,
     index: index::IndexService,
+    meaning: meaning::MeaningService,
     repo_onboarding_pack: repo_onboarding_pack::RepoOnboardingPackService,
     search: search::SearchService,
     text_search: text_search::TextSearchService,
@@ -43,6 +45,7 @@ impl Services {
             context: context::ContextService,
             eval: eval::EvalService,
             index: index::IndexService::new(health.clone()),
+            meaning: meaning::MeaningService,
             repo_onboarding_pack: repo_onboarding_pack::RepoOnboardingPackService,
             search: search::SearchService::new(graph, health, cache),
             text_search: text_search::TextSearchService,
@@ -73,8 +76,11 @@ impl Services {
             CommandAction::Search => self.search.basic(payload, ctx).await,
             CommandAction::SearchWithContext => self.search.with_context(payload, ctx).await,
             CommandAction::ContextPack => self.search.context_pack(payload, ctx).await,
+            CommandAction::MeaningPack => self.meaning.meaning_pack(payload, ctx).await,
+            CommandAction::MeaningFocus => self.meaning.meaning_focus(payload, ctx).await,
             CommandAction::TaskPack => self.search.task_pack(payload, ctx).await,
             CommandAction::TextSearch => self.text_search.run(payload, ctx).await,
+            CommandAction::EvidenceFetch => self.meaning.evidence_fetch(payload, ctx).await,
             CommandAction::Batch => unreachable!("batch action is handled by route()"),
             CommandAction::GetContext => self.context.get(payload, ctx).await,
             CommandAction::ListSymbols => self.context.list_symbols(payload, ctx).await,

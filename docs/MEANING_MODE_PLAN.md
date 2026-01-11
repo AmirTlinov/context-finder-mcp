@@ -22,7 +22,7 @@ We add a new, deterministic output layer:
    - boundaries (CLI/HTTP/env/config/files/DB/events)
    - entrypoints and “centers of gravity”
    - symbols and relationships (defines/imports/calls/reads/writes)
-   - contracts (OpenAPI/JSON Schema/Proto) as first-class nodes
+   - contracts (OpenAPI/AsyncAPI/JSON Schema/Proto) as first-class nodes
 
 2) **Evidence Pointers (EV)** — compact references to exact source material:
    - always includes provenance (`source_hash`, file path, span)
@@ -434,4 +434,3 @@ Exit criteria:
    - how far do we go without turning v0 into “semantic everything”?
 
 Answer these by running Phase 0 + a minimal Phase 1 eval; do not bikeshed upfront.
-

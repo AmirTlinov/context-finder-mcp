@@ -8,11 +8,14 @@ use super::batch::{
 };
 use super::catalog;
 use super::cursor::{decode_cursor, encode_cursor, CURSOR_VERSION};
+use super::evidence_fetch::compute_evidence_fetch_result;
 use super::file_slice::compute_file_slice_result;
 use super::grep_context::{compute_grep_context_result, GrepContextComputeOptions};
 pub(super) use super::list_files::finalize_list_files_budget;
 use super::list_files::{compute_list_files_result, decode_list_files_cursor};
 use super::map::{compute_map_result, decode_map_cursor};
+use super::meaning_focus::compute_meaning_focus_result;
+use super::meaning_pack::compute_meaning_pack_result;
 use super::paths::normalize_relative_path;
 use super::repo_onboarding_pack::compute_repo_onboarding_pack_result;
 use super::schemas::batch::{
@@ -26,6 +29,7 @@ use super::schemas::doctor::{
     DoctorObservability, DoctorProjectResult, DoctorRequest, DoctorResult,
     DoctorWarmIndexersObservability,
 };
+use super::schemas::evidence_fetch::EvidenceFetchRequest;
 use super::schemas::explain::{ExplainRequest, ExplainResult};
 use super::schemas::file_slice::{FileSliceCursorV1, FileSliceRequest};
 use super::schemas::grep_context::{GrepContextCursorV1, GrepContextRequest};
@@ -35,6 +39,8 @@ use super::schemas::list_files::ListFilesRequest;
 #[cfg(test)]
 use super::schemas::list_files::ListFilesTruncation;
 use super::schemas::map::MapRequest;
+use super::schemas::meaning_focus::MeaningFocusRequest;
+use super::schemas::meaning_pack::MeaningPackRequest;
 use super::schemas::overview::{
     GraphStats, KeyTypeInfo, LayerInfo, OverviewRequest, OverviewResult, ProjectInfo,
 };
@@ -249,20 +255,17 @@ impl ContextFinderService {
                 .map_err(|err| format!("Invalid path from {var}: {err}"))?;
             let root_display = root.to_string_lossy().to_string();
             let mut session = self.session.lock().await;
-            let root_changed = match session.root.as_ref() {
-                Some(prev) => prev != &root,
-                None => true,
-            };
-            session.root = Some(root.clone());
-            session.root_display = Some(root_display.clone());
-            session.focus_file = None;
-            if root_changed {
-                session.clear_working_set();
-            }
+            session.set_root(root.clone(), root_display.clone(), None);
             return Ok((root, root_display));
         }
 
         if !self.allow_cwd_root_fallback {
+            if self.session.lock().await.mcp_roots_ambiguous {
+                return Err(
+                    "Missing project root: multiple MCP workspace roots detected; pass `path` to disambiguate."
+                        .to_string(),
+                );
+            }
             return Err(
                 "Missing project root: pass `path` (recommended) or enable MCP roots, or set CONTEXT_ROOT/CONTEXT_PROJECT_ROOT."
                     .to_string(),
@@ -276,16 +279,7 @@ impl ContextFinderService {
             canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
         let root_display = root.to_string_lossy().to_string();
         let mut session = self.session.lock().await;
-        let root_changed = match session.root.as_ref() {
-            Some(prev) => prev != &root,
-            None => true,
-        };
-        session.root = Some(root.clone());
-        session.root_display = Some(root_display.clone());
-        session.focus_file = None;
-        if root_changed {
-            session.clear_working_set();
-        }
+        session.set_root(root.clone(), root_display.clone(), None);
         Ok((root, root_display))
     }
 
@@ -524,28 +518,39 @@ impl ServerHandler for ContextFinderService {
                         .ok()
                         .and_then(|r| r.ok());
 
-                    let root = roots.as_ref().and_then(|roots| {
-                        roots
-                            .roots
-                            .iter()
-                            .find_map(|root| root_path_from_mcp_uri(&root.uri))
-                    });
-                    let root = root.and_then(|path| match canonicalize_root_path(&path) {
-                        Ok(root) => Some(root),
-                        Err(err) => {
-                            log::debug!("Ignoring invalid MCP root {path:?}: {err}");
-                            None
+                    let mut candidates: Vec<PathBuf> = Vec::new();
+                    if let Some(roots) = roots.as_ref() {
+                        for root in &roots.roots {
+                            let Some(path) = root_path_from_mcp_uri(&root.uri) else {
+                                continue;
+                            };
+                            match canonicalize_root_path(&path) {
+                                Ok(root) => candidates.push(root),
+                                Err(err) => {
+                                    log::debug!("Ignoring invalid MCP root {path:?}: {err}");
+                                }
+                            }
                         }
-                    });
+                    }
+                    candidates.sort();
+                    candidates.dedup();
 
                     let mut session = session.lock().await;
-                    if let Some(root) = root {
-                        let root_display = root.to_string_lossy().to_string();
-                        // Only set the session root if the tool call path did not already
-                        // establish one. Explicit per-call `path` should win over workspace roots.
-                        if session.root.is_none() {
-                            session.root = Some(root);
-                            session.root_display = Some(root_display);
+                    // Only set the session root if the tool call path did not already establish one.
+                    // Explicit per-call `path` should win over workspace roots.
+                    if session.root.is_none() {
+                        match candidates.len() {
+                            1 => {
+                                let root = candidates.remove(0);
+                                let root_display = root.to_string_lossy().to_string();
+                                session.set_root(root, root_display, None);
+                            }
+                            n if n > 1 => {
+                                // Fail-closed: do not guess a root when the workspace is multi-root.
+                                // This prevents cross-project contamination in shared-backend mode.
+                                session.mcp_roots_ambiguous = true;
+                            }
+                            _ => {}
                         }
                     }
                     session.roots_pending = false;
@@ -2140,6 +2145,10 @@ struct SessionDefaults {
     root_display: Option<String>,
     focus_file: Option<String>,
     roots_pending: bool,
+    /// Whether MCP `roots/list` returned multiple viable workspace roots and we refused to guess.
+    ///
+    /// In this state, callers must pass an explicit `path` (or an env override) to disambiguate.
+    mcp_roots_ambiguous: bool,
     // Working-set: ephemeral, per-connection state (no disk). Used to avoid repeating the same
     // anchors/snippets across multiple calls in one agent session.
     seen_snippet_files: VecDeque<String>,
@@ -2156,6 +2165,7 @@ impl SessionDefaults {
         self.root_display = None;
         self.focus_file = None;
         self.roots_pending = roots_pending;
+        self.mcp_roots_ambiguous = false;
         self.clear_working_set();
     }
 
@@ -2167,6 +2177,7 @@ impl SessionDefaults {
         self.root = Some(root);
         self.root_display = Some(root_display);
         self.focus_file = focus_file;
+        self.mcp_roots_ambiguous = false;
         if root_changed {
             self.clear_working_set();
         }
@@ -3131,6 +3142,32 @@ impl ContextFinderService {
         ))
     }
 
+    /// Meaning-first pack (facts-only map + evidence pointers, token-efficient).
+    #[tool(
+        description = "Meaning-first pack: returns a token-efficient Cognitive Pack (CP) with high-signal repo meaning (structure + candidates) and evidence pointers for on-demand verbatim reads."
+    )]
+    pub async fn meaning_pack(
+        &self,
+        Parameters(request): Parameters<MeaningPackRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::meaning_pack::meaning_pack(self, request).await?,
+        ))
+    }
+
+    /// Meaning-first focus (semantic zoom): scoped candidates + evidence pointers.
+    #[tool(
+        description = "Meaning-first focus (semantic zoom): returns a token-efficient Cognitive Pack (CP) scoped to a file/dir, with evidence pointers for on-demand verbatim reads."
+    )]
+    pub async fn meaning_focus(
+        &self,
+        Parameters(request): Parameters<MeaningFocusRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::meaning_focus::meaning_focus(self, request).await?,
+        ))
+    }
+
     /// Bounded exact text search (literal substring), as a safe `rg` replacement.
     #[tool(
         description = "Search for an exact text pattern in project files with bounded output (rg-like, but safe for agent context). Uses corpus if available, otherwise scans files without side effects."
@@ -3154,6 +3191,19 @@ impl ContextFinderService {
     ) -> Result<CallToolResult, McpError> {
         Ok(strip_structured_content(
             router::file_slice::file_slice(self, &request).await?,
+        ))
+    }
+
+    /// Fetch exact evidence spans (verbatim) referenced by meaning packs.
+    #[tool(
+        description = "Evidence fetch (verbatim): read exact line windows for one or more evidence pointers. Intended as the on-demand 'territory' step after meaning-first navigation."
+    )]
+    pub async fn evidence_fetch(
+        &self,
+        Parameters(request): Parameters<EvidenceFetchRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::evidence_fetch::evidence_fetch(self, request).await?,
         ))
     }
 

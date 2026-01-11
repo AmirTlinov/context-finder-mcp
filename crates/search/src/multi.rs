@@ -492,6 +492,64 @@ impl MultiModelHybridSearch {
             return None;
         }
 
+        // Heuristic: prefer the module implementation file over `mod.rs` when the identifier
+        // matches a Rust module name.
+        //
+        // Example: query `cursor_alias` should prefer `router/cursor_alias.rs` over
+        // `router/mod.rs` which only declares `mod cursor_alias;`.
+        if hits.len() == 1 {
+            let hit = hits[0];
+            let chunk = self.chunks.get(hit)?;
+            if chunk.file_path.ends_with("/mod.rs") {
+                if let Some((dir, _)) = chunk.file_path.rsplit_once('/') {
+                    let sibling = format!("{dir}/{needle}.rs");
+                    let mut sibling_hits: Vec<usize> = self
+                        .chunks
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, chunk)| {
+                            if self.rejected.get(idx).copied().unwrap_or(false) {
+                                return None;
+                            }
+                            if chunk.file_path == sibling {
+                                return Some(idx);
+                            }
+                            None
+                        })
+                        .collect();
+
+                    if !sibling_hits.is_empty() {
+                        sibling_hits.sort_by(|&a, &b| {
+                            self.chunks[a]
+                                .file_path
+                                .cmp(&self.chunks[b].file_path)
+                                .then_with(|| {
+                                    self.chunks[a].start_line.cmp(&self.chunks[b].start_line)
+                                })
+                                .then_with(|| self.chunks[a].end_line.cmp(&self.chunks[b].end_line))
+                        });
+                        sibling_hits.truncate(limit.max(1));
+
+                        let results = sibling_hits
+                            .into_iter()
+                            .enumerate()
+                            .filter_map(|(rank, idx)| {
+                                let chunk = self.chunks.get(idx)?.clone();
+                                let id = format!(
+                                    "{}:{}:{}",
+                                    chunk.file_path, chunk.start_line, chunk.end_line
+                                );
+                                #[allow(clippy::cast_precision_loss)]
+                                let score = (rank as f32).mul_add(-1e-3, 1.0).max(0.0);
+                                Some(SearchResult { chunk, score, id })
+                            })
+                            .collect();
+                        return Some(results);
+                    }
+                }
+            }
+        }
+
         hits.sort_by(|&a, &b| {
             self.chunks[a]
                 .file_path

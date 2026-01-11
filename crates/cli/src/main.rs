@@ -745,7 +745,10 @@ async fn run_eval(args: EvalArgs, cache_cfg: CacheConfig) -> Result<()> {
     let request = CommandRequest {
         action: CommandAction::Eval,
         payload: serde_json::to_value(payload)?,
-        options: None,
+        options: Some(crate::command::domain::RequestOptions {
+            max_reindex_ms: 60_000,
+            ..Default::default()
+        }),
         config: None,
     };
 
@@ -826,7 +829,10 @@ async fn run_eval_compare(args: EvalCompareArgs, cache_cfg: CacheConfig) -> Resu
     let request = CommandRequest {
         action: CommandAction::EvalCompare,
         payload: serde_json::to_value(payload)?,
-        options: None,
+        options: Some(crate::command::domain::RequestOptions {
+            max_reindex_ms: 60_000,
+            ..Default::default()
+        }),
         config: None,
     };
 

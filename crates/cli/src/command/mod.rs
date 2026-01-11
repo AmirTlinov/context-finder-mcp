@@ -11,10 +11,12 @@ pub use domain::{
     classify_error, CommandAction, CommandRequest, CommandResponse, CommandStatus,
     ContextPackOutput, ContextPackPayload, EvalCacheMode, EvalCaseResult, EvalCompareCase,
     EvalCompareConfig, EvalCompareOutput, EvalComparePayload, EvalCompareSummary, EvalDatasetMeta,
-    EvalHit, EvalOutput, EvalPayload, EvalRun, EvalRunSummary, EvalSummary, Hint, HintKind,
-    IndexPayload, IndexResponse, ListSymbolsPayload, MapOutput, MapPayload, ResponseMeta,
-    SearchOutput, SearchPayload, SearchStrategy, SearchWithContextPayload, SymbolsOutput,
-    TaskPackOutput, TaskPackPayload, TextSearchOutput, TextSearchPayload,
+    EvalHit, EvalOutput, EvalPayload, EvalRun, EvalRunSummary, EvalSummary, EvidenceFetchOutput,
+    EvidenceFetchPayload, EvidencePointer, Hint, HintKind, IndexPayload, IndexResponse,
+    ListSymbolsPayload, MapOutput, MapPayload, MeaningFocusPayload, MeaningPackOutput,
+    MeaningPackPayload, ResponseMeta, SearchOutput, SearchPayload, SearchStrategy,
+    SearchWithContextPayload, SymbolsOutput, TaskPackOutput, TaskPackPayload, TextSearchOutput,
+    TextSearchPayload,
 };
 
 use crate::cache::CacheConfig;

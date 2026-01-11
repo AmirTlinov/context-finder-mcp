@@ -625,6 +625,7 @@ impl ProjectIndexer {
             store_dirty = true;
         }
 
+        check_budget(deadline)?;
         if corpus_dirty {
             corpus.save(&corpus_path).await?;
         }
@@ -633,6 +634,7 @@ impl ProjectIndexer {
         }
         self.save_mtimes(&mtimes).await?;
 
+        check_budget(deadline)?;
         let watermark = Watermark::Git {
             computed_at_unix_ms: Some(git_state.computed_at_unix_ms),
             git_head: git_state.git_head,

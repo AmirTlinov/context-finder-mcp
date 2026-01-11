@@ -32,6 +32,8 @@ pub fn action_requires_index(action: &crate::command::domain::CommandAction) -> 
         A::Search
             | A::SearchWithContext
             | A::ContextPack
+            | A::MeaningPack
+            | A::MeaningFocus
             | A::TaskPack
             | A::CompareSearch
             | A::Map

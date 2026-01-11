@@ -47,6 +47,9 @@ pub(super) fn prepare_item_input(
             | BatchToolName::FileSlice
             | BatchToolName::ListFiles
             | BatchToolName::GrepContext
+            | BatchToolName::MeaningPack
+            | BatchToolName::MeaningFocus
+            | BatchToolName::EvidenceFetch
     ) {
         if let serde_json::Value::Object(ref mut map) = input {
             if !map.contains_key("max_chars") {

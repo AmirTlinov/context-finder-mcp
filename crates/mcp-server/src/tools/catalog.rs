@@ -20,6 +20,14 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Map + key docs + next_actions (best first call).",
     },
     ToolDescriptor {
+        name: "meaning_pack",
+        summary: "Meaning-first CP (high signal) + evidence pointers.",
+    },
+    ToolDescriptor {
+        name: "meaning_focus",
+        summary: "Meaning-first semantic zoom-in around a file/dir (scoped CP + evidence).",
+    },
+    ToolDescriptor {
         name: "read_pack",
         summary: "One-call file/grep/query/onboarding with cursor-only continuation.",
     },
@@ -42,6 +50,10 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
     ToolDescriptor {
         name: "file_slice",
         summary: "Bounded file window (root-locked, hashed).",
+    },
+    ToolDescriptor {
+        name: "evidence_fetch",
+        summary: "Verbatim fetch for one or more evidence pointers (meaning → territory).",
     },
     ToolDescriptor {
         name: "grep_context",
