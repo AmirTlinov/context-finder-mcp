@@ -24,6 +24,7 @@ If you are integrating Context programmatically, treat the **contracts** as the 
 
 - [docs/COMMAND_RFC.md](COMMAND_RFC.md) — Command API overview (links to canonical schemas)
 - [docs/CONTEXT_PACK.md](CONTEXT_PACK.md) — Context Pack v1 overview (links to canonical schema)
+- [docs/MEANING_MODE_PLAN.md](MEANING_MODE_PLAN.md) — meanings-first context roadmap (Meaning Graph + Evidence + token-efficient Cognitive Pack)
 - MCP: tool schemas live in [crates/mcp-server/src/tools/schemas/](../crates/mcp-server/src/tools/schemas/) and are dispatched via [crates/mcp-server/src/tools/dispatch/](../crates/mcp-server/src/tools/dispatch/); [crates/mcp-server/src/tools/mod.rs](../crates/mcp-server/src/tools/mod.rs) is the assembly entrypoint (wires schemas + routing)
 
 ## Contribution / dev workflow
