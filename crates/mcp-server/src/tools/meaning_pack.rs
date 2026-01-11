@@ -5,9 +5,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use super::meaning_common::{
-    build_ev_file_index, classify_boundaries, classify_files, contract_kind, directory_key,
-    extract_asyncapi_flows, hash_and_count_lines, json_string, shrink_pack, BoundaryCandidate,
-    BoundaryKind, CognitivePack, EvidenceItem, EvidenceKind,
+    build_ev_file_index, classify_boundaries, classify_files, contract_kind, detect_brokers,
+    detect_channel_mentions, directory_key, extract_asyncapi_flows, hash_and_count_lines,
+    infer_actor_by_path, infer_flow_actor, json_string, shrink_pack, BoundaryCandidate,
+    BoundaryKind, BrokerCandidate, CognitivePack, EvidenceItem, EvidenceKind, FlowEdge,
 };
 use super::paths::normalize_relative_path;
 use super::schemas::meaning_pack::{MeaningPackBudget, MeaningPackRequest, MeaningPackResult};
@@ -67,7 +68,20 @@ pub(super) async fn compute_meaning_pack_result(
 
     let flows = extract_asyncapi_flows(root, &contracts).await;
 
-    let evidence = collect_evidence(root, &entrypoints, &contracts, &boundaries).await;
+    let channels = flows.iter().map(|f| f.channel.clone()).collect::<Vec<_>>();
+    let channel_mentions = detect_channel_mentions(root, &files, &channels).await;
+
+    let brokers = detect_brokers(root, &files, &flows).await;
+
+    let evidence = collect_evidence(
+        root,
+        &entrypoints,
+        &contracts,
+        &boundaries,
+        &flows,
+        &brokers,
+    )
+    .await;
     let ev_file_index = build_ev_file_index(&evidence);
 
     let root_fp = context_indexer::root_fingerprint(root_display);
@@ -89,6 +103,9 @@ pub(super) async fn compute_meaning_pack_result(
     }
     for flow in &flows {
         dict_paths.insert(flow.channel.clone());
+    }
+    for broker in &brokers {
+        dict_paths.insert(broker.file.clone());
     }
     for boundary in &boundaries {
         dict_paths.insert(boundary.file.clone());
@@ -112,7 +129,7 @@ pub(super) async fn compute_meaning_pack_result(
             let d = cp.dict_id(&boundary.file);
             let conf = format!("{:.2}", boundary.confidence.clamp(0.0, 1.0));
             let ev = ev_file_index
-                .get(boundary.file.as_str())
+                .get(&boundary.file)
                 .map(|id| format!(" ev={id}"))
                 .unwrap_or_default();
             cp.push_line(&format!(
@@ -127,7 +144,7 @@ pub(super) async fn compute_meaning_pack_result(
         for file in &entrypoints {
             let d = cp.dict_id(file);
             let ev = ev_file_index
-                .get(file.as_str())
+                .get(file)
                 .map(|id| format!(" ev={id}"))
                 .unwrap_or_default();
             cp.push_line(&format!("ENTRY file={d}{ev}"));
@@ -139,7 +156,7 @@ pub(super) async fn compute_meaning_pack_result(
         for file in &contracts {
             let d = cp.dict_id(file);
             let ev = ev_file_index
-                .get(file.as_str())
+                .get(file)
                 .map(|id| format!(" ev={id}"))
                 .unwrap_or_default();
             cp.push_line(&format!(
@@ -150,31 +167,41 @@ pub(super) async fn compute_meaning_pack_result(
     }
 
     if !flows.is_empty() {
-        cp.push_line("S FLOWS");
+        let mut flow_lines: Vec<String> = Vec::new();
         for flow in &flows {
             let contract_d = cp.dict_id(&flow.contract_file);
             let chan_d = cp.dict_id(&flow.channel);
-            let actor = infer_flow_actor(&flow.contract_file, &entrypoints);
+
+            let actor_from_mentions = channel_mentions
+                .get(&flow.channel)
+                .and_then(|hit| infer_actor_by_path(hit, &entrypoints));
+            let (actor, actor_conf) = if let Some(actor) = actor_from_mentions {
+                (Some(actor), 0.95)
+            } else if let Some(actor) = infer_flow_actor(&flow.contract_file, &entrypoints) {
+                (Some(actor), 0.85)
+            } else {
+                (None, 1.0)
+            };
             let actor_field = actor
                 .as_deref()
                 .map(|file| format!(" actor={}", cp.dict_id(file)))
                 .unwrap_or_default();
-            let conf = if actor.is_some() { 0.85 } else { 1.0 };
+            let conf = if actor.is_some() { actor_conf } else { 1.0 };
+
             let proto_field = flow
                 .protocol
                 .as_deref()
                 .map(|p| format!(" proto={p}"))
                 .unwrap_or_default();
             let ev_field = ev_file_index
-                .get(flow.contract_file.as_str())
-                .or_else(|| {
-                    actor
-                        .as_deref()
-                        .and_then(|file| ev_file_index.get(file.as_str()))
-                })
+                .get(&flow.contract_file)
+                .or_else(|| actor.as_deref().and_then(|file| ev_file_index.get(file)))
                 .map(|id| format!(" ev={id}"))
                 .unwrap_or_default();
-            cp.push_line(&format!(
+            if ev_field.is_empty() {
+                continue;
+            }
+            flow_lines.push(format!(
                 "FLOW contract={contract_d} chan={chan_d} dir={}{}{} conf={:.2}{}",
                 flow.direction.as_str(),
                 proto_field,
@@ -182,6 +209,37 @@ pub(super) async fn compute_meaning_pack_result(
                 conf,
                 ev_field
             ));
+        }
+        if !flow_lines.is_empty() {
+            cp.push_line("S FLOWS");
+            for line in &flow_lines {
+                cp.push_line(line);
+            }
+        }
+    }
+
+    if !brokers.is_empty() {
+        let mut broker_lines: Vec<String> = Vec::new();
+        for broker in &brokers {
+            let d = cp.dict_id(&broker.file);
+            let conf = format!("{:.2}", broker.confidence.clamp(0.0, 1.0));
+            let ev = ev_file_index
+                .get(&broker.file)
+                .map(|id| format!(" ev={id}"))
+                .unwrap_or_default();
+            if ev.is_empty() {
+                continue;
+            }
+            broker_lines.push(format!(
+                "BROKER proto={} file={d} conf={conf}{ev}",
+                broker.proto
+            ));
+        }
+        if !broker_lines.is_empty() {
+            cp.push_line("S BROKERS");
+            for line in &broker_lines {
+                cp.push_line(line);
+            }
         }
     }
 
@@ -248,51 +306,6 @@ pub(super) async fn compute_meaning_pack_result(
     Ok(result)
 }
 
-fn infer_flow_actor(contract_file: &str, entrypoints: &[String]) -> Option<String> {
-    if entrypoints.is_empty() {
-        return None;
-    }
-
-    // Root-level AsyncAPI: safe only when the repo clearly has a single entrypoint.
-    let Some((contract_dir, _)) = contract_file.rsplit_once('/') else {
-        return (entrypoints.len() == 1).then(|| entrypoints[0].clone());
-    };
-    if contract_dir.is_empty() {
-        return None;
-    }
-
-    let mut best: Option<&String> = None;
-    let mut best_score: usize = 0;
-    for ep in entrypoints {
-        let ep_dir = ep.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-        let score = common_prefix_segments(contract_dir, ep_dir);
-        if score == 0 {
-            continue;
-        }
-        if score > best_score {
-            best = Some(ep);
-            best_score = score;
-            continue;
-        }
-        if score == best_score {
-            if let Some(current) = best {
-                if ep < current {
-                    best = Some(ep);
-                }
-            }
-        }
-    }
-    best.cloned()
-}
-
-fn common_prefix_segments(a: &str, b: &str) -> usize {
-    a.split('/')
-        .filter(|p| !p.is_empty())
-        .zip(b.split('/').filter(|p| !p.is_empty()))
-        .take_while(|(x, y)| x == y)
-        .count()
-}
-
 fn trim_to_budget(result: &mut MeaningPackResult) -> anyhow::Result<()> {
     let max_chars = result.budget.max_chars;
     let used = enforce_max_chars(
@@ -346,9 +359,53 @@ async fn collect_evidence(
     entrypoints: &[String],
     contracts: &[String],
     boundaries: &[BoundaryCandidate],
+    flows: &[FlowEdge],
+    brokers: &[BrokerCandidate],
 ) -> Vec<EvidenceItem> {
     let mut candidates: Vec<(EvidenceKind, String)> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
+
+    // Ensure event-driven claims have at least one evidence anchor (contract and/or actor).
+    let mut must_contracts: Vec<String> = Vec::new();
+    let mut must_entrypoints: Vec<String> = Vec::new();
+    for flow in flows {
+        if must_contracts.len() < 2 && !must_contracts.iter().any(|c| c == &flow.contract_file) {
+            must_contracts.push(flow.contract_file.clone());
+        }
+        if must_entrypoints.len() < 2 {
+            if let Some(actor) = infer_flow_actor(&flow.contract_file, entrypoints) {
+                if !must_entrypoints.iter().any(|e| e == &actor) {
+                    must_entrypoints.push(actor);
+                }
+            }
+        }
+        if must_contracts.len() >= 2 && must_entrypoints.len() >= 2 {
+            break;
+        }
+    }
+    for file in &must_contracts {
+        if !seen.insert(file.as_str()) {
+            continue;
+        }
+        candidates.push((EvidenceKind::Contract, file.clone()));
+    }
+    for file in &must_entrypoints {
+        if !seen.insert(file.as_str()) {
+            continue;
+        }
+        candidates.push((EvidenceKind::Entrypoint, file.clone()));
+    }
+
+    // Ensure broker config claims have evidence anchors.
+    for broker in brokers.iter().take(2) {
+        if !seen.insert(broker.file.as_str()) {
+            continue;
+        }
+        candidates.push((
+            EvidenceKind::Boundary(BoundaryKind::Config),
+            broker.file.clone(),
+        ));
+    }
 
     for file in entrypoints.iter().take(DEFAULT_MAX_EVIDENCE) {
         if !seen.insert(file.as_str()) {
@@ -376,7 +433,7 @@ async fn collect_evidence(
     }
 
     let mut out = Vec::new();
-    for (kind, rel) in candidates {
+    for (kind, rel) in candidates.into_iter().take(DEFAULT_MAX_EVIDENCE) {
         let abs = root.join(&rel);
         let (hash, lines) = hash_and_count_lines(&abs).await.ok().unwrap_or_default();
         out.push(EvidenceItem {

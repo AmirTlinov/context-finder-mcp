@@ -23,6 +23,8 @@ We add a new, deterministic output layer:
    - entrypoints and “centers of gravity”
    - symbols and relationships (defines/imports/calls/reads/writes)
    - contracts (OpenAPI/AsyncAPI/JSON Schema/Proto) as first-class nodes
+   - event flows (contract ↔ channel; publish/subscribe; protocol hints)
+   - broker hints (Kafka/NATS/AMQP/etc) inferred from infra config (compose/k8s), evidence-backed
 
 2) **Evidence Pointers (EV)** — compact references to exact source material:
    - always includes provenance (`source_hash`, file path, span)
@@ -185,6 +187,7 @@ CP v0 structure:
 - `N` lines: nodes: `n7 kind dName dFile [facets...] [ev:ev3,ev8]`
 - `E` lines: edges: `n7 rel n2 [ev:ev3]`
 - `EV` lines: evidence: `ev3 dFile L10 L25 hash=...`
+- (extension) `FLOW` / `BROKER` lines: event channels + broker config pointers, always with `ev=...`
 - `NBA` line: a single “next best action”
 
 Note: CP is the agent default; JSON MG is for tests/debug.

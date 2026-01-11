@@ -127,7 +127,9 @@ fn assert_meaning_invariants(pack: &str) -> Result<()> {
     for line in pack.lines() {
         let is_claim = line.starts_with("ENTRY ")
             || line.starts_with("CONTRACT ")
-            || line.starts_with("BOUNDARY ");
+            || line.starts_with("BOUNDARY ")
+            || line.starts_with("FLOW ")
+            || line.starts_with("BROKER ");
         if !is_claim {
             continue;
         }
@@ -330,9 +332,15 @@ async fn meaning_pack_detects_asyncapi_contract_and_event_boundary() -> Result<(
         .context("write src/main.rs")?;
     std::fs::write(
         root.path().join("asyncapi.yaml"),
-        "asyncapi: 3.0.0\ninfo:\n  title: Example\n  version: 1.0.0\n",
+        "asyncapi: 2.6.0\ninfo:\n  title: Example\n  version: 1.0.0\nservers:\n  local:\n    url: localhost:9092\n    protocol: kafka\nchannels:\n  user.created:\n    publish:\n      message:\n        name: UserCreated\n  user.deleted:\n    subscribe:\n      message:\n        name: UserDeleted\n",
     )
     .context("write asyncapi.yaml")?;
+    std::fs::create_dir_all(root.path().join("k8s")).context("mkdir k8s")?;
+    std::fs::write(
+        root.path().join("k8s").join("kafka.yaml"),
+        "apiVersion: v1\nkind: Pod\nmetadata:\n  name: kafka\nspec:\n  containers:\n  - name: kafka\n    image: bitnami/kafka:latest\n",
+    )
+    .context("write k8s/kafka.yaml")?;
 
     let service = start_mcp_server().await?;
     let resp = call_tool(
@@ -369,6 +377,40 @@ async fn meaning_pack_detects_asyncapi_contract_and_event_boundary() -> Result<(
     assert!(
         pack.contains("BOUNDARY kind=event"),
         "expected event boundary kind in CP"
+    );
+    assert!(pack.contains("S FLOWS"), "expected S FLOWS section in CP");
+    assert!(
+        pack.lines().any(|line| line.starts_with("FLOW ")),
+        "expected at least one FLOW line in CP"
+    );
+    assert!(
+        pack.contains("proto=kafka"),
+        "expected FLOW line to include proto=kafka"
+    );
+    assert!(
+        pack.contains("S BROKERS"),
+        "expected S BROKERS section in CP"
+    );
+    assert!(
+        pack.lines().any(|line| line.starts_with("BROKER ")),
+        "expected at least one BROKER line in CP"
+    );
+    assert!(
+        pack.contains("BROKER proto=kafka"),
+        "expected BROKER line to include proto=kafka"
+    );
+    assert!(pack.contains("dir=pub"), "expected publish flow (dir=pub)");
+    assert!(
+        pack.contains("dir=sub"),
+        "expected subscribe flow (dir=sub)"
+    );
+    assert!(
+        pack.contains("user.created"),
+        "expected channel name in dict"
+    );
+    assert!(
+        pack.contains("user.deleted"),
+        "expected channel name in dict"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

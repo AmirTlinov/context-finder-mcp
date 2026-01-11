@@ -323,7 +323,6 @@ struct AsyncApiChannel {
 pub(super) async fn extract_asyncapi_flows(root: &Path, contracts: &[String]) -> Vec<FlowEdge> {
     const MAX_READ_BYTES: usize = 256 * 1024;
     const MAX_CHANNELS: usize = 10;
-    const MAX_PROTOCOLS: usize = 2;
 
     let mut out: Vec<FlowEdge> = Vec::new();
     for contract in contracts {
@@ -336,7 +335,7 @@ pub(super) async fn extract_asyncapi_flows(root: &Path, contracts: &[String]) ->
         };
         let summary = extract_asyncapi_summary(&content);
 
-        let protocol = summary.protocols.into_iter().take(MAX_PROTOCOLS).next();
+        let protocol = summary.protocols.into_iter().next();
 
         let mut channels = summary.channels;
         channels.sort_by(|a, b| a.name.cmp(&b.name));
@@ -515,6 +514,253 @@ fn extract_asyncapi_summary_yaml_like(content: &str) -> AsyncApiSummary {
 
 fn count_leading_spaces(s: &str) -> usize {
     s.as_bytes().iter().take_while(|&&b| b == b' ').count()
+}
+
+pub(super) async fn detect_channel_mentions(
+    root: &Path,
+    files: &[String],
+    channels: &[String],
+) -> HashMap<String, String> {
+    const MAX_SCAN_FILES: usize = 200;
+    const MAX_READ_BYTES: usize = 64 * 1024;
+    const MAX_CHANNELS: usize = 20;
+
+    let mut wanted: Vec<String> = channels.to_vec();
+    wanted.sort();
+    wanted.dedup();
+    wanted.truncate(MAX_CHANNELS);
+
+    let mut out: HashMap<String, String> = HashMap::new();
+    if wanted.is_empty() {
+        return out;
+    }
+
+    let mut candidates: Vec<&String> = files
+        .iter()
+        .filter(|file| is_code_file_candidate(&file.to_ascii_lowercase()))
+        .collect();
+    candidates.sort();
+
+    for file in candidates.into_iter().take(MAX_SCAN_FILES) {
+        if out.len() >= wanted.len() {
+            break;
+        }
+        let Some(content) = read_file_prefix_utf8(root, file, MAX_READ_BYTES).await else {
+            continue;
+        };
+        for channel in &wanted {
+            if out.contains_key(channel) {
+                continue;
+            }
+            if content.contains(channel) {
+                out.insert(channel.clone(), file.clone());
+            }
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct BrokerCandidate {
+    pub(super) proto: String,
+    pub(super) file: String,
+    pub(super) confidence: f32,
+}
+
+pub(super) async fn detect_brokers(
+    root: &Path,
+    files: &[String],
+    flows: &[FlowEdge],
+) -> Vec<BrokerCandidate> {
+    const MAX_CANDIDATE_FILES: usize = 30;
+    const MAX_READ_BYTES: usize = 192 * 1024;
+    const MAX_BROKERS: usize = 4;
+
+    let mut wanted: Vec<String> = flows
+        .iter()
+        .filter_map(|f| f.protocol.as_ref())
+        .map(|p| p.to_ascii_lowercase())
+        .collect();
+    wanted.sort();
+    wanted.dedup();
+    if wanted.is_empty() {
+        wanted = vec!["kafka", "nats", "amqp", "mqtt", "pulsar"]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+    }
+
+    let mut candidates: Vec<&String> = files
+        .iter()
+        .filter(|file| is_broker_config_candidate(&file.to_ascii_lowercase()))
+        .collect();
+    candidates.sort();
+
+    let mut out: Vec<BrokerCandidate> = Vec::new();
+    let mut seen_files: HashSet<&str> = HashSet::new();
+
+    for file in candidates.into_iter().take(MAX_CANDIDATE_FILES) {
+        if out.len() >= MAX_BROKERS {
+            break;
+        }
+        if !seen_files.insert(file.as_str()) {
+            continue;
+        }
+        let Some(content) = read_file_prefix_utf8(root, file, MAX_READ_BYTES).await else {
+            continue;
+        };
+        let content_lc = content.to_ascii_lowercase();
+        for proto in &wanted {
+            if !content_mentions_proto(&content_lc, proto) {
+                continue;
+            }
+            let mut confidence = 0.75;
+            if file.to_ascii_lowercase().contains("docker-compose")
+                || file.to_ascii_lowercase().ends_with("compose.yml")
+                || file.to_ascii_lowercase().ends_with("compose.yaml")
+            {
+                confidence = 0.9;
+            } else if content_lc.contains("image:") {
+                confidence = 0.85;
+            }
+            out.push(BrokerCandidate {
+                proto: proto.clone(),
+                file: file.clone(),
+                confidence,
+            });
+            break;
+        }
+    }
+
+    out.sort_by(|a, b| {
+        b.confidence
+            .total_cmp(&a.confidence)
+            .then_with(|| a.proto.cmp(&b.proto))
+            .then_with(|| a.file.cmp(&b.file))
+    });
+    out.truncate(MAX_BROKERS);
+    out
+}
+
+fn is_code_file_candidate(file_lc: &str) -> bool {
+    if file_lc.starts_with("target/")
+        || file_lc.contains("/target/")
+        || file_lc.starts_with("node_modules/")
+        || file_lc.contains("/node_modules/")
+        || file_lc.starts_with("vendor/")
+        || file_lc.contains("/vendor/")
+        || file_lc.starts_with(".git/")
+        || file_lc.contains("/.git/")
+    {
+        return false;
+    }
+    file_lc.ends_with(".rs")
+        || file_lc.ends_with(".go")
+        || file_lc.ends_with(".py")
+        || file_lc.ends_with(".js")
+        || file_lc.ends_with(".ts")
+        || file_lc.ends_with(".java")
+        || file_lc.ends_with(".kt")
+        || file_lc.ends_with(".kts")
+        || file_lc.ends_with(".cs")
+        || file_lc.ends_with(".cpp")
+        || file_lc.ends_with(".c")
+        || file_lc.ends_with(".h")
+        || file_lc.ends_with(".hpp")
+}
+
+fn is_broker_config_candidate(file_lc: &str) -> bool {
+    let is_compose = file_lc.ends_with("docker-compose.yml")
+        || file_lc.ends_with("docker-compose.yaml")
+        || file_lc.ends_with("compose.yml")
+        || file_lc.ends_with("compose.yaml");
+    if is_compose {
+        return true;
+    }
+
+    let is_k8s_dir = file_lc.starts_with("k8s/")
+        || file_lc.contains("/k8s/")
+        || file_lc.starts_with("kubernetes/")
+        || file_lc.contains("/kubernetes/")
+        || file_lc.starts_with("manifests/")
+        || file_lc.contains("/manifests/")
+        || file_lc.starts_with("deploy/")
+        || file_lc.contains("/deploy/")
+        || file_lc.starts_with("infra/")
+        || file_lc.contains("/infra/")
+        || file_lc.starts_with("charts/")
+        || file_lc.contains("/charts/")
+        || file_lc.contains("/helm/");
+    if !is_k8s_dir {
+        return false;
+    }
+
+    file_lc.ends_with(".yaml") || file_lc.ends_with(".yml")
+}
+
+fn content_mentions_proto(content_lc: &str, proto_lc: &str) -> bool {
+    match proto_lc {
+        "kafka" => {
+            content_lc.contains("kafka")
+                || content_lc.contains("cp-kafka")
+                || content_lc.contains("confluentinc")
+                || content_lc.contains("bitnami/kafka")
+        }
+        "nats" => content_lc.contains("nats") || content_lc.contains("natsio"),
+        "amqp" | "rabbitmq" => content_lc.contains("rabbitmq") || content_lc.contains("amqp"),
+        "mqtt" => content_lc.contains("mqtt"),
+        "pulsar" => content_lc.contains("pulsar"),
+        other => content_lc.contains(other),
+    }
+}
+
+pub(super) fn infer_actor_by_path(reference_file: &str, entrypoints: &[String]) -> Option<String> {
+    let (reference_dir, _) = reference_file.rsplit_once('/')?;
+    if reference_dir.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<&String> = None;
+    let mut best_score: usize = 0;
+    for ep in entrypoints {
+        let ep_dir = ep.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        let score = common_prefix_segments(reference_dir, ep_dir);
+        if score == 0 {
+            continue;
+        }
+        if score > best_score {
+            best = Some(ep);
+            best_score = score;
+            continue;
+        }
+        if score == best_score {
+            if let Some(current) = best {
+                if ep < current {
+                    best = Some(ep);
+                }
+            }
+        }
+    }
+    best.cloned()
+}
+
+pub(super) fn infer_flow_actor(contract_file: &str, entrypoints: &[String]) -> Option<String> {
+    if entrypoints.is_empty() {
+        return None;
+    }
+    // Root-level AsyncAPI: safe only when the repo clearly has a single entrypoint.
+    if !contract_file.contains('/') {
+        return (entrypoints.len() == 1).then(|| entrypoints[0].clone());
+    }
+    infer_actor_by_path(contract_file, entrypoints)
+}
+
+fn common_prefix_segments(a: &str, b: &str) -> usize {
+    a.split('/')
+        .filter(|p| !p.is_empty())
+        .zip(b.split('/').filter(|p| !p.is_empty()))
+        .take_while(|(x, y)| x == y)
+        .count()
 }
 
 pub(super) fn json_string(value: &str) -> String {
