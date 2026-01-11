@@ -217,7 +217,7 @@ impl ContextFinderService {
         }
 
         let relative_hints = collect_relative_hints(hints);
-        if !relative_hints.is_empty() {
+        if self.allow_cwd_root_fallback && !relative_hints.is_empty() {
             if let Some((root, root_display)) =
                 self.resolve_root_from_relative_hints(&relative_hints).await
             {
@@ -4203,6 +4203,31 @@ mod tests {
             .await
             .expect("root must resolve after roots/list");
         assert_eq!(root, canonical_root);
+    }
+
+    #[tokio::test]
+    async fn daemon_refuses_cross_project_root_inference_from_relative_hints() {
+        let root_a = tempdir().expect("temp root_a");
+        std::fs::create_dir_all(root_a.path().join("src")).expect("mkdir src");
+        std::fs::write(root_a.path().join("src").join("main.rs"), "fn main() {}\n")
+            .expect("write src/main.rs");
+        let root_a = root_a.path().canonicalize().expect("canonical root_a");
+
+        // Simulate another connection having recently touched a different root.
+        let svc_a = ContextFinderService::new_daemon().clone_for_connection();
+        svc_a.state.engine_handle(&root_a).await;
+
+        // New connection with no explicit path should fail-closed, rather than guessing a root
+        // from shared (cross-session) recent_roots based on relative file hints.
+        let svc_b = svc_a.clone_for_connection();
+        let err = svc_b
+            .resolve_root_with_hints_no_daemon_touch(None, &["src/main.rs".to_string()])
+            .await
+            .expect_err("expected daemon to refuse root inference from relative hints");
+        assert!(
+            err.contains("Missing project root"),
+            "expected missing-root error, got: {err}"
+        );
     }
 
     #[test]
