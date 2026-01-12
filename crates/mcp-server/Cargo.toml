@@ -24,6 +24,7 @@ context-search = { path = "../search" }
 context-graph = { path = "../graph" }
 context-batch-ref = { path = "../batch-ref" }
 context-protocol = { path = "../protocol" }
+context-meaning = { path = "../meaning" }
 petgraph = "0.6"
 
 # MCP SDK

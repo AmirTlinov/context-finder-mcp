@@ -1,0 +1,35 @@
+[package]
+name = "context-meaning"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Workspace crates
+context-code-chunker = { path = "../code-chunker" }
+context-indexer = { path = "../indexer" }
+context-protocol = { path = "../protocol" }
+context-vector-store = { path = "../vector-store" }
+
+# Async
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Text processing / hashing
+regex.workspace = true
+sha2.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# OS utilities
+fs2 = "0.4"
+
+[dev-dependencies]
+tempfile.workspace = true
+

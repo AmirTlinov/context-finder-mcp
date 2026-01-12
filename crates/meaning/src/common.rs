@@ -464,10 +464,6 @@ fn boundary_kind_rank(kind: BoundaryKind) -> usize {
     }
 }
 
-pub(super) fn is_entrypoint_candidate(file_lc: &str) -> bool {
-    entrypoint_rank(file_lc).is_some()
-}
-
 pub(super) fn entrypoint_rank(file_lc: &str) -> Option<usize> {
     // The goal is “best file to start reading the code”, not only “executable main”.
     // Ranking is critical: large workspaces may contain many `lib.rs` files; those must not
@@ -501,6 +497,18 @@ pub(super) fn entrypoint_rank(file_lc: &str) -> Option<usize> {
             | "src/index.ts"
     ) {
         return Some(1);
+    }
+
+    // Nested mains (monorepos / multi-crate layouts): `*/src/main.*` etc.
+    if file_lc.ends_with("/src/main.rs")
+        || file_lc.ends_with("/src/main.py")
+        || file_lc.ends_with("/src/__main__.py")
+        || file_lc.ends_with("/src/app.py")
+        || file_lc.ends_with("/src/server.py")
+        || file_lc.ends_with("/src/index.js")
+        || file_lc.ends_with("/src/index.ts")
+    {
+        return Some(2);
     }
 
     // Go conventions: `cmd/<name>/main.go` (repo-root `main.go` is also common).
@@ -1256,11 +1264,11 @@ fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) ->
         "MAP ",
         "AREA ",
         "SYM ",
-        "BOUNDARY ",
         "FLOW ",
         "BROKER ",
         "ENTRY ",
         "CONTRACT ",
+        "BOUNDARY ",
         "STEP ",
         "ANCHOR ",
     ];

@@ -6,6 +6,7 @@ members = [
     "crates/protocol",
     "crates/vector-store",
     "crates/indexer",
+    "crates/meaning",
     "crates/search",
     "crates/cli",
     "crates/graph",

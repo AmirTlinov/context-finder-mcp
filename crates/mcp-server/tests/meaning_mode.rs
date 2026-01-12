@@ -141,7 +141,9 @@ fn assert_meaning_invariants(pack: &str) -> Result<()> {
             || line.starts_with("BOUNDARY ")
             || line.starts_with("FLOW ")
             || line.starts_with("BROKER ")
-            || line.starts_with("ANCHOR ");
+            || line.starts_with("ANCHOR ")
+            || line.starts_with("STEP ")
+            || line.starts_with("AREA ");
         if !is_claim {
             continue;
         }
