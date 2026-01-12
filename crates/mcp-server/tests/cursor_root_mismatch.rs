@@ -5,6 +5,19 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
+fn extract_cursor_from_text(result: &rmcp::model::CallToolResult) -> Result<String> {
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("tool result missing text output")?;
+    text.lines()
+        .find_map(|line| line.strip_prefix("M: ").map(str::trim))
+        .map(str::to_string)
+        .context("tool result missing M: cursor")
+}
+
 fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
     if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
         return Ok(PathBuf::from(path));
@@ -170,6 +183,489 @@ async fn list_files_cursor_root_mismatch_includes_details() -> Result<()> {
     assert_ne!(
         expected_fp, cursor_fp,
         "expected_root_fingerprint should differ from cursor_root_fingerprint"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn file_slice_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")?
+        .context("start MCP server")?;
+
+    let root1 = tempfile::tempdir().context("tempdir root1")?;
+    std::fs::write(root1.path().join("README.md"), "root1\none\ntwo\n")
+        .context("write root1 README.md")?;
+
+    let root2 = tempfile::tempdir().context("tempdir root2")?;
+    std::fs::write(root2.path().join("README.md"), "root2\none\ntwo\nthree\n")
+        .context("write root2 README.md")?;
+
+    let res_root2 = call_tool_allow_error(
+        &service,
+        "file_slice",
+        serde_json::json!({
+            "path": root2.path().to_string_lossy(),
+            "file": "README.md",
+            "max_lines": 1,
+            "max_chars": 2000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root2.is_error,
+        Some(true),
+        "expected file_slice(root2) to succeed"
+    );
+    let cursor = extract_cursor_from_text(&res_root2)?;
+
+    let res_root1 = call_tool_allow_error(
+        &service,
+        "file_slice",
+        serde_json::json!({
+            "path": root1.path().to_string_lossy(),
+            "file": "README.md",
+            "max_lines": 1,
+            "max_chars": 2000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root1.is_error,
+        Some(true),
+        "expected file_slice(root1) to succeed"
+    );
+
+    let res_foreign = call_tool_allow_error(
+        &service,
+        "file_slice",
+        serde_json::json!({
+            "cursor": cursor,
+            "max_chars": 2000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_eq!(
+        res_foreign.is_error,
+        Some(true),
+        "expected file_slice cursor-only root switch to error"
+    );
+    let res_text = res_foreign
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .unwrap_or_default();
+    assert!(
+        res_text.contains("different project root"),
+        "expected cross-root cursor error, got: {res_text}"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn grep_context_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")?
+        .context("start MCP server")?;
+
+    let root1 = tempfile::tempdir().context("tempdir root1")?;
+    std::fs::write(root1.path().join("README.md"), "root1\nneedle\n")
+        .context("write root1 README.md")?;
+
+    let root2 = tempfile::tempdir().context("tempdir root2")?;
+    std::fs::create_dir_all(root2.path().join("src")).context("mkdir root2/src")?;
+    std::fs::write(root2.path().join("src").join("a.txt"), "needle\n")
+        .context("write root2/src/a.txt")?;
+    std::fs::write(root2.path().join("src").join("b.txt"), "needle\n")
+        .context("write root2/src/b.txt")?;
+
+    let res_root2 = call_tool_allow_error(
+        &service,
+        "grep_context",
+        serde_json::json!({
+            "path": root2.path().to_string_lossy(),
+            "pattern": "needle",
+            "file_pattern": "src/*.txt",
+            "max_hunks": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root2.is_error,
+        Some(true),
+        "expected grep_context(root2) to succeed"
+    );
+    let cursor = extract_cursor_from_text(&res_root2)?;
+
+    let res_root1 = call_tool_allow_error(
+        &service,
+        "grep_context",
+        serde_json::json!({
+            "path": root1.path().to_string_lossy(),
+            "pattern": "needle",
+            "file_pattern": "README.md",
+            "max_hunks": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root1.is_error,
+        Some(true),
+        "expected grep_context(root1) to succeed"
+    );
+
+    let res_foreign = call_tool_allow_error(
+        &service,
+        "grep_context",
+        serde_json::json!({
+            "cursor": cursor,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_eq!(
+        res_foreign.is_error,
+        Some(true),
+        "expected grep_context cursor-only root switch to error"
+    );
+    let res_text = res_foreign
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .unwrap_or_default();
+    assert!(
+        res_text.contains("different project root"),
+        "expected cross-root cursor error, got: {res_text}"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn text_search_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")?
+        .context("start MCP server")?;
+
+    let root1 = tempfile::tempdir().context("tempdir root1")?;
+    std::fs::write(root1.path().join("README.md"), "root1\nneedle\n")
+        .context("write root1 README.md")?;
+
+    let root2 = tempfile::tempdir().context("tempdir root2")?;
+    std::fs::create_dir_all(root2.path().join("src")).context("mkdir root2/src")?;
+    for idx in 0..10 {
+        std::fs::write(
+            root2.path().join("src").join(format!("f{idx}.txt")),
+            "needle\n",
+        )
+        .with_context(|| format!("write root2/src/f{idx}.txt"))?;
+    }
+
+    let res_root2 = call_tool_allow_error(
+        &service,
+        "text_search",
+        serde_json::json!({
+            "path": root2.path().to_string_lossy(),
+            "pattern": "needle",
+            "file_pattern": "src/*.txt",
+            "max_results": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root2.is_error,
+        Some(true),
+        "expected text_search(root2) to succeed"
+    );
+    let cursor = extract_cursor_from_text(&res_root2)?;
+
+    let res_root1 = call_tool_allow_error(
+        &service,
+        "text_search",
+        serde_json::json!({
+            "path": root1.path().to_string_lossy(),
+            "pattern": "needle",
+            "file_pattern": "README.md",
+            "max_results": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root1.is_error,
+        Some(true),
+        "expected text_search(root1) to succeed"
+    );
+
+    let res_foreign = call_tool_allow_error(
+        &service,
+        "text_search",
+        serde_json::json!({
+            "cursor": cursor,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_eq!(
+        res_foreign.is_error,
+        Some(true),
+        "expected text_search cursor-only root switch to error"
+    );
+    let res_text = res_foreign
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .unwrap_or_default();
+    assert!(
+        res_text.contains("different project root"),
+        "expected cross-root cursor error, got: {res_text}"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")?
+        .context("start MCP server")?;
+
+    let root1 = tempfile::tempdir().context("tempdir root1")?;
+    std::fs::create_dir_all(root1.path().join("src")).context("mkdir root1/src")?;
+    std::fs::write(root1.path().join("src").join("a.rs"), "pub fn a() {}\n")
+        .context("write root1/src/a.rs")?;
+
+    let root2 = tempfile::tempdir().context("tempdir root2")?;
+    std::fs::create_dir_all(root2.path().join("src")).context("mkdir root2/src")?;
+    for idx in 0..20 {
+        let dir = root2.path().join("src").join(format!("d{idx}"));
+        std::fs::create_dir_all(&dir).with_context(|| format!("mkdir root2/src/d{idx}"))?;
+        std::fs::write(dir.join("x.txt"), "x\n")
+            .with_context(|| format!("write root2/src/d{idx}/x.txt"))?;
+    }
+
+    let res_root2 = call_tool_allow_error(
+        &service,
+        "map",
+        serde_json::json!({
+            "path": root2.path().to_string_lossy(),
+            "depth": 2,
+            "limit": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root2.is_error,
+        Some(true),
+        "expected map(root2) to succeed"
+    );
+    let cursor = extract_cursor_from_text(&res_root2)?;
+
+    let res_root1 = call_tool_allow_error(
+        &service,
+        "map",
+        serde_json::json!({
+            "path": root1.path().to_string_lossy(),
+            "depth": 2,
+            "limit": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root1.is_error,
+        Some(true),
+        "expected map(root1) to succeed"
+    );
+
+    let res_foreign = call_tool_allow_error(
+        &service,
+        "map",
+        serde_json::json!({
+            "cursor": cursor,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_eq!(
+        res_foreign.is_error,
+        Some(true),
+        "expected map cursor-only root switch to error"
+    );
+    let res_text = res_foreign
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .unwrap_or_default();
+    assert!(
+        res_text.contains("different project root"),
+        "expected cross-root cursor error, got: {res_text}"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_files_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")?
+        .context("start MCP server")?;
+
+    let root1 = tempfile::tempdir().context("tempdir root1")?;
+    std::fs::create_dir_all(root1.path().join("src")).context("mkdir root1/src")?;
+    std::fs::write(root1.path().join("src").join("a.rs"), "pub fn a() {}\n")
+        .context("write root1/src/a.rs")?;
+    std::fs::write(root1.path().join("src").join("b.rs"), "pub fn b() {}\n")
+        .context("write root1/src/b.rs")?;
+
+    let root2 = tempfile::tempdir().context("tempdir root2")?;
+    std::fs::create_dir_all(root2.path().join("src")).context("mkdir root2/src")?;
+    for idx in 0..5 {
+        std::fs::write(
+            root2.path().join("src").join(format!("f{idx}.rs")),
+            format!("pub fn f{idx}() -> usize {{ {idx} }}\n"),
+        )
+        .with_context(|| format!("write root2/src/f{idx}.rs"))?;
+    }
+
+    let res_root2 = call_tool_allow_error(
+        &service,
+        "list_files",
+        serde_json::json!({
+            "path": root2.path().to_string_lossy(),
+            "file_pattern": "src/*.rs",
+            "limit": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root2.is_error,
+        Some(true),
+        "expected list_files(root2) to succeed"
+    );
+    let cursor = extract_cursor_from_text(&res_root2)?;
+
+    let res_root1 = call_tool_allow_error(
+        &service,
+        "list_files",
+        serde_json::json!({
+            "path": root1.path().to_string_lossy(),
+            "file_pattern": "src/*.rs",
+            "limit": 1,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        res_root1.is_error,
+        Some(true),
+        "expected list_files(root1) to succeed"
+    );
+
+    let res_foreign = call_tool_allow_error(
+        &service,
+        "list_files",
+        serde_json::json!({
+            "cursor": cursor,
+            "max_chars": 20_000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_eq!(
+        res_foreign.is_error,
+        Some(true),
+        "expected list_files cursor-only root switch to error"
+    );
+    let res_text = res_foreign
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .unwrap_or_default();
+    assert!(
+        res_text.contains("different project root"),
+        "expected cross-root cursor error, got: {res_text}"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
