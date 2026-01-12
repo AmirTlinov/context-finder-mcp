@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "name": "meaning_stub_smoke",
+  "cases": [
+    {
+      "id": "rust_contract_broker_flow",
+      "fixture": "rust_contract_broker_flow",
+      "query": "orient on entrypoints, contracts, brokers, flows",
+      "expect_paths": [
+        "src/main.rs",
+        "contracts/example.schema.json",
+        "contracts/events.asyncapi.yaml",
+        "docker-compose.yml"
+      ],
+      "expect_claims": ["ENTRY", "CONTRACT", "BROKER", "FLOW"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "node_http_openapi",
+      "fixture": "node_http_openapi",
+      "query": "orient on entrypoints, http boundary, openapi",
+      "expect_paths": ["package.json", "src/index.js", "contracts/openapi.yaml"],
+      "expect_claims": ["ENTRY", "CONTRACT", "BOUNDARY"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "python_cli_schema",
+      "fixture": "python_cli_schema",
+      "query": "orient on entrypoints, config, contracts",
+      "expect_paths": ["pyproject.toml", "app.py", "contracts/example.schema.json"],
+      "expect_claims": ["ENTRY", "CONTRACT", "BOUNDARY"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "k8s_kafka_broker",
+      "fixture": "k8s_kafka_broker",
+      "query": "orient on infra and brokers (k8s)",
+      "expect_paths": ["k8s/kafka.yaml"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "kustomize_kafka_broker",
+      "fixture": "kustomize_kafka_broker",
+      "query": "orient on infra and brokers (kustomize)",
+      "expect_paths": ["manifests/kustomization.yaml"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "helm_nats_broker",
+      "fixture": "helm_nats_broker",
+      "query": "orient on infra and brokers (helm)",
+      "expect_paths": ["charts/myapp/Chart.yaml", "charts/myapp/values.yaml"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "helmfile_nats_broker",
+      "fixture": "helmfile_nats_broker",
+      "query": "orient on infra and brokers (helmfile)",
+      "expect_paths": ["helmfile.yaml"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "terraform_kafka_broker",
+      "fixture": "terraform_kafka_broker",
+      "query": "orient on infra and brokers (terraform)",
+      "expect_paths": ["infra/main.tf"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "terragrunt_kafka_broker",
+      "fixture": "terragrunt_kafka_broker",
+      "query": "orient on infra and brokers (terragrunt)",
+      "expect_paths": ["infra/terragrunt.hcl"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "flux_helmrelease_nats_broker",
+      "fixture": "flux_helmrelease_nats_broker",
+      "query": "orient on infra and brokers (flux helmrelease)",
+      "expect_paths": ["gitops/helmrelease.yaml"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "argocd_application_kafka_broker",
+      "fixture": "argocd_application_kafka_broker",
+      "query": "orient on infra and brokers (argocd application)",
+      "expect_paths": ["argocd/application.yaml"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "skaffold_kafka_broker",
+      "fixture": "skaffold_kafka_broker",
+      "query": "orient on infra and brokers (skaffold)",
+      "expect_paths": ["skaffold.yaml"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "tiltfile_kafka_broker",
+      "fixture": "tiltfile_kafka_broker",
+      "query": "orient on infra and brokers (tiltfile)",
+      "expect_paths": ["Tiltfile"],
+      "expect_claims": ["ANCHOR", "BOUNDARY", "BROKER"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "artifact_store_anti_noise",
+      "fixture": "artifact_store_anti_noise",
+      "query": "orient on artifact stores without drowning the map",
+      "expect_paths": ["artifacts/README.md", "src/main.rs"],
+      "expect_claims": ["ANCHOR"],
+      "min_token_saved": 0.8
+    },
+    {
+      "id": "canon_howto_anchors",
+      "fixture": "canon_howto_anchors",
+      "query": "orient on canon + how-to-run anchors with evidence",
+      "expect_paths": ["README.md", "Makefile"],
+      "expect_claims": ["ANCHOR"],
+      "min_token_saved": 0.8
+    }
+  ]
+}

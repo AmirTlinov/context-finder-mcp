@@ -29,6 +29,64 @@ impl BoundaryKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum AnchorKind {
+    Canon,
+    HowTo,
+    Infra,
+    Contract,
+    Entrypoint,
+    Artifact,
+}
+
+impl AnchorKind {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            AnchorKind::Canon => "canon",
+            AnchorKind::HowTo => "howto",
+            AnchorKind::Infra => "infra",
+            AnchorKind::Contract => "contract",
+            AnchorKind::Entrypoint => "entrypoint",
+            AnchorKind::Artifact => "artifact",
+        }
+    }
+}
+
+// Artifact stores are huge by definition. We treat them as "meaning" (anchors) instead of
+// letting them dominate structural maps.
+const ARTIFACT_STORE_SCOPES: &[&str] = &[
+    "artifacts",
+    "artifact",
+    "results",
+    "runs",
+    "outputs",
+    "output",
+    "checkpoints",
+    "checkpoint",
+];
+
+pub(super) fn is_artifact_scope(path: &str) -> bool {
+    let first = path.split('/').next().unwrap_or("").trim();
+    if first.is_empty() || first == "." {
+        return false;
+    }
+    let lowered = first.to_ascii_lowercase();
+    ARTIFACT_STORE_SCOPES
+        .iter()
+        .any(|candidate| *candidate == lowered)
+}
+
+pub(super) fn artifact_scope_rank(scope: &str) -> usize {
+    match scope {
+        "artifacts" | "artifact" => 0,
+        "results" => 1,
+        "runs" => 2,
+        "outputs" | "output" => 3,
+        "checkpoints" | "checkpoint" => 4,
+        _ => 10,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct BoundaryCandidate {
     pub(super) kind: BoundaryKind,
@@ -41,6 +99,7 @@ pub(super) enum EvidenceKind {
     Entrypoint,
     Contract,
     Boundary(BoundaryKind),
+    Anchor(AnchorKind),
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +225,167 @@ pub(super) fn classify_boundaries(
         }
     }
 
+    // Infra boundary: highlight k8s/helm/terraform layouts (path-only, safe).
+    //
+    // We intentionally keep this tight to avoid flooding boundaries for repos with many manifests.
+    let mut infra_candidates: Vec<(usize, &String, f32)> = Vec::new();
+    for file in files {
+        let lc = file.to_ascii_lowercase();
+        let basename = lc.rsplit('/').next().unwrap_or(lc.as_str());
+        let is_yaml = lc.ends_with(".yaml") || lc.ends_with(".yml");
+        let is_tf = lc.ends_with(".tf") || lc.ends_with(".tfvars") || lc.ends_with(".hcl");
+        let is_tiltfile = basename == "tiltfile" && lc == "tiltfile";
+
+        let is_k8s_dir = lc.starts_with("k8s/")
+            || lc.contains("/k8s/")
+            || lc.starts_with("kubernetes/")
+            || lc.contains("/kubernetes/")
+            || lc.starts_with("manifests/")
+            || lc.contains("/manifests/")
+            || lc.starts_with("deploy/")
+            || lc.contains("/deploy/")
+            || lc.starts_with("kustomize/")
+            || lc.contains("/kustomize/");
+        let is_helm_dir = lc.starts_with("charts/")
+            || lc.contains("/charts/")
+            || lc.contains("/helm/")
+            || basename == "chart.yaml"
+            || basename == "values.yaml"
+            || basename == "values.yml"
+            || basename == "helmfile.yaml"
+            || basename == "helmfile.yml"
+            || basename == "helmrelease.yaml"
+            || basename == "helmrelease.yml";
+        let is_gitops_dir = lc.starts_with("argocd/")
+            || lc.contains("/argocd/")
+            || lc.starts_with("argo/")
+            || lc.contains("/argo/")
+            || lc.starts_with("flux/")
+            || lc.contains("/flux/")
+            || lc.starts_with("gitops/")
+            || lc.contains("/gitops/")
+            || lc.starts_with("clusters/")
+            || lc.contains("/clusters/");
+        let is_tf_dir = lc.starts_with("terraform/")
+            || lc.contains("/terraform/")
+            || lc.starts_with("infra/")
+            || lc.contains("/infra/");
+        let is_tf_root_candidate = matches!(
+            basename,
+            "main.tf"
+                | "variables.tf"
+                | "versions.tf"
+                | "provider.tf"
+                | "providers.tf"
+                | "backend.tf"
+                | "outputs.tf"
+                | "terraform.tf"
+                | "terragrunt.hcl"
+        );
+        let is_infra_yaml = is_k8s_dir
+            || is_helm_dir
+            || is_gitops_dir
+            || matches!(
+                basename,
+                "chart.yaml"
+                    | "values.yaml"
+                    | "values.yml"
+                    | "helmfile.yaml"
+                    | "helmfile.yml"
+                    | "helmrelease.yaml"
+                    | "helmrelease.yml"
+                    | "kustomization.yaml"
+                    | "kustomization.yml"
+                    | "skaffold.yaml"
+                    | "skaffold.yml"
+                    | "werf.yaml"
+                    | "werf.yml"
+                    | "devspace.yaml"
+                    | "devspace.yml"
+            );
+
+        if !(is_yaml || is_tf || is_tiltfile) {
+            continue;
+        }
+        if is_yaml && !is_infra_yaml {
+            continue;
+        }
+        if is_tf && !(is_tf_dir || is_tf_root_candidate || basename == "terragrunt.hcl") {
+            continue;
+        }
+
+        // Stable ranking: prefer canonical infra entry files.
+        let (rank, confidence) = if basename == "chart.yaml" {
+            (0usize, 0.9f32)
+        } else if basename == "values.yaml" || basename == "values.yml" {
+            (1usize, 0.85f32)
+        } else if basename == "helmfile.yaml" || basename == "helmfile.yml" {
+            (2usize, 0.82f32)
+        } else if basename == "helmrelease.yaml" || basename == "helmrelease.yml" {
+            (3usize, 0.83f32)
+        } else if basename == "kustomization.yaml" || basename == "kustomization.yml" {
+            (4usize, 0.85f32)
+        } else if is_gitops_dir
+            && matches!(
+                basename,
+                "application.yaml"
+                    | "application.yml"
+                    | "applicationset.yaml"
+                    | "applicationset.yml"
+            )
+        {
+            (5usize, 0.82f32)
+        } else if basename == "terragrunt.hcl" {
+            (6usize, 0.85f32)
+        } else if basename == "skaffold.yaml" || basename == "skaffold.yml" {
+            (7usize, 0.83f32)
+        } else if is_tiltfile {
+            (8usize, 0.83f32)
+        } else if basename == "werf.yaml" || basename == "werf.yml" {
+            (9usize, 0.82f32)
+        } else if basename == "devspace.yaml" || basename == "devspace.yml" {
+            (10usize, 0.82f32)
+        } else if lc.contains("ingress") {
+            (11usize, 0.8f32)
+        } else if lc.contains("service") {
+            (12usize, 0.78f32)
+        } else if lc.contains("deployment") || lc.contains("statefulset") {
+            (13usize, 0.78f32)
+        } else if basename == "main.tf" {
+            (14usize, 0.85f32)
+        } else if basename == "variables.tf" {
+            (15usize, 0.82f32)
+        } else if matches!(
+            basename,
+            "versions.tf"
+                | "provider.tf"
+                | "providers.tf"
+                | "backend.tf"
+                | "outputs.tf"
+                | "terraform.tf"
+        ) {
+            (16usize, 0.8f32)
+        } else if is_tf {
+            (17usize, 0.78f32)
+        } else {
+            (18usize, 0.75f32)
+        };
+
+        infra_candidates.push((rank, file, confidence));
+    }
+    infra_candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    infra_candidates.truncate(8);
+    for (_, file, confidence) in infra_candidates {
+        if !seen.insert(file.as_str()) {
+            continue;
+        }
+        out.push(BoundaryCandidate {
+            kind: BoundaryKind::Config,
+            file: file.clone(),
+            confidence,
+        });
+    }
+
     // DB boundary: detect common migration/schema layouts (path-only, safe).
     for file in files {
         let lc = file.to_ascii_lowercase();
@@ -242,7 +462,15 @@ fn boundary_kind_rank(kind: BoundaryKind) -> usize {
 }
 
 pub(super) fn is_entrypoint_candidate(file_lc: &str) -> bool {
-    file_lc.ends_with("/src/main.rs")
+    file_lc == "main.rs"
+        || file_lc == "main.py"
+        || file_lc == "app.py"
+        || file_lc == "server.py"
+        || file_lc == "index.js"
+        || file_lc == "server.js"
+        || file_lc == "main.ts"
+        || file_lc == "server.ts"
+        || file_lc.ends_with("/src/main.rs")
         || file_lc.ends_with("/main.rs")
         || file_lc.ends_with("/main.py")
         || file_lc.ends_with("/app.py")
@@ -378,7 +606,11 @@ pub(super) async fn extract_asyncapi_flows(root: &Path, contracts: &[String]) ->
     out
 }
 
-async fn read_file_prefix_utf8(root: &Path, rel: &str, max_bytes: usize) -> Option<String> {
+pub(super) async fn read_file_prefix_utf8(
+    root: &Path,
+    rel: &str,
+    max_bytes: usize,
+) -> Option<String> {
     let abs = root.join(rel);
     let mut file = File::open(abs).await.ok()?;
     let mut buf = vec![0u8; max_bytes];
@@ -688,7 +920,35 @@ fn is_broker_config_candidate(file_lc: &str) -> bool {
         return true;
     }
 
-    let is_k8s_dir = file_lc.starts_with("k8s/")
+    let basename = file_lc.rsplit('/').next().unwrap_or(file_lc);
+    if basename == "tiltfile" && file_lc == basename {
+        return true;
+    }
+
+    let is_tf =
+        file_lc.ends_with(".tf") || file_lc.ends_with(".tfvars") || file_lc.ends_with(".hcl");
+    if is_tf {
+        let is_tf_dir = file_lc.starts_with("terraform/")
+            || file_lc.contains("/terraform/")
+            || file_lc.starts_with("infra/")
+            || file_lc.contains("/infra/");
+        let is_tf_root_candidate = matches!(
+            basename,
+            "main.tf"
+                | "variables.tf"
+                | "versions.tf"
+                | "provider.tf"
+                | "providers.tf"
+                | "backend.tf"
+                | "outputs.tf"
+                | "terraform.tf"
+                | "terragrunt.hcl"
+        );
+        let is_root = file_lc == basename;
+        return is_tf_dir || (is_root && is_tf_root_candidate) || basename == "terragrunt.hcl";
+    }
+
+    let is_infra_dir = file_lc.starts_with("k8s/")
         || file_lc.contains("/k8s/")
         || file_lc.starts_with("kubernetes/")
         || file_lc.contains("/kubernetes/")
@@ -696,12 +956,39 @@ fn is_broker_config_candidate(file_lc: &str) -> bool {
         || file_lc.contains("/manifests/")
         || file_lc.starts_with("deploy/")
         || file_lc.contains("/deploy/")
+        || file_lc.starts_with("kustomize/")
+        || file_lc.contains("/kustomize/")
         || file_lc.starts_with("infra/")
         || file_lc.contains("/infra/")
         || file_lc.starts_with("charts/")
         || file_lc.contains("/charts/")
-        || file_lc.contains("/helm/");
-    if !is_k8s_dir {
+        || file_lc.contains("/helm/")
+        || file_lc.starts_with("argocd/")
+        || file_lc.contains("/argocd/")
+        || file_lc.starts_with("argo/")
+        || file_lc.contains("/argo/")
+        || file_lc.starts_with("flux/")
+        || file_lc.contains("/flux/")
+        || file_lc.starts_with("gitops/")
+        || file_lc.contains("/gitops/")
+        || file_lc.starts_with("clusters/")
+        || file_lc.contains("/clusters/")
+        || matches!(
+            basename,
+            "helmfile.yaml"
+                | "helmfile.yml"
+                | "helmrelease.yaml"
+                | "helmrelease.yml"
+                | "kustomization.yaml"
+                | "kustomization.yml"
+                | "skaffold.yaml"
+                | "skaffold.yml"
+                | "werf.yaml"
+                | "werf.yml"
+                | "devspace.yaml"
+                | "devspace.yml"
+        );
+    if !is_infra_dir {
         return false;
     }
 
@@ -799,6 +1086,86 @@ pub(super) async fn hash_and_count_lines(path: &Path) -> Result<(String, usize)>
 }
 
 pub(super) fn shrink_pack(pack: &mut String) -> bool {
+    let mut lines: Vec<String> = pack
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_string())
+        .collect();
+    if lines.is_empty() {
+        return false;
+    }
+
+    if lines.first().map(|line| line.as_str()) != Some("CPV1") {
+        return shrink_pack_simple(pack);
+    }
+    let Some(nba_idx) = lines.iter().rposition(|line| line.starts_with("NBA ")) else {
+        return shrink_pack_simple(pack);
+    };
+    if nba_idx == 0 {
+        return false;
+    }
+
+    let mut changed = remove_one_low_priority_body_line(&mut lines, nba_idx);
+    changed |= prune_unused_ev_lines(&mut lines);
+    changed |= prune_unused_dict_lines(&mut lines);
+    changed |= remove_empty_sections(&mut lines);
+
+    // Last-resort: fail-soft to a minimal CP that stays parseable and deterministic.
+    if !changed {
+        let mut minimal: Vec<String> = Vec::new();
+        if let Some(first) = lines.first() {
+            minimal.push(first.clone());
+        }
+        if let Some(root_fp) = lines.iter().find(|line| line.starts_with("ROOT_FP ")) {
+            minimal.push(root_fp.clone());
+        }
+        if let Some(query) = lines.iter().find(|line| line.starts_with("QUERY ")) {
+            minimal.push(query.clone());
+        }
+
+        // Prefer preserving at least one evidence pointer for “precision fetch”, even under
+        // extreme budgets. This keeps the pack actionable (semantic zoom → exact read).
+        if let Some(ev_line) = lines.iter().find(|line| line.starts_with("EV ")) {
+            let ev_id = ev_line
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("ev0")
+                .to_string();
+            let file_id = ev_line
+                .split_whitespace()
+                .find_map(|token| token.strip_prefix("file="))
+                .map(str::to_string);
+            let range = ev_line
+                .split_whitespace()
+                .find(|token| token.starts_with('L') && token.contains("-L"))
+                .unwrap_or("L1-L1")
+                .to_string();
+
+            if let Some(file_id) = file_id {
+                let dict_prefix = format!("D {file_id} ");
+                if let Some(d_line) = lines.iter().find(|line| line.starts_with(&dict_prefix)) {
+                    minimal.push("S DICT".to_string());
+                    minimal.push(d_line.clone());
+                    minimal.push("S EVIDENCE".to_string());
+                    minimal.push(ev_line.clone());
+                    minimal.push(format!(
+                        "NBA evidence_fetch ev={ev_id} file={file_id} {range}"
+                    ));
+                    *pack = minimal.join("\n") + "\n";
+                    return true;
+                }
+            }
+        }
+
+        minimal.push("NBA map".to_string());
+        *pack = minimal.join("\n") + "\n";
+        return true;
+    }
+
+    *pack = lines.join("\n") + "\n";
+    true
+}
+
+fn shrink_pack_simple(pack: &mut String) -> bool {
     // Deterministic shrink while preserving the last `NBA ...` line when present.
     let trimmed = pack.trim_end_matches('\n');
     if trimmed.is_empty() {
@@ -834,6 +1201,139 @@ pub(super) fn shrink_pack(pack: &mut String) -> bool {
     rebuilt.push('\n');
     *pack = rebuilt;
     true
+}
+
+fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) -> bool {
+    // Keep this deterministic: lowest-signal content is removed first.
+    // Note: we intentionally do *not* remove `D ...`, `EV ...`, or headers here.
+    const PREFIXES: [&str; 8] = [
+        "MAP ",
+        "SYM ",
+        "BOUNDARY ",
+        "FLOW ",
+        "BROKER ",
+        "ENTRY ",
+        "CONTRACT ",
+        "ANCHOR ",
+    ];
+
+    for prefix in PREFIXES {
+        if let Some(idx) = lines
+            .iter()
+            .take(nba_idx)
+            .rposition(|line| line.starts_with(prefix))
+        {
+            lines.remove(idx);
+            return true;
+        }
+    }
+
+    false
+}
+
+fn remove_empty_sections(lines: &mut Vec<String>) -> bool {
+    let mut changed = false;
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        if !lines[idx].starts_with("S ") {
+            idx += 1;
+            continue;
+        }
+
+        let start = idx;
+        let mut end = start + 1;
+        while end < lines.len() && !lines[end].starts_with("S ") && !lines[end].starts_with("NBA ")
+        {
+            end += 1;
+        }
+        let has_data = (start + 1) < end;
+        if !has_data {
+            lines.remove(start);
+            changed = true;
+            continue;
+        }
+        idx = end;
+    }
+    changed
+}
+
+fn prune_unused_ev_lines(lines: &mut Vec<String>) -> bool {
+    let mut used: HashSet<String> = HashSet::new();
+    for line in lines.iter().filter(|line| !line.starts_with("EV ")) {
+        for token in line.split_whitespace() {
+            if let Some(ev) = token.strip_prefix("ev=") {
+                used.insert(ev.to_string());
+            }
+        }
+    }
+
+    let mut changed = false;
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        if !lines[idx].starts_with("EV ") {
+            idx += 1;
+            continue;
+        }
+        let keep = lines[idx]
+            .split_whitespace()
+            .nth(1)
+            .map(|id| used.contains(id))
+            .unwrap_or(false);
+        if !keep {
+            lines.remove(idx);
+            changed = true;
+            continue;
+        }
+        idx += 1;
+    }
+
+    changed
+}
+
+fn prune_unused_dict_lines(lines: &mut Vec<String>) -> bool {
+    let mut used: HashSet<String> = HashSet::new();
+    for line in lines.iter().filter(|line| !line.starts_with("D ")) {
+        collect_dict_ids(line, &mut used);
+    }
+
+    let mut changed = false;
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        if !lines[idx].starts_with("D ") {
+            idx += 1;
+            continue;
+        }
+        let keep = lines[idx]
+            .split_whitespace()
+            .nth(1)
+            .map(|id| used.contains(id))
+            .unwrap_or(false);
+        if !keep {
+            lines.remove(idx);
+            changed = true;
+            continue;
+        }
+        idx += 1;
+    }
+    changed
+}
+
+fn collect_dict_ids(line: &str, out: &mut HashSet<String>) {
+    let bytes = line.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        if bytes[idx] != b'd' || idx + 1 >= bytes.len() || !bytes[idx + 1].is_ascii_digit() {
+            idx += 1;
+            continue;
+        }
+        let start = idx;
+        let mut end = idx + 1;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        out.insert(line[start..end].to_string());
+        idx = end;
+    }
 }
 
 pub(super) async fn extract_code_outline(root: &Path, focus_rel: &str) -> Vec<OutlineSymbol> {

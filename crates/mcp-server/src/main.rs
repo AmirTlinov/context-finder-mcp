@@ -43,6 +43,8 @@ mod index_warmup;
 mod mcp_daemon;
 mod runtime_env;
 mod stdio_hybrid;
+#[cfg(test)]
+mod test_support;
 mod tools;
 
 use stdio_hybrid::stdio_hybrid_server_agent_oneshot_safe;

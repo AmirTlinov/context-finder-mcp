@@ -7,9 +7,9 @@ use std::path::Path;
 use super::meaning_common::{
     build_ev_file_index, classify_boundaries, classify_files, contract_kind, detect_brokers,
     detect_channel_mentions, directory_key, extract_asyncapi_flows, extract_code_outline,
-    hash_and_count_lines, infer_actor_by_path, infer_flow_actor, json_string, shrink_pack,
-    BoundaryCandidate, BoundaryKind, BrokerCandidate, CognitivePack, EvidenceItem, EvidenceKind,
-    FlowEdge,
+    hash_and_count_lines, infer_actor_by_path, infer_flow_actor, is_artifact_scope, json_string,
+    shrink_pack, AnchorKind, BoundaryCandidate, BoundaryKind, BrokerCandidate, CognitivePack,
+    EvidenceItem, EvidenceKind, FlowEdge,
 };
 use super::paths::normalize_relative_path;
 use super::schemas::meaning_focus::{MeaningFocusBudget, MeaningFocusRequest, MeaningFocusResult};
@@ -24,6 +24,10 @@ const DEFAULT_MAP_DEPTH: usize = 2;
 const DEFAULT_MAP_LIMIT: usize = 12;
 const DEFAULT_MAX_EVIDENCE: usize = 12;
 const DEFAULT_MAX_BOUNDARIES: usize = 12;
+const DEFAULT_MAX_ENTRYPOINTS: usize = 8;
+const DEFAULT_MAX_CONTRACTS: usize = 8;
+const DEFAULT_MAX_FLOWS: usize = 12;
+const DEFAULT_MAX_BROKERS: usize = 6;
 const DEFAULT_EVIDENCE_END_LINE: usize = 120;
 
 pub(super) async fn compute_meaning_focus_result(
@@ -126,12 +130,22 @@ pub(super) async fn compute_meaning_focus_result(
     };
 
     let mut dir_files: HashMap<String, usize> = HashMap::new();
+    let mut dir_files_with_artifacts: HashMap<String, usize> = HashMap::new();
+    let focus_is_artifact = is_artifact_scope(&focus_rel) || is_artifact_scope(&focus_dir);
     for rel in files_for_map {
         let key = directory_key(rel, map_depth);
+        *dir_files_with_artifacts.entry(key.clone()).or_insert(0) += 1;
+        if !focus_is_artifact && is_artifact_scope(rel) {
+            continue;
+        }
         *dir_files.entry(key).or_insert(0) += 1;
     }
     let mut map_rows = dir_files.into_iter().collect::<Vec<_>>();
     map_rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if map_rows.is_empty() {
+        map_rows = dir_files_with_artifacts.into_iter().collect::<Vec<_>>();
+        map_rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    }
     map_rows.truncate(map_limit);
 
     let (entrypoints, contracts) = classify_files(files_for_map);
@@ -162,10 +176,136 @@ pub(super) async fn compute_meaning_focus_result(
 
     let root_fp = context_indexer::root_fingerprint(root_display);
 
-    let mut cp = CognitivePack::new();
-    cp.push_line("CPV1");
-    cp.push_line(&format!("ROOT_FP {root_fp}"));
-    cp.push_line(&format!("QUERY {}", json_string(&query)));
+    let mut emitted_boundaries: Vec<&BoundaryCandidate> = Vec::new();
+    for boundary in &boundaries {
+        if emitted_boundaries.len() >= DEFAULT_MAX_BOUNDARIES {
+            break;
+        }
+        if !ev_file_index.contains_key(&boundary.file) {
+            continue;
+        }
+        emitted_boundaries.push(boundary);
+    }
+
+    let mut emitted_entrypoints: Vec<&String> = Vec::new();
+    for file in &entrypoints {
+        if emitted_entrypoints.len() >= DEFAULT_MAX_ENTRYPOINTS {
+            break;
+        }
+        if !ev_file_index.contains_key(file) {
+            continue;
+        }
+        emitted_entrypoints.push(file);
+    }
+
+    let mut emitted_contracts: Vec<&String> = Vec::new();
+    for file in &contracts {
+        if emitted_contracts.len() >= DEFAULT_MAX_CONTRACTS {
+            break;
+        }
+        if !ev_file_index.contains_key(file) {
+            continue;
+        }
+        emitted_contracts.push(file);
+    }
+
+    #[derive(Clone)]
+    struct EmittedFlow {
+        contract_file: String,
+        channel: String,
+        direction: String,
+        protocol: Option<String>,
+        actor: Option<String>,
+        confidence: f32,
+        ev_id: String,
+    }
+
+    let mut emitted_flows: Vec<EmittedFlow> = Vec::new();
+    for flow in &flows {
+        if emitted_flows.len() >= DEFAULT_MAX_FLOWS {
+            break;
+        }
+
+        let actor_from_mentions = channel_mentions
+            .get(&flow.channel)
+            .and_then(|hit| infer_actor_by_path(hit, &entrypoints));
+        let (actor, actor_conf) = if let Some(actor) = actor_from_mentions {
+            (Some(actor), 0.95)
+        } else if let Some(actor) = infer_flow_actor(&flow.contract_file, &entrypoints) {
+            (Some(actor), 0.85)
+        } else {
+            (None, 1.0)
+        };
+        let conf = if actor.is_some() { actor_conf } else { 1.0 };
+
+        let Some(ev_id) = ev_file_index
+            .get(&flow.contract_file)
+            .or_else(|| actor.as_deref().and_then(|file| ev_file_index.get(file)))
+            .cloned()
+        else {
+            continue;
+        };
+
+        emitted_flows.push(EmittedFlow {
+            contract_file: flow.contract_file.clone(),
+            channel: flow.channel.clone(),
+            direction: flow.direction.as_str().to_string(),
+            protocol: flow.protocol.clone(),
+            actor,
+            confidence: conf,
+            ev_id,
+        });
+    }
+
+    #[derive(Clone)]
+    struct EmittedBroker {
+        file: String,
+        proto: String,
+        confidence: f32,
+        ev_id: String,
+    }
+
+    let mut emitted_brokers: Vec<EmittedBroker> = Vec::new();
+    for broker in &brokers {
+        if emitted_brokers.len() >= DEFAULT_MAX_BROKERS {
+            break;
+        }
+        let Some(ev_id) = ev_file_index.get(&broker.file).cloned() else {
+            continue;
+        };
+        emitted_brokers.push(EmittedBroker {
+            file: broker.file.clone(),
+            proto: broker.proto.clone(),
+            confidence: broker.confidence,
+            ev_id,
+        });
+    }
+
+    let mut used_ev_ids: HashSet<String> = HashSet::new();
+    if !evidence.is_empty() {
+        used_ev_ids.insert("ev0".to_string());
+    }
+    for boundary in &emitted_boundaries {
+        if let Some(ev_id) = ev_file_index.get(&boundary.file) {
+            used_ev_ids.insert(ev_id.clone());
+        }
+    }
+    for file in &emitted_entrypoints {
+        if let Some(ev_id) = ev_file_index.get((*file).as_str()) {
+            used_ev_ids.insert(ev_id.clone());
+        }
+    }
+    for file in &emitted_contracts {
+        if let Some(ev_id) = ev_file_index.get((*file).as_str()) {
+            used_ev_ids.insert(ev_id.clone());
+        }
+    }
+    for flow in &emitted_flows {
+        used_ev_ids.insert(flow.ev_id.clone());
+    }
+    for broker in &emitted_brokers {
+        used_ev_ids.insert(broker.ev_id.clone());
+    }
 
     let mut dict_paths: BTreeSet<String> = BTreeSet::new();
     dict_paths.insert(focus_dir.clone());
@@ -173,27 +313,41 @@ pub(super) async fn compute_meaning_focus_result(
     for (path, _) in &map_rows {
         dict_paths.insert(path.clone());
     }
-    for file in &entrypoints {
-        dict_paths.insert(file.clone());
-    }
-    for file in &contracts {
-        dict_paths.insert(file.clone());
-    }
-    for flow in &flows {
-        dict_paths.insert(flow.channel.clone());
-    }
-    for broker in &brokers {
-        dict_paths.insert(broker.file.clone());
-    }
     for symbol in &outline {
         dict_paths.insert(symbol.name.clone());
     }
-    for boundary in &boundaries {
+    for boundary in &emitted_boundaries {
         dict_paths.insert(boundary.file.clone());
     }
-    for ev in &evidence {
+    for file in &emitted_entrypoints {
+        dict_paths.insert((**file).clone());
+    }
+    for file in &emitted_contracts {
+        dict_paths.insert((**file).clone());
+    }
+    for flow in &emitted_flows {
+        dict_paths.insert(flow.contract_file.clone());
+        dict_paths.insert(flow.channel.clone());
+        if let Some(actor) = &flow.actor {
+            dict_paths.insert(actor.clone());
+        }
+    }
+    for broker in &emitted_brokers {
+        dict_paths.insert(broker.file.clone());
+    }
+    for (idx, ev) in evidence.iter().enumerate() {
+        let ev_id = format!("ev{idx}");
+        if !used_ev_ids.contains(&ev_id) {
+            continue;
+        }
         dict_paths.insert(ev.file.clone());
     }
+
+    let mut cp = CognitivePack::new();
+    cp.push_line("CPV1");
+    cp.push_line(&format!("ROOT_FP {root_fp}"));
+    cp.push_line(&format!("QUERY {}", json_string(&query)));
+
     for path in dict_paths {
         cp.dict_intern(path);
     }
@@ -221,15 +375,18 @@ pub(super) async fn compute_meaning_focus_result(
         cp.push_line(&format!("MAP path={d} files={files}"));
     }
 
-    if !boundaries.is_empty() {
+    if !emitted_boundaries.is_empty() {
         cp.push_line("S BOUNDARIES");
-        for boundary in &boundaries {
+        for boundary in &emitted_boundaries {
             let d = cp.dict_id(&boundary.file);
             let conf = format!("{:.2}", boundary.confidence.clamp(0.0, 1.0));
             let ev = ev_file_index
                 .get(&boundary.file)
                 .map(|id| format!(" ev={id}"))
                 .unwrap_or_default();
+            if ev.is_empty() {
+                continue;
+            }
             cp.push_line(&format!(
                 "BOUNDARY kind={} file={d} conf={conf}{ev}",
                 boundary.kind.as_str()
@@ -237,26 +394,32 @@ pub(super) async fn compute_meaning_focus_result(
         }
     }
 
-    if !entrypoints.is_empty() {
+    if !emitted_entrypoints.is_empty() {
         cp.push_line("S ENTRYPOINTS");
-        for file in &entrypoints {
-            let d = cp.dict_id(file);
+        for file in &emitted_entrypoints {
+            let d = cp.dict_id(file.as_str());
             let ev = ev_file_index
-                .get(file)
+                .get(file.as_str())
                 .map(|id| format!(" ev={id}"))
                 .unwrap_or_default();
+            if ev.is_empty() {
+                continue;
+            }
             cp.push_line(&format!("ENTRY file={d}{ev}"));
         }
     }
 
-    if !contracts.is_empty() {
+    if !emitted_contracts.is_empty() {
         cp.push_line("S CONTRACTS");
-        for file in &contracts {
-            let d = cp.dict_id(file);
+        for file in &emitted_contracts {
+            let d = cp.dict_id(file.as_str());
             let ev = ev_file_index
-                .get(file)
+                .get(file.as_str())
                 .map(|id| format!(" ev={id}"))
                 .unwrap_or_default();
+            if ev.is_empty() {
+                continue;
+            }
             cp.push_line(&format!(
                 "CONTRACT kind={} file={d}{ev}",
                 contract_kind(file)
@@ -264,92 +427,57 @@ pub(super) async fn compute_meaning_focus_result(
         }
     }
 
-    if !flows.is_empty() {
-        let mut flow_lines: Vec<String> = Vec::new();
-        for flow in &flows {
+    if !emitted_flows.is_empty() {
+        cp.push_line("S FLOWS");
+        for flow in &emitted_flows {
             let contract_d = cp.dict_id(&flow.contract_file);
             let chan_d = cp.dict_id(&flow.channel);
-
-            let actor_from_mentions = channel_mentions
-                .get(&flow.channel)
-                .and_then(|hit| infer_actor_by_path(hit, &entrypoints));
-            let (actor, actor_conf) = if let Some(actor) = actor_from_mentions {
-                (Some(actor), 0.95)
-            } else if let Some(actor) = infer_flow_actor(&flow.contract_file, &entrypoints) {
-                (Some(actor), 0.85)
-            } else {
-                (None, 1.0)
-            };
-            let actor_field = actor
+            let actor_field = flow
+                .actor
                 .as_deref()
                 .map(|file| format!(" actor={}", cp.dict_id(file)))
                 .unwrap_or_default();
-            let conf = if actor.is_some() { actor_conf } else { 1.0 };
-
             let proto_field = flow
                 .protocol
                 .as_deref()
                 .map(|p| format!(" proto={p}"))
                 .unwrap_or_default();
-            let ev_field = ev_file_index
-                .get(&flow.contract_file)
-                .or_else(|| actor.as_deref().and_then(|file| ev_file_index.get(file)))
-                .map(|id| format!(" ev={id}"))
-                .unwrap_or_default();
-            if ev_field.is_empty() {
-                continue;
-            }
-            flow_lines.push(format!(
-                "FLOW contract={contract_d} chan={chan_d} dir={}{}{} conf={:.2}{}",
-                flow.direction.as_str(),
+            cp.push_line(&format!(
+                "FLOW contract={contract_d} chan={chan_d} dir={}{}{} conf={:.2} ev={}",
+                flow.direction,
                 proto_field,
                 actor_field,
-                conf,
-                ev_field
+                flow.confidence.clamp(0.0, 1.0),
+                flow.ev_id
             ));
-        }
-        if !flow_lines.is_empty() {
-            cp.push_line("S FLOWS");
-            for line in &flow_lines {
-                cp.push_line(line);
-            }
         }
     }
 
-    if !brokers.is_empty() {
-        let mut broker_lines: Vec<String> = Vec::new();
-        for broker in &brokers {
+    if !emitted_brokers.is_empty() {
+        cp.push_line("S BROKERS");
+        for broker in &emitted_brokers {
             let d = cp.dict_id(&broker.file);
             let conf = format!("{:.2}", broker.confidence.clamp(0.0, 1.0));
-            let ev = ev_file_index
-                .get(&broker.file)
-                .map(|id| format!(" ev={id}"))
-                .unwrap_or_default();
-            if ev.is_empty() {
-                continue;
-            }
-            broker_lines.push(format!(
-                "BROKER proto={} file={d} conf={conf}{ev}",
-                broker.proto
+            cp.push_line(&format!(
+                "BROKER proto={} file={d} conf={conf} ev={}",
+                broker.proto, broker.ev_id
             ));
-        }
-        if !broker_lines.is_empty() {
-            cp.push_line("S BROKERS");
-            for line in &broker_lines {
-                cp.push_line(line);
-            }
         }
     }
 
-    if !evidence.is_empty() {
+    if !evidence.is_empty() && !used_ev_ids.is_empty() {
         cp.push_line("S EVIDENCE");
         for (idx, ev) in evidence.iter().enumerate() {
             let ev_id = format!("ev{idx}");
+            if !used_ev_ids.contains(&ev_id) {
+                continue;
+            }
             let d = cp.dict_id(&ev.file);
             let kind = match ev.kind {
                 EvidenceKind::Entrypoint => "entrypoint".to_string(),
                 EvidenceKind::Contract => "contract".to_string(),
                 EvidenceKind::Boundary(kind) => format!("boundary.{}", kind.as_str()),
+                EvidenceKind::Anchor(kind) => format!("anchor.{}", kind.as_str()),
             };
             let hash = ev
                 .source_hash
@@ -366,13 +494,9 @@ pub(super) async fn compute_meaning_focus_result(
     let nba = evidence
         .first()
         .map(|ev| {
-            let ev_id = ev_file_index
-                .get(ev.file.as_str())
-                .map(|id| format!(" ev={id}"))
-                .unwrap_or_default();
             let d = cp.dict_id(&ev.file);
             format!(
-                "NBA evidence_fetch{ev_id} file={d} L{}-L{}",
+                "NBA evidence_fetch ev=ev0 file={d} L{}-L{}",
                 ev.start_line, ev.end_line,
             )
         })
@@ -434,6 +558,14 @@ fn build_next_actions(root_display: &str, first_ev: Option<&EvidenceItem>) -> Ve
             BoundaryKind::Config => "Config",
             BoundaryKind::Db => "DB",
             BoundaryKind::Event => "Event",
+        },
+        EvidenceKind::Anchor(kind) => match kind {
+            AnchorKind::Canon => "Canon",
+            AnchorKind::HowTo => "HowTo",
+            AnchorKind::Infra => "Infra",
+            AnchorKind::Contract => "Contract",
+            AnchorKind::Entrypoint => "Entrypoint",
+            AnchorKind::Artifact => "Artifacts",
         },
     };
     vec![ToolNextAction {

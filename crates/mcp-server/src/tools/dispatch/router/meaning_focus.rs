@@ -3,6 +3,8 @@ use super::super::{
     McpError, MeaningFocusRequest, ResponseMode, ToolMeta,
 };
 use crate::tools::context_doc::ContextDocBuilder;
+use crate::tools::schemas::meaning_focus::MeaningFocusOutputFormat;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use super::error::{attach_structured_content, invalid_request_with_meta, meta_for_request};
 
@@ -11,6 +13,18 @@ pub(in crate::tools::dispatch) async fn meaning_focus(
     service: &ContextFinderService,
     request: MeaningFocusRequest,
 ) -> Result<CallToolResult, McpError> {
+    let output_format = request
+        .output_format
+        .unwrap_or(MeaningFocusOutputFormat::Context);
+    let want_context = matches!(
+        output_format,
+        MeaningFocusOutputFormat::Context | MeaningFocusOutputFormat::ContextAndDiagram
+    );
+    let want_diagram = matches!(
+        output_format,
+        MeaningFocusOutputFormat::Diagram | MeaningFocusOutputFormat::ContextAndDiagram
+    );
+
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
     let (root, root_display) = match service
         .resolve_root_no_daemon_touch(request.path.as_deref())
@@ -56,20 +70,32 @@ pub(in crate::tools::dispatch) async fn meaning_focus(
     };
     result.meta = meta_for_output.clone();
 
-    let mut doc = ContextDocBuilder::new();
-    doc.push_answer("meaning_focus");
-    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
-    doc.push_note("pack:");
-    doc.push_block_smart(&result.pack);
-    if result.budget.truncated {
-        if let Some(truncation) = result.budget.truncation.as_ref() {
-            doc.push_note(&format!("truncated=true ({truncation:?})"));
-        } else {
-            doc.push_note("truncated=true");
+    let mut contents: Vec<Content> = Vec::new();
+    if want_context {
+        let mut doc = ContextDocBuilder::new();
+        doc.push_answer("meaning_focus");
+        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+        doc.push_note("pack:");
+        doc.push_block_smart(&result.pack);
+        if result.budget.truncated {
+            if let Some(truncation) = result.budget.truncation.as_ref() {
+                doc.push_note(&format!("truncated=true ({truncation:?})"));
+            } else {
+                doc.push_note("truncated=true");
+            }
         }
+        contents.push(Content::text(doc.finish()));
+    }
+    if want_diagram {
+        let svg =
+            crate::tools::meaning_diagram::render_meaning_pack_svg(&result.pack, &result.query, 24);
+        contents.push(Content::image(
+            STANDARD.encode(svg.as_bytes()),
+            "image/svg+xml",
+        ));
     }
 
-    let output = CallToolResult::success(vec![Content::text(doc.finish())]);
+    let output = CallToolResult::success(contents);
     Ok(attach_structured_content(
         output,
         &result,

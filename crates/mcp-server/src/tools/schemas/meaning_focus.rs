@@ -1,11 +1,24 @@
 use context_indexer::ToolMeta;
 use context_protocol::{BudgetTruncation, ToolNextAction};
 use rmcp::schemars;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::response_mode::ResponseMode;
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+/// Control how `meaning_focus` returns results.
+///
+/// - `context`: default `.context` text output (CPV1).
+/// - `context_and_diagram`: `.context` text + an SVG diagram as an MCP `image` content block.
+/// - `diagram`: SVG diagram only (lowest token usage, requires image-capable client/model).
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MeaningFocusOutputFormat {
+    Context,
+    ContextAndDiagram,
+    Diagram,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MeaningFocusRequest {
     /// Project directory path.
     #[schemars(
@@ -39,6 +52,15 @@ pub struct MeaningFocusRequest {
     /// - "minimal": strips meta/index_state and next_actions to reduce noise.
     #[schemars(description = "Response mode: 'facts' (default), 'full', or 'minimal'")]
     pub response_mode: Option<ResponseMode>,
+
+    /// Output format:
+    /// - "context" (default): CPV1 `.context` output only.
+    /// - "context_and_diagram": `.context` + `image/svg+xml` diagram.
+    /// - "diagram": `image/svg+xml` diagram only.
+    #[schemars(
+        description = "Output format: 'context' (default), 'context_and_diagram', or 'diagram'"
+    )]
+    pub output_format: Option<MeaningFocusOutputFormat>,
 
     /// Automatically build/refresh the semantic index when needed.
     #[schemars(

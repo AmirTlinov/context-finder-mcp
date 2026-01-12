@@ -5,6 +5,19 @@ use serde::{Deserialize, Serialize};
 
 use super::response_mode::ResponseMode;
 
+/// Control how `meaning_pack` returns results.
+///
+/// - `context`: default `.context` text output (CPV1).
+/// - `context_and_diagram`: `.context` text + an SVG diagram as an MCP `image` content block.
+/// - `diagram`: SVG diagram only (lowest token usage, requires image-capable client/model).
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MeaningPackOutputFormat {
+    Context,
+    ContextAndDiagram,
+    Diagram,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MeaningPackRequest {
     /// Project directory path.
@@ -35,6 +48,15 @@ pub struct MeaningPackRequest {
     /// - "minimal": strips meta/index_state and next_actions to reduce noise.
     #[schemars(description = "Response mode: 'facts' (default), 'full', or 'minimal'")]
     pub response_mode: Option<ResponseMode>,
+
+    /// Output format:
+    /// - "context" (default): CPV1 `.context` output only.
+    /// - "context_and_diagram": `.context` + `image/svg+xml` diagram.
+    /// - "diagram": `image/svg+xml` diagram only.
+    #[schemars(
+        description = "Output format: 'context' (default), 'context_and_diagram', or 'diagram'"
+    )]
+    pub output_format: Option<MeaningPackOutputFormat>,
 
     /// Automatically build/refresh the semantic index when needed.
     #[schemars(

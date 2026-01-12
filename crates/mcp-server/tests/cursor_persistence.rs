@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::Barrier;
 
 fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
     if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
@@ -135,5 +137,119 @@ async fn cursor_alias_survives_process_restart() -> Result<()> {
     );
 
     service_b.cancel().await.context("shutdown server B")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cursor_aliases_do_not_collide_across_concurrent_servers() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let cursor_store_dir = tempfile::tempdir().context("temp cursor store dir")?;
+    let cursor_store_path = cursor_store_dir.path().join("cursor_store.json");
+
+    let tmp_a = tempfile::tempdir().context("temp project A dir")?;
+    let root_a = tmp_a.path();
+    std::fs::write(root_a.join("README.md"), "a1\na2\na3\n").context("write A README.md")?;
+
+    let tmp_b = tempfile::tempdir().context("temp project B dir")?;
+    let root_b = tmp_b.path();
+    std::fs::write(root_b.join("README.md"), "b1\nb2\nb3\n").context("write B README.md")?;
+
+    let (service_a, service_b) = tokio::try_join!(
+        spawn_server(&bin, &cursor_store_path),
+        spawn_server(&bin, &cursor_store_path)
+    )?;
+
+    let barrier = Arc::new(Barrier::new(3));
+    let call = |svc: rmcp::service::RunningService<rmcp::RoleClient, ()>,
+                root: PathBuf,
+                barrier: Arc<Barrier>| async move {
+        barrier.wait().await;
+        let args = serde_json::json!({
+            "path": root.to_string_lossy(),
+            "file": "README.md",
+            "max_lines": 1,
+            "max_chars": 2048,
+            "response_mode": "minimal",
+        });
+        let resp = tokio::time::timeout(
+            Duration::from_secs(10),
+            svc.call_tool(CallToolRequestParam {
+                name: "file_slice".into(),
+                arguments: args.as_object().cloned(),
+            }),
+        )
+        .await
+        .context("timeout calling file_slice")?
+        .context("call file_slice")?;
+
+        let text = resp
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .context("missing file_slice text output")?;
+        let cursor = text
+            .lines()
+            .find_map(|line| line.strip_prefix("M: ").map(str::to_string))
+            .context("missing next_cursor (M:) line in file_slice output")?;
+        svc.cancel().await.context("shutdown mcp service")?;
+        Ok::<String, anyhow::Error>(cursor)
+    };
+
+    let task_a = tokio::spawn(call(service_a, root_a.to_path_buf(), barrier.clone()));
+    let task_b = tokio::spawn(call(service_b, root_b.to_path_buf(), barrier.clone()));
+    barrier.wait().await;
+
+    let cursor_a = task_a.await.context("join cursor task A")??;
+    let cursor_b = task_b.await.context("join cursor task B")??;
+    assert!(
+        cursor_a.starts_with("cfcs1:"),
+        "expected compact cursor alias for A, got: {cursor_a:?}"
+    );
+    assert!(
+        cursor_b.starts_with("cfcs1:"),
+        "expected compact cursor alias for B, got: {cursor_b:?}"
+    );
+    assert_ne!(
+        cursor_a, cursor_b,
+        "expected distinct cursor aliases across concurrent servers"
+    );
+
+    // After both servers exit, a fresh process should be able to expand both cursor aliases from
+    // the shared persisted cursor store file.
+    let service_c = spawn_server(&bin, &cursor_store_path).await?;
+    for (label, root, cursor, expected) in
+        [("A", root_a, cursor_a, "a2"), ("B", root_b, cursor_b, "b2")]
+    {
+        let args = serde_json::json!({
+            "path": root.to_string_lossy(),
+            "cursor": cursor,
+            "max_chars": 2048,
+            "response_mode": "minimal",
+        });
+        let resp = tokio::time::timeout(
+            Duration::from_secs(10),
+            service_c.call_tool(CallToolRequestParam {
+                name: "file_slice".into(),
+                arguments: args.as_object().cloned(),
+            }),
+        )
+        .await
+        .with_context(|| format!("timeout calling file_slice on server C for {label}"))?
+        .with_context(|| format!("call file_slice on server C for {label}"))?;
+
+        let text = resp
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .context("missing file_slice text output from server C")?;
+        assert!(
+            text.contains(expected),
+            "expected {label} continuation to include {expected:?}, got: {text}"
+        );
+    }
+    service_c.cancel().await.context("shutdown server C")?;
     Ok(())
 }

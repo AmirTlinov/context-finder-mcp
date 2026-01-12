@@ -6,7 +6,9 @@ use crate::{
 use context_vector_store::{context_dir_for_project_root, current_model_id};
 use ignore::WalkBuilder;
 use log::{error, info, warn};
-use notify::{Config as NotifyConfig, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    Config as NotifyConfig, Event, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
@@ -18,6 +20,8 @@ use tokio::time;
 
 const DEFAULT_ALERT_REASON: &str = "fs_event";
 const REFRESH_MODELS_REASON_PREFIX: &str = "refresh_models:";
+
+type AnyWatcher = Box<dyn Watcher + Send>;
 
 fn parse_refresh_models_reason(reason: &str) -> Option<Vec<String>> {
     let tail = reason.strip_prefix(REFRESH_MODELS_REASON_PREFIX)?;
@@ -102,7 +106,7 @@ struct StreamingIndexerInner {
     command_tx: mpsc::Sender<WatcherCommand>,
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
-    _watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    _watcher: Arc<std::sync::Mutex<Option<AnyWatcher>>>,
     _watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
     _health_guard: TokioMutex<watch::Receiver<IndexerHealth>>,
 }
@@ -171,6 +175,16 @@ impl StreamingIndexer {
     pub fn health_stream(&self) -> watch::Receiver<IndexerHealth> {
         self.inner.health_tx.subscribe()
     }
+
+    #[must_use]
+    pub fn watch_count(&self) -> usize {
+        self.inner
+            ._watch_state
+            .lock()
+            .ok()
+            .map(|guard| guard.len())
+            .unwrap_or(0)
+    }
 }
 
 impl Drop for StreamingIndexer {
@@ -190,7 +204,7 @@ struct MultiModelStreamingIndexerInner {
     command_tx: mpsc::Sender<WatcherCommand>,
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
-    _watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    _watcher: Arc<std::sync::Mutex<Option<AnyWatcher>>>,
     _watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
     _health_guard: TokioMutex<watch::Receiver<IndexerHealth>>,
     models: Arc<TokioMutex<Vec<ModelIndexSpec>>>,
@@ -282,6 +296,16 @@ impl MultiModelStreamingIndexer {
     pub fn health_stream(&self) -> watch::Receiver<IndexerHealth> {
         self.inner.health_tx.subscribe()
     }
+
+    #[must_use]
+    pub fn watch_count(&self) -> usize {
+        self.inner
+            ._watch_state
+            .lock()
+            .ok()
+            .map(|guard| guard.len())
+            .unwrap_or(0)
+    }
 }
 
 impl Drop for MultiModelStreamingIndexer {
@@ -296,30 +320,100 @@ fn create_fs_watcher(
     root: &Path,
     sender: mpsc::Sender<notify::Result<Event>>,
     poll_interval: Duration,
-) -> Result<(RecommendedWatcher, Arc<std::sync::Mutex<HashSet<PathBuf>>>)> {
+) -> Result<(AnyWatcher, Arc<std::sync::Mutex<HashSet<PathBuf>>>)> {
     let root = root.to_path_buf();
-    let mut watcher = RecommendedWatcher::new(
-        move |res| {
-            let _ = sender.blocking_send(res);
-        },
-        NotifyConfig::default().with_poll_interval(poll_interval),
-    )
-    .map_err(|e| IndexerError::Other(format!("watcher init failed: {e}")))?;
     let watch_state = Arc::new(std::sync::Mutex::new(HashSet::new()));
     let watch_dirs = build_watch_list(&root);
-    {
+
+    let mut watcher: AnyWatcher = Box::new(
+        RecommendedWatcher::new(
+            {
+                let sender = sender.clone();
+                move |res| {
+                    let _ = sender.blocking_send(res);
+                }
+            },
+            NotifyConfig::default().with_poll_interval(poll_interval),
+        )
+        .map_err(|e| IndexerError::Other(format!("watcher init failed: {e}")))?,
+    );
+
+    let watch_count = {
         let mut guard = watch_state
             .lock()
             .map_err(|_| IndexerError::Other("watch state lock poisoned".to_string()))?;
-        for dir in watch_dirs {
-            if let Err(err) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-                warn!("failed to watch {}: {err}", dir.display());
-                continue;
-            }
-            guard.insert(dir);
+        add_watches(&root, &mut *watcher, &watch_dirs, &mut guard);
+        guard.len()
+    };
+
+    if watch_count == 0 {
+        warn!(
+            "Streaming watcher started with 0 active watches (OS limits may be exhausted); falling back to polling watcher"
+        );
+
+        let mut poll_watcher: AnyWatcher = Box::new(
+            PollWatcher::new(
+                {
+                    let sender = sender.clone();
+                    move |res| {
+                        let _ = sender.blocking_send(res);
+                    }
+                },
+                NotifyConfig::default().with_poll_interval(poll_interval),
+            )
+            .map_err(|e| IndexerError::Other(format!("poll watcher init failed: {e}")))?,
+        );
+
+        let poll_count = {
+            let mut guard = watch_state
+                .lock()
+                .map_err(|_| IndexerError::Other("watch state lock poisoned".to_string()))?;
+            guard.clear();
+            add_watches(&root, &mut *poll_watcher, &watch_dirs, &mut guard);
+            guard.len()
+        };
+
+        if poll_count == 0 {
+            warn!("Polling watcher fallback also started with 0 active watches");
+        } else {
+            watcher = poll_watcher;
         }
     }
+
     Ok((watcher, watch_state))
+}
+
+fn add_watches(
+    root: &Path,
+    watcher: &mut dyn Watcher,
+    watch_dirs: &[PathBuf],
+    watch_state: &mut HashSet<PathBuf>,
+) {
+    for dir in watch_dirs {
+        if let Err(err) = watcher.watch(dir, RecursiveMode::NonRecursive) {
+            warn!("failed to watch {}: {err}", dir.display());
+            continue;
+        }
+        watch_state.insert(dir.clone());
+    }
+
+    // Some watcher backends are less reliable for directory-only, non-recursive watches.
+    // For small projects, add direct file watches for indexable files as a safety net.
+    //
+    // This stays bounded to avoid excessive watch counts in large repos.
+    const MAX_DIRECT_FILE_WATCHES: usize = 256;
+    const MAX_DIRS_FOR_DIRECT_FILE_WATCHES: usize = 64;
+    if watch_state.len() <= MAX_DIRS_FOR_DIRECT_FILE_WATCHES {
+        let scanner = FileScanner::new(root);
+        let files = scanner.scan();
+        for file in files.into_iter().take(MAX_DIRECT_FILE_WATCHES) {
+            if let Err(err) = watcher.watch(&file, RecursiveMode::NonRecursive) {
+                warn!("failed to watch {}: {err}", file.display());
+                continue;
+            }
+            watch_state.insert(file);
+        }
+    }
 }
 
 fn build_watch_list(root: &Path) -> Vec<PathBuf> {
@@ -357,7 +451,7 @@ fn build_watch_list(root: &Path) -> Vec<PathBuf> {
 fn maybe_add_watches(
     root: &Path,
     evt: &Event,
-    watcher: &Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watcher: &Arc<std::sync::Mutex<Option<AnyWatcher>>>,
     watch_state: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) {
     if evt.paths.is_empty() {
@@ -386,7 +480,7 @@ fn maybe_add_watches(
 fn add_watch_tree(
     root: &Path,
     start: &Path,
-    watcher: &Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watcher: &Arc<std::sync::Mutex<Option<AnyWatcher>>>,
     watch_state: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) {
     let mut builder = WalkBuilder::new(start);
@@ -489,7 +583,7 @@ fn spawn_index_loop(
     mut command_rx: mpsc::Receiver<WatcherCommand>,
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
-    watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watcher: Arc<std::sync::Mutex<Option<AnyWatcher>>>,
     watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) {
     tokio::spawn(async move {
@@ -625,7 +719,7 @@ fn spawn_multi_model_index_loop(
     update_tx: broadcast::Sender<IndexUpdate>,
     health_tx: watch::Sender<IndexerHealth>,
     models: Arc<TokioMutex<Vec<ModelIndexSpec>>>,
-    watcher: Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watcher: Arc<std::sync::Mutex<Option<AnyWatcher>>>,
     watch_state: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) {
     tokio::spawn(async move {
@@ -887,7 +981,7 @@ fn handle_event(
     root: &Path,
     event: notify::Result<Event>,
     state: &mut DebounceState,
-    watcher: &Arc<std::sync::Mutex<Option<RecommendedWatcher>>>,
+    watcher: &Arc<std::sync::Mutex<Option<AnyWatcher>>>,
     watch_state: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) -> bool {
     match event {

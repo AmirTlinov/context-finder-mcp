@@ -162,6 +162,8 @@ impl FileScanner {
                     | "makefile"
                     | "Justfile"
                     | "JUSTFILE"
+                    | "Tiltfile"
+                    | "tiltfile"
                     | "Gemfile"
             ) {
                 return true;

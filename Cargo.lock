@@ -601,6 +601,8 @@ dependencies = [
  "dirs",
  "env_logger",
  "flate2",
+ "fs2",
+ "getrandom 0.2.16",
  "libc",
  "log",
  "petgraph",

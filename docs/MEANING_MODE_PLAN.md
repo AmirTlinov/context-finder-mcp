@@ -34,6 +34,11 @@ We add a new, deterministic output layer:
    - uses a local dictionary and IDs to minimize repetition
    - designed to be cheap in LLM tokens, and machine-parsable
 
+4) **Optional Diagram (SVG)** — a “meaning graph” sketch as `image/svg+xml` (for `meaning_pack` / `meaning_focus`):
+   - low/no text tokens (image content block instead of `.context` text)
+   - derived from CP anchors/boundaries (no extra claims beyond EV-backed facts)
+   - useful for fast navigation when the client/model can consume images
+
 The system responds using a strict “semantic zoom” policy:
 
 `Map (meaning)` → `Focus (meaning)` → `Evidence (verbatim)` → (optional) `Narrative`
@@ -181,16 +186,35 @@ CP is a compact text representation of MG+EV designed to:
 - allow agents to reference IDs, not full paths/names
 - be deterministic and machine-parsable
 
-CP v0 structure:
+CP v1 structure (current implementation, `format=cpv1`):
 
-- `D` lines: dictionary entries (paths/symbol names) → `d0`, `d1`, ...
-- `N` lines: nodes: `n7 kind dName dFile [facets...] [ev:ev3,ev8]`
-- `E` lines: edges: `n7 rel n2 [ev:ev3]`
-- `EV` lines: evidence: `ev3 dFile L10 L25 hash=...`
-- (extension) `FLOW` / `BROKER` lines: event channels + broker config pointers, always with `ev=...`
-- `NBA` line: a single “next best action”
+- Header:
+  - `CPV1`
+  - `ROOT_FP <u64>` (anti-contamination)
+  - `QUERY "<json string>"`
+- Dictionary:
+  - `S DICT`
+  - `D d0 "<string>"` (paths, channels, symbol names)
+- Sections (each section is optional and bounded):
+  - `S MAP` → `MAP path=d7 files=12`
+  - `S BOUNDARIES` → `BOUNDARY kind=http file=d3 conf=0.70 ev=ev2`
+  - `S ENTRYPOINTS` → `ENTRY file=d9 ev=ev0`
+  - `S CONTRACTS` → `CONTRACT kind=openapi file=d4 ev=ev1`
+  - `S FLOWS` → `FLOW contract=d4 chan=d8 dir=pub proto=kafka actor=d9 conf=0.95 ev=ev1`
+  - `S BROKERS` → `BROKER proto=kafka file=d5 conf=0.90 ev=ev3`
+  - `S EVIDENCE` → `EV ev1 kind=contract file=d4 L1-L120 sha256=<hex>`
+  - `NBA ...` (single “next best action”)
 
-Note: CP is the agent default; JSON MG is for tests/debug.
+Key invariants enforced by implementation/tests:
+
+- Any extracted **claim** (`BOUNDARY/ENTRY/CONTRACT/FLOW/BROKER`) must include `ev=...` and the referenced `EV` must exist.
+- Truncation is deterministic and structure-aware:
+  - removes lowest-priority body lines first
+  - prunes unused `EV` and `D` lines
+  - preserves `NBA`
+  - last resort keeps **at least one** `EV` + its `D` entry + `NBA evidence_fetch`
+
+Note: CP is the agent default. JSON MG is reserved for later phases (debug/tests).
 
 ---
 
@@ -289,6 +313,7 @@ We must treat this as a security boundary.
 
 - Root is resolved only from MCP roots or explicit request `path`.
 - If root is missing/ambiguous in daemon mode: **fail closed** and return NBA.
+- Defense-in-depth: in shared daemon mode, do not persist/reuse a “sticky root” until the connection has completed `initialize` (prevents buggy clients from reusing a stale root across projects).
 
 ### 7.2) Path safety
 
@@ -297,6 +322,7 @@ For any path read (including EV):
 - normalize + `realpath`
 - enforce `realpath(target)` is within `realpath(root)`
 - deny symlink escapes
+- secrets safety: `evidence_fetch` must refuse obvious secret assignments even in non-secret files (e.g., compose YAML), with an explicit escape hatch via `file_slice allow_secrets=true`.
 
 ### 7.3) Shared cache vs per-session state
 

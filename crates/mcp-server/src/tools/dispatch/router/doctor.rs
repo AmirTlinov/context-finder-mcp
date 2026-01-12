@@ -374,6 +374,7 @@ pub(in crate::tools::dispatch) async fn doctor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::ENV_MUTEX;
     use context_code_chunker::ChunkMetadata;
     use context_vector_store::ChunkCorpus;
     use std::collections::HashSet;
@@ -481,7 +482,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn doctor_full_does_not_emit_index_next_action() {
+        let _env = ENV_MUTEX.lock().expect("ENV_MUTEX");
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
 
@@ -528,7 +531,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn doctor_full_includes_observability_metrics() {
+        let _env = ENV_MUTEX.lock().expect("ENV_MUTEX");
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         std::fs::create_dir_all(root.join("src")).expect("mkdir src");

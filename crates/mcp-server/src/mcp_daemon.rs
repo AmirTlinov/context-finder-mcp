@@ -361,6 +361,15 @@ fn env_root_override() -> Option<PathBuf> {
     None
 }
 
+fn compute_proxy_default_root() -> Option<String> {
+    let root = env_root_override().or_else(|| {
+        let cwd = std::env::current_dir().ok()?;
+        find_project_root(&cwd).or(Some(cwd))
+    })?;
+    let canonical = root.canonicalize().unwrap_or(root);
+    Some(canonical.to_string_lossy().to_string())
+}
+
 fn find_git_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
@@ -390,15 +399,6 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
         .ancestors()
         .find(|candidate| MARKERS.iter().any(|marker| candidate.join(marker).exists()))
         .map(PathBuf::from)
-}
-
-fn compute_proxy_default_root() -> Option<String> {
-    let root = env_root_override().or_else(|| {
-        let cwd = std::env::current_dir().ok()?;
-        find_project_root(&cwd).or(Some(cwd))
-    })?;
-    let canonical = root.canonicalize().unwrap_or(root);
-    Some(canonical.to_string_lossy().to_string())
 }
 
 fn ensure_tool_call_has_path(value: &mut Value, root: &str) -> bool {
@@ -506,6 +506,10 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
     //
     // Important: cursor-only pagination calls must be left untouched, because tool routers decode
     // the root from the cursor when `path` is missing.
+    let env_root = env_root_override().map(|root| {
+        let canonical = root.canonicalize().unwrap_or(root);
+        canonical.to_string_lossy().to_string()
+    });
     let default_root = compute_proxy_default_root();
 
     let mut client_closed = false;
@@ -520,6 +524,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
         client_protocol_version: Option<String>,
         initialize_request_id: Option<Value>,
         pending_request_ids: Vec<Value>,
+        real_initialize_count: u64,
     }
 
     impl DaemonSessionState {
@@ -591,6 +596,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
             tokio::io::Stdout,
         >,
         default_root: Option<&str>,
+        env_root: Option<&str>,
         value: &mut Value,
         session: &mut DaemonSessionState,
     ) -> Result<LoopStep> {
@@ -609,6 +615,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
             // server process across multiple sessions). Reset per-session defaults so the first
             // tool call can establish the correct root again.
             session.reset_flags();
+            session.real_initialize_count = session.real_initialize_count.saturating_add(1);
             session.initialize_seen = true;
             session.initialize_request_id = request_id.clone();
             session.client_supports_roots = value
@@ -697,14 +704,28 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
         if !session.root_established {
             let mut established = false;
             if session.client_supports_roots {
-                // When the client supports MCP roots, avoid injecting a proxy-cwd derived
-                // `path`: the daemon will establish the per-connection root via `roots/list`.
+                // When the client supports MCP roots, the daemon can establish the per-connection
+                // root via `roots/list`. That is the most robust option for hosts that reuse a
+                // single MCP server process across multiple sessions/projects.
                 //
-                // This matters for multi-session safety: some hosts reuse a single MCP server
-                // process across multiple sessions/projects, so a sticky proxy cwd can cause
-                // cross-project mixups.
-            } else if let Some(root) = default_root {
-                established = ensure_tool_call_has_path(value, root);
+                // However, in the common CLI case (fresh proxy process; stable cwd) it's safer to
+                // proactively pin the root on the first tool call: `roots/list` can be slow or
+                // unavailable under load, and an unpinned session increases the chance of
+                // accidental cross-project fallback behavior.
+                if session.real_initialize_count <= 1 {
+                    if let Some(root) = default_root {
+                        established = ensure_tool_call_has_path(value, root);
+                    }
+                }
+            } else {
+                let root = if session.real_initialize_count > 1 {
+                    env_root
+                } else {
+                    default_root
+                };
+                if let Some(root) = root {
+                    established = ensure_tool_call_has_path(value, root);
+                }
             }
             if established {
                 session.root_established = true;
@@ -746,6 +767,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
                                 daemon,
                                 &mut client_transport,
                                 default_root.as_deref(),
+                                env_root.as_deref(),
                                 &mut value,
                                 &mut session,
                             )
@@ -832,6 +854,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
                         &mut new_daemon,
                         &mut client_transport,
                         default_root.as_deref(),
+                        env_root.as_deref(),
                         &mut value,
                         &mut session,
                     )

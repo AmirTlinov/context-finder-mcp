@@ -450,8 +450,7 @@ fn dedup_existing_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use crate::test_support::ENV_MUTEX;
 
     struct EnvGuard {
         saved: Vec<(String, Option<std::ffi::OsString>)>,

@@ -51,6 +51,11 @@ Start with one of these:
 - `meaning_focus` — semantic zoom-in around a specific file/dir (scoped CP + evidence pointers).
 - `evidence_fetch` — fetch exact file text for evidence pointers only (verbatim + hash, detects staleness).
 
+Tip: `meaning_pack` and `meaning_focus` support an optional diagram output via `output_format`:
+
+- `output_format=context_and_diagram` — CP text + an `image/svg+xml` “Meaning Graph”.
+- `output_format=diagram` — diagram only (lowest token usage; requires an image-capable client/model).
+
 Suggested “semantic zoom” flow:
 
 1) `meaning_pack` to get structure and the next best action.

@@ -11,7 +11,7 @@ use super::schemas::evidence_fetch::{
     EvidenceFetchTruncation, EvidencePointer,
 };
 use super::schemas::response_mode::ResponseMode;
-use super::secrets::is_potential_secret_path;
+use super::secrets::{contains_potential_secret_assignment, is_potential_secret_path};
 
 const VERSION: u32 = 1;
 const DEFAULT_MAX_CHARS: usize = 2_000;
@@ -74,6 +74,16 @@ pub(super) async fn compute_evidence_fetch_result(
         let end_line = pointer.end_line.max(start_line).min(file_lines.max(1));
 
         let (content, truncated) = read_lines_window(&canonical, start_line, end_line, max_lines)?;
+        let file_lc = display_file.to_ascii_lowercase();
+        let is_compose = file_lc.ends_with("docker-compose.yml")
+            || file_lc.ends_with("docker-compose.yaml")
+            || file_lc.ends_with("compose.yml")
+            || file_lc.ends_with("compose.yaml");
+        if is_compose && contains_potential_secret_assignment(&content) {
+            return Err(anyhow!(
+                "Refusing to return potential secret snippet from {display_file} (use file_slice with allow_secrets=true if you really mean it)"
+            ));
+        }
 
         items.push(EvidenceFetchItem {
             evidence: EvidencePointer {

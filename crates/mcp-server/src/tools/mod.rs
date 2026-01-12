@@ -16,6 +16,7 @@ mod grep_context;
 mod list_files;
 mod map;
 mod meaning_common;
+mod meaning_diagram;
 mod meaning_focus;
 mod meaning_pack;
 mod paths;

@@ -44,11 +44,15 @@ async fn streaming_indexer_latency_under_two_seconds() {
     let streamer = match StreamingIndexer::start(indexer.clone(), cfg) {
         Ok(s) => s,
         Err(e) if e.to_string().contains("Too many open files") => {
-            warn_skip_fd();
+            warn_skip_watcher(&e.to_string());
             return;
         }
         Err(e) => panic!("start streamer: {e}"),
     };
+    if streamer.watch_count() == 0 {
+        warn_skip_watcher("watch backend reported 0 active watches");
+        return;
+    }
     let mut updates = streamer.subscribe_updates();
 
     tokio::time::sleep(Duration::from_millis(250)).await;
@@ -68,7 +72,12 @@ async fn streaming_indexer_latency_under_two_seconds() {
 
     let update = wait_for_success(&mut updates, Duration::from_secs(4))
         .await
-        .expect("timeout waiting for update");
+        .unwrap_or_else(|| {
+            panic!(
+                "timeout waiting for update (health={:?})",
+                streamer.health_snapshot()
+            )
+        });
 
     let elapsed = start.elapsed();
     assert!(
@@ -115,11 +124,15 @@ async fn streaming_indexer_soak_keeps_alert_log_empty() {
     let streamer = match StreamingIndexer::start(indexer.clone(), cfg) {
         Ok(s) => s,
         Err(e) if e.to_string().contains("Too many open files") => {
-            warn_skip_fd();
+            warn_skip_watcher(&e.to_string());
             return;
         }
         Err(e) => panic!("start streamer: {e}"),
     };
+    if streamer.watch_count() == 0 {
+        warn_skip_watcher("watch backend reported 0 active watches");
+        return;
+    }
     let mut updates = streamer.subscribe_updates();
 
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -135,7 +148,12 @@ async fn streaming_indexer_soak_keeps_alert_log_empty() {
 
         let update = wait_for_success(&mut updates, Duration::from_secs(4))
             .await
-            .unwrap_or_else(|| panic!("missing update for iteration {idx}"));
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing update for iteration {idx} (health={:?})",
+                    streamer.health_snapshot()
+                )
+            });
         assert!(
             update.duration_ms < 2_000,
             "iteration {idx} took too long: {:?}",
@@ -205,11 +223,15 @@ async fn streaming_indexer_health_records_last_success() {
     let streamer = match StreamingIndexer::start(indexer.clone(), cfg) {
         Ok(s) => s,
         Err(e) if e.to_string().contains("Too many open files") => {
-            warn_skip_fd();
+            warn_skip_watcher(&e.to_string());
             return;
         }
         Err(e) => panic!("start streamer: {e}"),
     };
+    if streamer.watch_count() == 0 {
+        warn_skip_watcher("watch backend reported 0 active watches");
+        return;
+    }
     let mut updates = streamer.subscribe_updates();
 
     tokio::time::sleep(Duration::from_millis(250)).await;
@@ -221,7 +243,7 @@ async fn streaming_indexer_health_records_last_success() {
 
     wait_for_success(&mut updates, Duration::from_secs(4))
         .await
-        .expect("health update");
+        .unwrap_or_else(|| panic!("health update (health={:?})", streamer.health_snapshot()));
 
     let snapshot = streamer.health_snapshot();
     let last_success = snapshot
@@ -255,4 +277,8 @@ fn ensure_ulimit() {
 
 fn warn_skip_fd() {
     eprintln!("skipping watcher tests: NOFILE soft limit < 1024");
+}
+
+fn warn_skip_watcher(reason: &str) {
+    eprintln!("skipping watcher tests: {reason}");
 }

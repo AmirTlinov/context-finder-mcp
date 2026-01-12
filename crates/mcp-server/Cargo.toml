@@ -52,6 +52,8 @@ env_logger.workspace = true
 # Utilities
 dirs = "5.0"
 libc = "0.2"
+fs2 = "0.4"
+getrandom = "0.2"
 
 [dev-dependencies]
 rmcp = { version = "0.8", features = ["client", "transport-child-process"] }

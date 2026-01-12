@@ -79,6 +79,8 @@ use context_vector_store::{
     current_model_id, ChunkCorpus, DocumentKind, GraphNodeDoc, GraphNodeStore, GraphNodeStoreMeta,
     QueryKind, VectorIndex, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME,
 };
+use fs2::FileExt;
+use getrandom::getrandom;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo};
@@ -205,14 +207,18 @@ impl ContextFinderService {
             }
 
             let mut session = self.session.lock().await;
-            session.set_root(root.clone(), root_display.clone(), focus_file);
+            if self.allow_cwd_root_fallback || session.initialized {
+                session.set_root(root.clone(), root_display.clone(), focus_file);
+            }
             return Ok((root, root_display));
         }
 
         if let Some(root) = resolve_root_from_absolute_hints(hints) {
             let root_display = root.to_string_lossy().to_string();
             let mut session = self.session.lock().await;
-            session.set_root(root.clone(), root_display.clone(), None);
+            if self.allow_cwd_root_fallback || session.initialized {
+                session.set_root(root.clone(), root_display.clone(), None);
+            }
             return Ok((root, root_display));
         }
 
@@ -225,8 +231,13 @@ impl ContextFinderService {
             }
         }
 
-        if let Some((root, root_display)) = self.session.lock().await.clone_root() {
-            return Ok((root, root_display));
+        {
+            let session = self.session.lock().await;
+            if let Some((root, root_display)) = session.clone_root() {
+                if self.allow_cwd_root_fallback || session.initialized {
+                    return Ok((root, root_display));
+                }
+            }
         }
 
         // Race guard: MCP roots are populated asynchronously after initialize. Some clients send
@@ -255,7 +266,9 @@ impl ContextFinderService {
                 .map_err(|err| format!("Invalid path from {var}: {err}"))?;
             let root_display = root.to_string_lossy().to_string();
             let mut session = self.session.lock().await;
-            session.set_root(root.clone(), root_display.clone(), None);
+            if self.allow_cwd_root_fallback || session.initialized {
+                session.set_root(root.clone(), root_display.clone(), None);
+            }
             return Ok((root, root_display));
         }
 
@@ -279,7 +292,9 @@ impl ContextFinderService {
             canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
         let root_display = root.to_string_lossy().to_string();
         let mut session = self.session.lock().await;
-        session.set_root(root.clone(), root_display.clone(), None);
+        if self.allow_cwd_root_fallback || session.initialized {
+            session.set_root(root.clone(), root_display.clone(), None);
+        }
         Ok((root, root_display))
     }
 
@@ -1497,9 +1512,7 @@ impl ServiceState {
 
     async fn cursor_store_put(&self, payload: Vec<u8>) -> u64 {
         let mut store = self.cursor_store.lock().await;
-        let id = store.insert(payload);
-        store.persist_best_effort();
-        id
+        store.insert_persisted_best_effort(payload)
     }
 
     async fn cursor_store_get(&self, id: u64) -> Option<Vec<u8>> {
@@ -1924,6 +1937,12 @@ struct CursorStoreEntry {
     expires_at: Instant,
 }
 
+#[derive(Clone)]
+struct PersistedCursorStoreEntryData {
+    payload: Vec<u8>,
+    expires_at_unix_ms: u64,
+}
+
 struct CursorStore {
     next_id: u64,
     entries: HashMap<u64, CursorStoreEntry>,
@@ -1932,9 +1951,16 @@ struct CursorStore {
 }
 
 impl CursorStore {
+    fn random_u64_best_effort() -> Option<u64> {
+        let mut bytes = [0u8; 8];
+        getrandom(&mut bytes).ok()?;
+        Some(u64::from_be_bytes(bytes).max(1))
+    }
+
     fn new() -> Self {
+        let seed = Self::random_u64_best_effort().unwrap_or(1).max(1);
         let mut store = Self {
-            next_id: 1,
+            next_id: seed,
             entries: HashMap::new(),
             order: VecDeque::new(),
             persist_path: cursor_store_persist_path(),
@@ -1960,18 +1986,90 @@ impl CursorStore {
         Some(payload)
     }
 
-    fn insert(&mut self, payload: Vec<u8>) -> u64 {
-        let now = Instant::now();
-        self.prune_expired(now);
-
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1).max(1);
-
-        let entry = CursorStoreEntry {
-            payload,
-            expires_at: now + CURSOR_STORE_TTL,
+    fn insert_persisted_best_effort(&mut self, payload: Vec<u8>) -> u64 {
+        let Some(path) = self.persist_path.clone() else {
+            return self.insert(payload);
         };
 
+        let Some(_lock) = Self::acquire_persist_lock_best_effort(&path) else {
+            // If we cannot safely persist shared cursor aliases, prefer an in-memory-only insert.
+            // This avoids cross-process collisions at the cost of losing persistence.
+            return self.insert(payload);
+        };
+
+        let now_instant = Instant::now();
+        self.prune_expired(now_instant);
+
+        let now_unix_ms = unix_ms(SystemTime::now());
+        let (mut order, mut entries, disk_max_id) =
+            Self::load_persisted_best_effort(&path, now_unix_ms);
+
+        // Allocate an ID under the persistence lock to avoid collisions across processes.
+        // Prefer random IDs: compact cursors are frequently copy-pasted across sessions, so
+        // predictable low IDs (1,2,3,...) increase the chance that a cursor token accidentally
+        // resolves to the wrong continuation in a different process.
+        let mut id: Option<u64> = None;
+        for _ in 0..8 {
+            let Some(candidate) = Self::random_u64_best_effort() else {
+                break;
+            };
+            if !entries.contains_key(&candidate) && !self.entries.contains_key(&candidate) {
+                id = Some(candidate);
+                break;
+            }
+        }
+        let mut id = id.unwrap_or_else(|| {
+            let mut candidate = self.next_id.max(disk_max_id.wrapping_add(1).max(1)).max(1);
+            while entries.contains_key(&candidate) || self.entries.contains_key(&candidate) {
+                candidate = candidate.wrapping_add(1).max(1);
+            }
+            candidate
+        });
+        while entries.contains_key(&id) || self.entries.contains_key(&id) {
+            id = id.wrapping_add(1).max(1);
+        }
+        self.next_id = id.wrapping_add(1).max(1);
+
+        self.insert_entry(
+            id,
+            CursorStoreEntry {
+                payload,
+                expires_at: now_instant + CURSOR_STORE_TTL,
+            },
+        );
+
+        // Merge in-memory entries into the persisted view so we don't clobber other processes'
+        // continuations when writing the file.
+        for mem_id in &self.order {
+            let Some(entry) = self.entries.get(mem_id) else {
+                continue;
+            };
+            let remaining = entry.expires_at.saturating_duration_since(now_instant);
+            let expires_at_unix_ms = now_unix_ms
+                .saturating_add(u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX));
+            entries.insert(
+                *mem_id,
+                PersistedCursorStoreEntryData {
+                    payload: entry.payload.clone(),
+                    expires_at_unix_ms,
+                },
+            );
+            order.retain(|k| k != mem_id);
+            order.push_back(*mem_id);
+        }
+
+        while order.len() > CURSOR_STORE_CAPACITY {
+            if let Some(evicted) = order.pop_front() {
+                entries.remove(&evicted);
+            }
+        }
+
+        Self::persist_persisted_best_effort(&path, &order, &entries);
+
+        id
+    }
+
+    fn insert_entry(&mut self, id: u64, entry: CursorStoreEntry) {
         self.entries.insert(id, entry);
         self.order.retain(|k| k != &id);
         self.order.push_back(id);
@@ -1981,6 +2079,36 @@ impl CursorStore {
                 self.entries.remove(&evicted);
             }
         }
+    }
+
+    fn insert(&mut self, payload: Vec<u8>) -> u64 {
+        let now = Instant::now();
+        self.prune_expired(now);
+
+        let mut id: Option<u64> = None;
+        for _ in 0..8 {
+            let Some(candidate) = Self::random_u64_best_effort() else {
+                break;
+            };
+            if !self.entries.contains_key(&candidate) {
+                id = Some(candidate);
+                break;
+            }
+        }
+
+        let mut id = id.unwrap_or_else(|| self.next_id.max(1));
+        while self.entries.contains_key(&id) {
+            id = id.wrapping_add(1).max(1);
+        }
+        self.next_id = id.wrapping_add(1).max(1);
+
+        self.insert_entry(
+            id,
+            CursorStoreEntry {
+                payload,
+                expires_at: now + CURSOR_STORE_TTL,
+            },
+        );
 
         id
     }
@@ -1997,6 +2125,116 @@ impl CursorStore {
             self.entries.remove(&key);
         }
         self.order.retain(|key| self.entries.contains_key(key));
+    }
+
+    fn acquire_persist_lock_best_effort(path: &Path) -> Option<std::fs::File> {
+        let lock_path = path.with_extension("lock");
+        let parent = lock_path.parent()?;
+        std::fs::create_dir_all(parent).ok()?;
+
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(lock_path)
+            .ok()?;
+        file.lock_exclusive().ok()?;
+        Some(file)
+    }
+
+    fn load_persisted_best_effort(
+        path: &Path,
+        now_unix_ms: u64,
+    ) -> (
+        VecDeque<u64>,
+        HashMap<u64, PersistedCursorStoreEntryData>,
+        u64,
+    ) {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(_) => return (VecDeque::new(), HashMap::new(), 0),
+        };
+
+        let persisted: PersistedCursorStore = match serde_json::from_slice(&bytes) {
+            Ok(persisted) => persisted,
+            Err(_) => return (VecDeque::new(), HashMap::new(), 0),
+        };
+        if persisted.v != 1 {
+            return (VecDeque::new(), HashMap::new(), 0);
+        }
+
+        let mut order = VecDeque::new();
+        let mut entries = HashMap::new();
+        let mut max_id = 0u64;
+        let mut seen_ids: HashSet<u64> = HashSet::new();
+
+        for entry in persisted.entries {
+            if entry.expires_at_unix_ms <= now_unix_ms {
+                continue;
+            }
+            let Ok(payload) = STANDARD.decode(entry.payload_b64.as_bytes()) else {
+                continue;
+            };
+            entries.insert(
+                entry.id,
+                PersistedCursorStoreEntryData {
+                    payload,
+                    expires_at_unix_ms: entry.expires_at_unix_ms,
+                },
+            );
+            if seen_ids.insert(entry.id) {
+                order.push_back(entry.id);
+            }
+            max_id = max_id.max(entry.id);
+        }
+
+        while order.len() > CURSOR_STORE_CAPACITY {
+            if let Some(evicted) = order.pop_front() {
+                entries.remove(&evicted);
+            }
+        }
+
+        (order, entries, max_id)
+    }
+
+    fn persist_persisted_best_effort(
+        path: &Path,
+        order: &VecDeque<u64>,
+        entries: &HashMap<u64, PersistedCursorStoreEntryData>,
+    ) {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+
+        let mut persisted_entries = Vec::new();
+        for id in order {
+            let Some(entry) = entries.get(id) else {
+                continue;
+            };
+            persisted_entries.push(PersistedCursorStoreEntry {
+                id: *id,
+                expires_at_unix_ms: entry.expires_at_unix_ms,
+                payload_b64: STANDARD.encode(&entry.payload),
+            });
+        }
+
+        let persisted = PersistedCursorStore {
+            v: 1,
+            entries: persisted_entries,
+        };
+        let Ok(data) = serde_json::to_vec(&persisted) else {
+            return;
+        };
+
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, &data).is_err() {
+            return;
+        }
+        let _ = std::fs::rename(&tmp, path);
     }
 
     fn load_best_effort(&mut self) {
@@ -2054,48 +2292,6 @@ impl CursorStore {
             }
         }
     }
-
-    fn persist_best_effort(&mut self) {
-        let Some(path) = self.persist_path.clone() else {
-            return;
-        };
-        let now = Instant::now();
-        self.prune_expired(now);
-
-        let Some(parent) = path.parent() else {
-            return;
-        };
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
-
-        let now_unix_ms = unix_ms(SystemTime::now());
-        let mut entries = Vec::new();
-        for id in &self.order {
-            let Some(entry) = self.entries.get(id) else {
-                continue;
-            };
-            let remaining = entry.expires_at.saturating_duration_since(now);
-            let expires_at_unix_ms = now_unix_ms
-                .saturating_add(u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX));
-            entries.push(PersistedCursorStoreEntry {
-                id: *id,
-                expires_at_unix_ms,
-                payload_b64: STANDARD.encode(&entry.payload),
-            });
-        }
-
-        let persisted = PersistedCursorStore { v: 1, entries };
-        let Ok(data) = serde_json::to_vec(&persisted) else {
-            return;
-        };
-
-        let tmp = path.with_extension("tmp");
-        if std::fs::write(&tmp, &data).is_err() {
-            return;
-        }
-        let _ = std::fs::rename(&tmp, path);
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2141,6 +2337,12 @@ fn cursor_store_persist_path() -> Option<PathBuf> {
 
 #[derive(Default)]
 struct SessionDefaults {
+    /// Whether this connection completed an MCP `initialize` handshake in the current process.
+    ///
+    /// Some clients can reuse a shared-daemon transport across working directories and (buggily)
+    /// issue tool calls without re-initializing. In daemon mode we fail-closed: do not persist or
+    /// reuse session roots unless initialize has run.
+    initialized: bool,
     root: Option<PathBuf>,
     root_display: Option<String>,
     focus_file: Option<String>,
@@ -2161,6 +2363,7 @@ impl SessionDefaults {
     }
 
     fn reset_for_initialize(&mut self, roots_pending: bool) {
+        self.initialized = true;
         self.root = None;
         self.root_display = None;
         self.focus_file = None;
@@ -4203,6 +4406,47 @@ mod tests {
             .await
             .expect("root must resolve after roots/list");
         assert_eq!(root, canonical_root);
+    }
+
+    #[tokio::test]
+    async fn daemon_does_not_reuse_or_persist_root_without_initialize() {
+        let dir = tempdir().expect("temp dir");
+        let canonical_root = dir.path().canonicalize().expect("canonical root");
+        let root_str = canonical_root.to_string_lossy().to_string();
+
+        let service = ContextFinderService::new_daemon();
+
+        let (resolved, _) = service
+            .resolve_root_no_daemon_touch(Some(&root_str))
+            .await
+            .expect("root must resolve with explicit path");
+        assert_eq!(resolved, canonical_root);
+
+        let err = service
+            .resolve_root_no_daemon_touch(None)
+            .await
+            .expect_err("expected missing root without initialize");
+        assert!(
+            err.contains("Missing project root"),
+            "expected error to mention missing project root"
+        );
+
+        {
+            let mut session = service.session.lock().await;
+            session.reset_for_initialize(false);
+        }
+
+        let (resolved, _) = service
+            .resolve_root_no_daemon_touch(Some(&root_str))
+            .await
+            .expect("root must resolve after initialize");
+        assert_eq!(resolved, canonical_root);
+
+        let (resolved, _) = service
+            .resolve_root_no_daemon_touch(None)
+            .await
+            .expect("expected sticky root after initialize");
+        assert_eq!(resolved, canonical_root);
     }
 
     #[tokio::test]
