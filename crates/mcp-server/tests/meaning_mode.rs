@@ -1450,6 +1450,49 @@ async fn meaning_pack_truncation_preserves_claim_evidence_invariants() -> Result
 }
 
 #[tokio::test]
+async fn meaning_pack_keeps_multiple_anchors_under_tight_budgets_for_research_repos() -> Result<()>
+{
+    let root = tempfile::tempdir().context("temp project dir")?;
+    build_fixture(root.path(), "pinocchio_like_sense_map")?;
+
+    let service = start_mcp_server().await?;
+    let resp = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "orient on canon, how-to-run, contracts, experiments, artifacts",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(resp.is_error, Some(true), "meaning_pack returned error");
+
+    let text = resp
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack missing text output")?;
+    let pack = extract_cp_pack(text)?;
+    assert_meaning_invariants(&pack)?;
+
+    let anchor_count = pack
+        .lines()
+        .filter(|line| line.starts_with("ANCHOR "))
+        .count();
+    assert!(
+        anchor_count >= 3,
+        "expected >=3 ANCHOR lines under max_chars=2000 (got {anchor_count})"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn meaning_pack_detects_asyncapi_contract_and_event_boundary() -> Result<()> {
     let root = tempfile::tempdir().context("temp project dir")?;
     std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;

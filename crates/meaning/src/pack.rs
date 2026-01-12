@@ -30,6 +30,81 @@ const DEFAULT_MAX_FLOWS: usize = 12;
 const DEFAULT_MAX_BROKERS: usize = 6;
 const DEFAULT_EVIDENCE_END_LINE: usize = 120;
 
+#[derive(Debug, Clone, Copy)]
+struct QueryHints {
+    wants_entrypoints: bool,
+    wants_contracts: bool,
+    wants_brokers: bool,
+    wants_infra: bool,
+    wants_artifacts: bool,
+    wants_experiments: bool,
+}
+
+impl QueryHints {
+    fn from_query(query: &str) -> Self {
+        let lc = query.to_ascii_lowercase();
+
+        let wants_entrypoints = lc.contains("entrypoint")
+            || lc.contains("entrypoints")
+            || lc.contains("entry")
+            || lc.contains("main")
+            || lc.contains("cli");
+        let wants_contracts = lc.contains("contract")
+            || lc.contains("contracts")
+            || lc.contains("openapi")
+            || lc.contains("asyncapi")
+            || lc.contains("schema")
+            || lc.contains("proto")
+            || lc.contains("api");
+        let wants_brokers = lc.contains("broker")
+            || lc.contains("brokers")
+            || lc.contains("kafka")
+            || lc.contains("nats")
+            || lc.contains("amqp")
+            || lc.contains("rabbit")
+            || lc.contains("redis");
+        let wants_infra = lc.contains("infra")
+            || lc.contains("config")
+            || lc.contains("configs")
+            || lc.contains("env")
+            || lc.contains("environment")
+            || lc.contains("settings")
+            || lc.contains("deploy")
+            || lc.contains("k8s")
+            || lc.contains("kubernetes")
+            || lc.contains("helm")
+            || lc.contains("terraform")
+            || lc.contains("gitops")
+            || lc.contains("boundary");
+        let wants_artifacts = lc.contains("artifact")
+            || lc.contains("artifacts")
+            || lc.contains("output")
+            || lc.contains("outputs")
+            || lc.contains("result")
+            || lc.contains("results")
+            || lc.contains("checkpoint")
+            || lc.contains("checkpoints");
+        let wants_experiments = lc.contains("experiment")
+            || lc.contains("experiments")
+            || lc.contains("baseline")
+            || lc.contains("baselines")
+            || lc.contains("bench")
+            || lc.contains("benchmark")
+            || lc.contains("eval")
+            || lc.contains("evaluation")
+            || lc.contains("research");
+
+        Self {
+            wants_entrypoints,
+            wants_contracts,
+            wants_brokers,
+            wants_infra,
+            wants_artifacts,
+            wants_experiments,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct AnchorCandidate {
     kind: AnchorKind,
@@ -117,6 +192,9 @@ pub async fn meaning_pack(
         .max_chars
         .unwrap_or(DEFAULT_MAX_CHARS)
         .clamp(MIN_MAX_CHARS, MAX_MAX_CHARS);
+    let hints = QueryHints::from_query(&request.query);
+    let tight_budget = max_chars <= 2_200;
+
     let map_depth = request.map_depth.unwrap_or(DEFAULT_MAP_DEPTH).clamp(1, 4);
     let map_limit = request.map_limit.unwrap_or(DEFAULT_MAP_LIMIT).clamp(1, 200);
 
@@ -180,13 +258,23 @@ pub async fn meaning_pack(
     let mut boundaries_full = classify_boundaries(&files, &entrypoints, &contracts);
     augment_k8s_manifest_boundaries(root, &files, &mut boundaries_full).await;
     let artifact_store_file = best_artifact_store_evidence_file(&files);
+    // Budget-aware: keep anchors stable and actionable under tight budgets by reducing
+    // lower-signal sections (boundaries/entrypoints/flows) unless the query asks for them.
+    let max_anchors = if tight_budget { 5 } else { DEFAULT_MAX_ANCHORS };
     let anchors = select_repo_anchors(
         &files,
         &entrypoints,
         &contracts,
         &boundaries_full,
         artifact_store_file.as_deref(),
+        &hints,
+        max_anchors,
     );
+    let include_entrypoints = !tight_budget || hints.wants_entrypoints;
+    let include_boundaries = !tight_budget || hints.wants_infra || hints.wants_brokers;
+    if !include_boundaries {
+        boundaries_full.clear();
+    }
     boundaries_full.truncate(DEFAULT_MAX_BOUNDARIES);
     let boundaries = boundaries_full;
 
@@ -195,14 +283,36 @@ pub async fn meaning_pack(
     let channels = flows.iter().map(|f| f.channel.clone()).collect::<Vec<_>>();
     let channel_mentions = detect_channel_mentions(root, &files, &channels).await;
 
-    let brokers = detect_brokers(root, &files, &flows).await;
+    // Event flows are high-signal: if AsyncAPI is present, we keep flows even under tight budgets.
+    let include_flows = !flows.is_empty();
+    let include_brokers =
+        !tight_budget || hints.wants_brokers || hints.wants_infra || !flows.is_empty();
+    let flows = if include_flows { flows } else { Vec::new() };
+    let brokers = if include_brokers {
+        detect_brokers(root, &files, &flows).await
+    } else {
+        Vec::new()
+    };
+
+    let evidence_entrypoints: &[String] = if include_entrypoints {
+        &entrypoints
+    } else {
+        &[]
+    };
+    let evidence_contracts: &[String] = if hints.wants_contracts {
+        &contracts
+    } else {
+        &[]
+    };
+    let evidence_boundaries: &[BoundaryCandidate] =
+        if include_boundaries { &boundaries } else { &[] };
 
     let evidence = collect_evidence(
         root,
         &anchors,
-        &entrypoints,
-        &contracts,
-        &boundaries,
+        evidence_entrypoints,
+        evidence_contracts,
+        evidence_boundaries,
         &flows,
         &brokers,
     )
@@ -223,14 +333,16 @@ pub async fn meaning_pack(
     }
 
     let mut emitted_entrypoints: Vec<&String> = Vec::new();
-    for file in &entrypoints {
-        if emitted_entrypoints.len() >= DEFAULT_MAX_ENTRYPOINTS {
-            break;
+    if include_entrypoints {
+        for file in &entrypoints {
+            if emitted_entrypoints.len() >= DEFAULT_MAX_ENTRYPOINTS {
+                break;
+            }
+            if !ev_file_index.contains_key(file) {
+                continue;
+            }
+            emitted_entrypoints.push(file);
         }
-        if !ev_file_index.contains_key(file) {
-            continue;
-        }
-        emitted_entrypoints.push(file);
     }
 
     let mut emitted_contracts: Vec<&String> = Vec::new();
@@ -782,6 +894,8 @@ fn select_repo_anchors(
     contracts: &[String],
     boundaries: &[BoundaryCandidate],
     artifact_store_file: Option<&str>,
+    hints: &QueryHints,
+    max_anchors: usize,
 ) -> Vec<AnchorCandidate> {
     let mut out: Vec<AnchorCandidate> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -863,7 +977,35 @@ fn select_repo_anchors(
         }
     }
 
-    out.truncate(DEFAULT_MAX_ANCHORS);
+    fn anchor_priority(kind: AnchorKind, hints: &QueryHints) -> i32 {
+        let base = match kind {
+            AnchorKind::Canon => 100,
+            AnchorKind::HowTo => 95,
+            AnchorKind::Contract => 80,
+            AnchorKind::Experiment => 70,
+            AnchorKind::Artifact => 68,
+            AnchorKind::Infra => 60,
+            AnchorKind::Entrypoint => 55,
+        };
+        let boost = match kind {
+            AnchorKind::Entrypoint => i32::from(hints.wants_entrypoints) * 25,
+            AnchorKind::Contract => i32::from(hints.wants_contracts) * 20,
+            AnchorKind::Experiment => i32::from(hints.wants_experiments) * 20,
+            AnchorKind::Artifact => i32::from(hints.wants_artifacts) * 20,
+            AnchorKind::Infra => i32::from(hints.wants_infra) * 15,
+            _ => 0,
+        };
+        base + boost
+    }
+
+    // Deterministic ordering: stable tie-breakers (kind + file).
+    out.sort_by(|a, b| {
+        anchor_priority(b.kind, hints)
+            .cmp(&anchor_priority(a.kind, hints))
+            .then_with(|| a.kind.as_str().cmp(b.kind.as_str()))
+            .then_with(|| a.file.cmp(&b.file))
+    });
+    out.truncate(max_anchors.max(1));
     out
 }
 
