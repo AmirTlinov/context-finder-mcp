@@ -240,6 +240,7 @@ fn build_fixture(root: &std::path::Path, fixture: &str) -> Result<()> {
         "tiltfile_kafka_broker" => build_fixture_tiltfile_kafka_broker(root),
         "canon_howto_anchors" => build_fixture_canon_howto_anchors(root),
         "artifact_store_anti_noise" => build_fixture_artifact_store_anti_noise(root),
+        "pinocchio_like_sense_map" => build_fixture_pinocchio_like_sense_map(root),
         _ => anyhow::bail!("Unknown meaning eval fixture '{fixture}'"),
     }
 }
@@ -724,6 +725,146 @@ fn build_fixture_artifact_store_anti_noise(root: &std::path::Path) -> Result<()>
         .join("\n")
         + "\n";
     std::fs::write(root.join("src").join("main.rs"), main_body).context("write src/main.rs")?;
+
+    Ok(())
+}
+
+fn build_fixture_pinocchio_like_sense_map(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join("src").join("runtime")).context("mkdir src/runtime")?;
+    std::fs::create_dir_all(root.join("docs").join("contracts")).context("mkdir docs/contracts")?;
+    std::fs::create_dir_all(root.join("baselines")).context("mkdir baselines")?;
+    std::fs::create_dir_all(root.join("artifacts").join("runs").join("run1"))
+        .context("mkdir artifacts/runs/run1")?;
+    std::fs::create_dir_all(root.join("k8s")).context("mkdir k8s")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+
+    let readme = vec![
+        "# Pinocchio-like Research Repo".to_string(),
+        "".to_string(),
+        "This repo is artifact-heavy and experiment-driven.".to_string(),
+        "".to_string(),
+        "## Canon".to_string(),
+        "Start with baselines and contracts, then run the Makefile targets.".to_string(),
+        "".to_string(),
+    ]
+    .into_iter()
+    .chain((0..120).map(|idx| format!("{idx}: {filler}")))
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n";
+    std::fs::write(root.join("README.md"), readme).context("write README.md")?;
+
+    let makefile = vec![
+        ".PHONY: setup test run eval lint fmt".to_string(),
+        "".to_string(),
+        "setup:".to_string(),
+        "\t@echo setup".to_string(),
+        "".to_string(),
+        "test:".to_string(),
+        "\t@echo test".to_string(),
+        "".to_string(),
+        "run:".to_string(),
+        "\t@echo run".to_string(),
+        "".to_string(),
+        "eval:".to_string(),
+        "\t@echo eval".to_string(),
+        "".to_string(),
+        "lint:".to_string(),
+        "\t@echo lint".to_string(),
+        "".to_string(),
+        "fmt:".to_string(),
+        "\t@echo fmt".to_string(),
+        "".to_string(),
+        format!("# {filler}"),
+    ]
+    .join("\n")
+        + "\n";
+    std::fs::write(root.join("Makefile"), makefile).context("write Makefile")?;
+
+    let protocol = vec![
+        "# Protocol".to_string(),
+        "".to_string(),
+        "This is an artifact contract for produced outputs.".to_string(),
+        "".to_string(),
+        "## Fields".to_string(),
+        "- run_id".to_string(),
+        "- metrics".to_string(),
+        "".to_string(),
+    ]
+    .into_iter()
+    .chain((0..80).map(|idx| format!("{idx}: {filler}")))
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n";
+    std::fs::write(
+        root.join("docs").join("contracts").join("protocol.md"),
+        protocol,
+    )
+    .context("write docs/contracts/protocol.md")?;
+
+    let baselines = vec![
+        "# Baselines".to_string(),
+        "".to_string(),
+        "## Evaluation".to_string(),
+        "Run the evaluation suite via `make eval`.".to_string(),
+        "".to_string(),
+    ]
+    .into_iter()
+    .chain((0..120).map(|idx| format!("{idx}: {filler}")))
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n";
+    std::fs::write(root.join("baselines").join("README.md"), baselines)
+        .context("write baselines/README.md")?;
+
+    let artifacts_readme = vec![
+        "# Artifacts".to_string(),
+        "".to_string(),
+        "## Layout".to_string(),
+        "Outputs live under `artifacts/runs/<run_id>/...`.".to_string(),
+        "".to_string(),
+    ]
+    .into_iter()
+    .chain((0..80).map(|idx| format!("{idx}: {filler}")))
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n";
+    std::fs::write(root.join("artifacts").join("README.md"), artifacts_readme)
+        .context("write artifacts/README.md")?;
+
+    // Simulate an artifact-heavy run directory: lots of JSON outputs.
+    let run_dir = root.join("artifacts").join("runs").join("run1");
+    for idx in 0..160usize {
+        let payload = format!("{{\"run\":\"run1\",\"idx\":{idx},\"note\":\"{filler}\"}}\n");
+        let name = format!("result_{idx:04}.json");
+        std::fs::write(run_dir.join(name), payload)
+            .with_context(|| format!("write artifacts/runs/run1/result_{idx:04}.json"))?;
+    }
+
+    let runtime = [
+        "pub struct Runtime {}".to_string(),
+        "impl Runtime {".to_string(),
+        "  pub fn run(&self) {}".to_string(),
+        "}".to_string(),
+        format!("// {filler}"),
+    ]
+    .join("\n")
+        + "\n";
+    std::fs::write(root.join("src").join("runtime").join("mod.rs"), runtime)
+        .context("write src/runtime/mod.rs")?;
+
+    let k8s = [
+        "apiVersion: apps/v1".to_string(),
+        "kind: Deployment".to_string(),
+        "metadata:".to_string(),
+        "  name: demo".to_string(),
+        "spec: {}".to_string(),
+        format!("# {filler}"),
+    ]
+    .join("\n")
+        + "\n";
+    std::fs::write(root.join("k8s").join("app.yaml"), k8s).context("write k8s/app.yaml")?;
 
     Ok(())
 }

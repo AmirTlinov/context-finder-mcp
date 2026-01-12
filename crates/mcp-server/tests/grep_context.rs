@@ -405,7 +405,8 @@ async fn grep_context_supports_literal_mode_and_cursor_only_continuation() -> Re
         .lines()
         .find_map(|line| {
             let cursor = line.strip_prefix("M: ")?;
-            cursor.starts_with("cfcs1:").then(|| cursor.to_string())
+            (cursor.starts_with("cfcs2:") || cursor.starts_with("cfcs1:"))
+                .then(|| cursor.to_string())
         })
         .context("missing cursor (M:) line")?;
 

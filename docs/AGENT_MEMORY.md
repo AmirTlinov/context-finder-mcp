@@ -192,6 +192,8 @@ Cursor tokens now embed the project root (and any relevant options), so you don�
 
 For tight-loop read tools (`file_slice`, `grep_context`, `text_search`), cursor-only continuation also works directly on those tools — options are captured in the cursor so you don’t have to retype them.
 
+Safety note (multi-agent): if a session already has a default project root, `read_pack` refuses to switch projects based on a cursor token alone. To switch roots intentionally, pass an explicit `path`.
+
 Note: you can override `max_chars` between pages if you want to change the payload density (smaller budget for “peek”, larger budget for “read more”). If omitted, the tool reuses the cursor’s previous `max_chars`.
 
 In `response_mode: "full"`, some sections/snippets can include their own cursor hint (for continuing a file window). By default (`facts`/`minimal`), `read_pack` avoids embedding per-snippet cursors to keep the response mostly project content.
@@ -200,7 +202,7 @@ The “memory pack” itself can also paginate: if there are more high-signal ca
 
 Note: Some cursors may be compact and backed by short-lived server-side continuation state (to avoid cursor bloat). If a continuation expires (or the MCP process restarts), repeat the original call that produced it.
 
-In shared-backend mode (the default), cursor aliases are stored in the long-lived daemon and persisted best-effort on disk, so short `cfcs1:…` cursors typically survive process restarts as long as their TTL has not expired.
+In shared-backend mode (the default), cursor aliases are stored in the long-lived daemon and persisted best-effort on disk, so short `cfcs2:…` cursors typically survive process restarts as long as their TTL has not expired (`cfcs1:…` is legacy).
 
 ## Multi-agent: shared MCP backend (default)
 

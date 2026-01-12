@@ -351,7 +351,9 @@ Common directives:
 
 If a cursor is returned and looks unusually compact, it may rely on short-lived server-side continuation state (agent-friendly, avoids cursor bloat).
 
-If it expires, simply repeat the original call that produced it. In shared-backend mode (the default), cursor aliases are persisted best-effort on disk, so compact `cfcs1:…` cursors typically survive process restarts as long as their TTL has not expired.
+If it expires, simply repeat the original call that produced it. In shared-backend mode (the default), cursor aliases are persisted best-effort on disk, so compact `cfcs2:…` cursors typically survive process restarts as long as their TTL has not expired (`cfcs1:…` is legacy).
+
+Safety note (multi-agent): once a session has an established default root, `read_pack` won’t switch projects based on a cursor alone. To switch roots intentionally, pass an explicit `path`.
 
 ```jsonc
 // Daily long-memory pack (defaults; stable repo facts + key configs/docs under one budget)

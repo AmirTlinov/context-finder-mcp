@@ -7310,14 +7310,36 @@ pub(in crate::tools::dispatch) async fn read_pack(
         }
     }
 
-    // Cursor-first UX: allow multi-project continuations without re-sending `path`.
+    // Cursor-only continuation: if the caller didn't pass `path`, we can fall back to the cursor's
+    // embedded root *only when the current session has no established root*.
+    //
+    // This is a safety boundary for multi-agent / multi-project usage: if a session already has a
+    // default root (from a previous call), we refuse to silently switch projects based on a cursor
+    // token that might have been copy/pasted or mixed across concurrent agent sessions.
     if trimmed_non_empty_str(request.path.as_deref()).is_none() {
         if let Some(cursor) = request.cursor.as_deref() {
             if let Ok(value) = decode_cursor::<Value>(cursor) {
                 if let Some(root) = value.get("root").and_then(Value::as_str) {
-                    let root = root.trim();
-                    if !root.is_empty() {
-                        request.path = Some(root.to_string());
+                    let cursor_root = root.trim();
+                    if !cursor_root.is_empty() {
+                        let session_root_display =
+                            { service.session.lock().await.root_display.clone() };
+                        if let Some(session_root_display) = session_root_display {
+                            if session_root_display != cursor_root {
+                                let message = "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects."
+                                    .to_string();
+                                let meta = ToolMeta {
+                                    root_fingerprint: Some(root_fingerprint(&session_root_display)),
+                                    ..ToolMeta::default()
+                                };
+                                return Ok(attach_meta(
+                                    call_error("invalid_cursor", message),
+                                    meta,
+                                ));
+                            }
+                        } else {
+                            request.path = Some(cursor_root.to_string());
+                        }
                     }
                 }
             }

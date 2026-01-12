@@ -126,6 +126,20 @@
       "expect_paths": ["README.md", "Makefile"],
       "expect_claims": ["ANCHOR"],
       "min_token_saved": 0.8
+    },
+    {
+      "id": "pinocchio_like_sense_map",
+      "fixture": "pinocchio_like_sense_map",
+      "query": "orient on canon, how-to-run, contracts, experiments, artifacts",
+      "expect_paths": [
+        "README.md",
+        "Makefile",
+        "docs/contracts/protocol.md",
+        "baselines/README.md",
+        "artifacts/README.md"
+      ],
+      "expect_claims": ["ANCHOR", "STEP", "AREA"],
+      "min_token_saved": 0.8
     }
   ]
 }

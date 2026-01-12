@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -169,6 +170,81 @@ async fn list_files_cursor_root_mismatch_includes_details() -> Result<()> {
     assert_ne!(
         expected_fp, cursor_fp,
         "expected_root_fingerprint should differ from cursor_root_fingerprint"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn read_pack_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")?
+        .context("start MCP server")?;
+
+    let root1 = tempfile::tempdir().context("tempdir root1")?;
+    std::fs::write(root1.path().join("README.md"), "root1\n").context("write root1 README.md")?;
+
+    let root2 = tempfile::tempdir().context("tempdir root2")?;
+    std::fs::write(root2.path().join("README.md"), "root2\n").context("write root2 README.md")?;
+
+    // Establish a default root for the session.
+    let first = call_tool_allow_error(
+        &service,
+        "read_pack",
+        serde_json::json!({
+            "path": root1.path().to_string_lossy(),
+            "file": "README.md",
+            "max_lines": 1,
+            "max_chars": 2000,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(first.is_error, Some(true), "expected read_pack to succeed");
+
+    // Simulate a cursor token from a different project root (e.g., pasted from another agent).
+    let foreign_cursor_payload = serde_json::json!({
+        "root": root2.path().to_string_lossy(),
+    });
+    let foreign_cursor_bytes =
+        serde_json::to_vec(&foreign_cursor_payload).context("encode foreign cursor json")?;
+    let foreign_cursor = URL_SAFE_NO_PAD.encode(foreign_cursor_bytes);
+
+    let second = call_tool_allow_error(
+        &service,
+        "read_pack",
+        serde_json::json!({
+            "cursor": foreign_cursor,
+            "max_chars": 2000,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_eq!(
+        second.is_error,
+        Some(true),
+        "expected read_pack cursor-only root switch to error"
+    );
+    let second_text = second
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .unwrap_or_default();
+    assert!(
+        second_text.contains("different project root"),
+        "expected cross-root cursor error, got: {second_text}"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

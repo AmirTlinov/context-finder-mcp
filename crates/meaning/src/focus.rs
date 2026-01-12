@@ -8,10 +8,14 @@ use crate::common::{
     build_ev_file_index, classify_boundaries, classify_files, contract_kind, detect_brokers,
     detect_channel_mentions, directory_key, extract_asyncapi_flows, extract_code_outline,
     hash_and_count_lines, infer_actor_by_path, infer_flow_actor, is_artifact_scope, json_string,
-    shrink_pack, BoundaryCandidate, BoundaryKind, BrokerCandidate, CognitivePack, EvidenceItem,
-    EvidenceKind, FlowEdge,
+    shrink_pack, AnchorKind, BoundaryCandidate, BoundaryKind, BrokerCandidate, CognitivePack,
+    EvidenceItem, EvidenceKind, FlowEdge,
 };
 use crate::model::{MeaningFocusBudget, MeaningFocusRequest, MeaningFocusResult};
+use crate::pack::{
+    anchor_evidence_window, best_artifact_store_evidence_file, best_canon_doc, best_contract_file,
+    best_experiment_file, best_howto_file, best_infra_file,
+};
 use crate::paths::normalize_relative_path;
 use crate::secrets::is_potential_secret_path;
 
@@ -22,12 +26,30 @@ const MAX_MAX_CHARS: usize = 500_000;
 const DEFAULT_MAP_DEPTH: usize = 2;
 const DEFAULT_MAP_LIMIT: usize = 12;
 const DEFAULT_MAX_EVIDENCE: usize = 12;
+const DEFAULT_MAX_ANCHORS: usize = 7;
 const DEFAULT_MAX_BOUNDARIES: usize = 12;
 const DEFAULT_MAX_ENTRYPOINTS: usize = 8;
 const DEFAULT_MAX_CONTRACTS: usize = 8;
 const DEFAULT_MAX_FLOWS: usize = 12;
 const DEFAULT_MAX_BROKERS: usize = 6;
 const DEFAULT_EVIDENCE_END_LINE: usize = 120;
+
+#[derive(Debug, Clone)]
+struct AnchorCandidate {
+    kind: AnchorKind,
+    label: String,
+    file: String,
+    confidence: f32,
+}
+
+#[derive(Debug, Clone)]
+struct EmittedAnchor {
+    kind: AnchorKind,
+    label: String,
+    file: String,
+    confidence: f32,
+    ev_id: String,
+}
 
 pub async fn meaning_focus(
     root: &Path,
@@ -150,6 +172,15 @@ pub async fn meaning_focus(
     let mut boundaries = classify_boundaries(files_for_map, &entrypoints, &contracts);
     boundaries.truncate(DEFAULT_MAX_BOUNDARIES);
 
+    let artifact_store_file = best_artifact_store_evidence_file(files_for_map);
+    let anchors = select_repo_anchors(
+        files_for_map,
+        &entrypoints,
+        &contracts,
+        &boundaries,
+        artifact_store_file.as_deref(),
+    );
+
     let flows = extract_asyncapi_flows(root, &contracts).await;
 
     let channels = flows.iter().map(|f| f.channel.clone()).collect::<Vec<_>>();
@@ -159,12 +190,13 @@ pub async fn meaning_focus(
 
     let evidence = collect_focus_evidence(
         root,
-        canonical.is_dir(),
-        &focus_rel,
-        &entrypoints,
-        &contracts,
-        &boundaries,
-        FocusEvidenceInputs {
+        FocusEvidenceContext {
+            focus_is_dir: canonical.is_dir(),
+            focus_rel: &focus_rel,
+            anchors: &anchors,
+            entrypoints: &entrypoints,
+            contracts: &contracts,
+            boundaries: &boundaries,
             flows: &flows,
             brokers: &brokers,
         },
@@ -173,6 +205,23 @@ pub async fn meaning_focus(
     let ev_file_index = build_ev_file_index(&evidence);
 
     let root_fp = context_indexer::root_fingerprint(root_display);
+
+    let mut emitted_anchors: Vec<EmittedAnchor> = Vec::new();
+    for anchor in &anchors {
+        if emitted_anchors.len() >= DEFAULT_MAX_ANCHORS {
+            break;
+        }
+        let Some(ev_id) = ev_file_index.get(&anchor.file).cloned() else {
+            continue;
+        };
+        emitted_anchors.push(EmittedAnchor {
+            kind: anchor.kind,
+            label: anchor.label.clone(),
+            file: anchor.file.clone(),
+            confidence: anchor.confidence,
+            ev_id,
+        });
+    }
 
     let mut emitted_boundaries: Vec<&BoundaryCandidate> = Vec::new();
     for boundary in &boundaries {
@@ -283,6 +332,9 @@ pub async fn meaning_focus(
     if !evidence.is_empty() {
         used_ev_ids.insert("ev0".to_string());
     }
+    for anchor in &emitted_anchors {
+        used_ev_ids.insert(anchor.ev_id.clone());
+    }
     for boundary in &emitted_boundaries {
         if let Some(ev_id) = ev_file_index.get(&boundary.file) {
             used_ev_ids.insert(ev_id.clone());
@@ -310,6 +362,10 @@ pub async fn meaning_focus(
     dict_paths.insert(focus_rel.clone());
     for (path, _) in &map_rows {
         dict_paths.insert(path.clone());
+    }
+    for anchor in &emitted_anchors {
+        dict_paths.insert(anchor.label.clone());
+        dict_paths.insert(anchor.file.clone());
     }
     for symbol in &outline {
         dict_paths.insert(symbol.name.clone());
@@ -354,6 +410,20 @@ pub async fn meaning_focus(
     let d_dir = cp.dict_id(&focus_dir);
     let d_file = cp.dict_id(&focus_rel);
     cp.push_line(&format!("FOCUS dir={d_dir} file={d_file}"));
+
+    if !emitted_anchors.is_empty() {
+        cp.push_line("S ANCHORS");
+        for anchor in &emitted_anchors {
+            let label_d = cp.dict_id(&anchor.label);
+            let file_d = cp.dict_id(&anchor.file);
+            let conf = format!("{:.2}", anchor.confidence.clamp(0.0, 1.0));
+            cp.push_line(&format!(
+                "ANCHOR kind={} label={label_d} file={file_d} conf={conf} ev={}",
+                anchor.kind.as_str(),
+                anchor.ev_id
+            ));
+        }
+    }
 
     if !outline.is_empty() {
         cp.push_line("S OUTLINE");
@@ -534,57 +604,169 @@ fn trim_to_budget(result: &mut MeaningFocusResult) -> anyhow::Result<()> {
     Ok(())
 }
 
-struct FocusEvidenceInputs<'a> {
+struct FocusEvidenceContext<'a> {
+    focus_is_dir: bool,
+    focus_rel: &'a str,
+    anchors: &'a [AnchorCandidate],
+    entrypoints: &'a [String],
+    contracts: &'a [String],
+    boundaries: &'a [BoundaryCandidate],
     flows: &'a [FlowEdge],
     brokers: &'a [BrokerCandidate],
 }
 
-async fn collect_focus_evidence(
-    root: &Path,
-    focus_is_dir: bool,
-    focus_rel: &str,
+fn select_repo_anchors(
+    files: &[String],
     entrypoints: &[String],
     contracts: &[String],
     boundaries: &[BoundaryCandidate],
-    focus: FocusEvidenceInputs<'_>,
-) -> Vec<EvidenceItem> {
+    artifact_store_file: Option<&str>,
+) -> Vec<AnchorCandidate> {
+    let mut out: Vec<AnchorCandidate> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    if let Some(file) = best_canon_doc(files) {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::Canon,
+                label: "Canon: start here".to_string(),
+                file,
+                confidence: 0.9,
+            });
+        }
+    }
+
+    if let Some(file) = best_howto_file(files) {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::HowTo,
+                label: "How-to: run / test".to_string(),
+                file,
+                confidence: 0.85,
+            });
+        }
+    }
+
+    if let Some(file) = best_contract_file(contracts) {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::Contract,
+                label: "Contract: interfaces".to_string(),
+                file,
+                confidence: 0.82,
+            });
+        }
+    }
+
+    if let Some(file) = entrypoints.first().cloned() {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::Entrypoint,
+                label: "Entrypoint: code".to_string(),
+                file,
+                confidence: 0.78,
+            });
+        }
+    }
+
+    if let Some(file) = best_experiment_file(files) {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::Experiment,
+                label: "Experiments: baselines".to_string(),
+                file,
+                confidence: 0.76,
+            });
+        }
+    }
+
+    if let Some(file) = best_infra_file(boundaries) {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::Infra,
+                label: "Infra: deploy".to_string(),
+                file,
+                confidence: 0.8,
+            });
+        }
+    }
+
+    if let Some(file) = artifact_store_file.map(|v| v.to_string()) {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::Artifact,
+                label: "Artifacts: outputs".to_string(),
+                file,
+                confidence: 0.72,
+            });
+        }
+    }
+
+    out.truncate(DEFAULT_MAX_ANCHORS);
+    out
+}
+
+async fn collect_focus_evidence(root: &Path, focus: FocusEvidenceContext<'_>) -> Vec<EvidenceItem> {
     let mut out: Vec<EvidenceItem> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
 
-    let focus_candidate = if focus_is_dir {
-        entrypoints
+    let focus_candidate = if focus.focus_is_dir {
+        focus
+            .anchors
             .first()
-            .cloned()
-            .or_else(|| contracts.first().cloned())
-            .or_else(|| boundaries.first().map(|b| b.file.clone()))
+            .map(|a| a.file.clone())
+            .or_else(|| focus.entrypoints.first().cloned())
+            .or_else(|| focus.contracts.first().cloned())
+            .or_else(|| focus.boundaries.first().map(|b| b.file.clone()))
     } else {
-        Some(focus_rel.to_string())
+        Some(focus.focus_rel.to_string())
     };
 
     if let Some(rel) = focus_candidate.as_deref() {
         if seen.insert(rel) {
             let abs = root.join(rel);
             let (hash, lines) = hash_and_count_lines(&abs).await.ok().unwrap_or_default();
-            let kind = if entrypoints.iter().any(|f| f == rel) {
+            let kind = if let Some(anchor) = focus.anchors.iter().find(|a| a.file == rel) {
+                EvidenceKind::Anchor(anchor.kind)
+            } else if focus.entrypoints.iter().any(|f| f == rel) {
                 EvidenceKind::Entrypoint
-            } else if contracts.iter().any(|f| f == rel) {
+            } else if focus.contracts.iter().any(|f| f == rel) {
                 EvidenceKind::Contract
-            } else if let Some(boundary) = boundaries.iter().find(|b| b.file == rel) {
+            } else if let Some(boundary) = focus.boundaries.iter().find(|b| b.file == rel) {
                 EvidenceKind::Boundary(boundary.kind)
             } else {
                 EvidenceKind::Boundary(BoundaryKind::Config)
             };
+            let (start_line, end_line) = match kind {
+                EvidenceKind::Anchor(anchor_kind) => {
+                    let (start, end) =
+                        anchor_evidence_window(root, rel, anchor_kind, DEFAULT_EVIDENCE_END_LINE)
+                            .await;
+                    let file_lines = lines.max(1);
+                    let start = start.clamp(1, file_lines);
+                    let end = end.clamp(start, file_lines);
+                    (start, end)
+                }
+                _ => (1, DEFAULT_EVIDENCE_END_LINE.min(lines.max(1))),
+            };
             out.push(EvidenceItem {
                 kind,
                 file: rel.to_string(),
-                start_line: 1,
-                end_line: DEFAULT_EVIDENCE_END_LINE.min(lines.max(1)),
+                start_line,
+                end_line,
                 source_hash: if hash.is_empty() { None } else { Some(hash) },
             });
         }
     }
 
     let mut candidates: Vec<(EvidenceKind, String)> = Vec::new();
+
+    for anchor in focus.anchors {
+        if !seen.insert(anchor.file.as_str()) {
+            continue;
+        }
+        candidates.push((EvidenceKind::Anchor(anchor.kind), anchor.file.clone()));
+    }
 
     // Ensure event-driven claims have at least one evidence anchor (contract and/or actor).
     let mut must_contracts: Vec<String> = Vec::new();
@@ -594,7 +776,7 @@ async fn collect_focus_evidence(
             must_contracts.push(flow.contract_file.clone());
         }
         if must_entrypoints.len() < 2 {
-            if let Some(actor) = infer_flow_actor(&flow.contract_file, entrypoints) {
+            if let Some(actor) = infer_flow_actor(&flow.contract_file, focus.entrypoints) {
                 if !must_entrypoints.iter().any(|e| e == &actor) {
                     must_entrypoints.push(actor);
                 }
@@ -628,13 +810,14 @@ async fn collect_focus_evidence(
         ));
     }
 
-    for file in entrypoints.iter().take(DEFAULT_MAX_EVIDENCE) {
+    for file in focus.entrypoints.iter().take(DEFAULT_MAX_EVIDENCE) {
         if !seen.insert(file.as_str()) {
             continue;
         }
         candidates.push((EvidenceKind::Entrypoint, file.clone()));
     }
-    for file in contracts
+    for file in focus
+        .contracts
         .iter()
         .take(DEFAULT_MAX_EVIDENCE.saturating_sub(candidates.len()))
     {
@@ -643,7 +826,8 @@ async fn collect_focus_evidence(
         }
         candidates.push((EvidenceKind::Contract, file.clone()));
     }
-    for boundary in boundaries
+    for boundary in focus
+        .boundaries
         .iter()
         .take(DEFAULT_MAX_EVIDENCE.saturating_sub(candidates.len()))
     {
@@ -656,11 +840,23 @@ async fn collect_focus_evidence(
     for (kind, rel) in candidates.into_iter().take(DEFAULT_MAX_EVIDENCE) {
         let abs = root.join(&rel);
         let (hash, lines) = hash_and_count_lines(&abs).await.ok().unwrap_or_default();
+        let (start_line, end_line) = match kind {
+            EvidenceKind::Anchor(anchor_kind) => {
+                let (start, end) =
+                    anchor_evidence_window(root, &rel, anchor_kind, DEFAULT_EVIDENCE_END_LINE)
+                        .await;
+                let file_lines = lines.max(1);
+                let start = start.clamp(1, file_lines);
+                let end = end.clamp(start, file_lines);
+                (start, end)
+            }
+            _ => (1, DEFAULT_EVIDENCE_END_LINE.min(lines.max(1))),
+        };
         out.push(EvidenceItem {
             kind,
             file: rel,
-            start_line: 1,
-            end_line: DEFAULT_EVIDENCE_END_LINE.min(lines.max(1)),
+            start_line,
+            end_line,
             source_hash: if hash.is_empty() { None } else { Some(hash) },
         });
     }

@@ -137,6 +137,9 @@ pub(super) fn classify_files(files: &[String]) -> (Vec<String>, Vec<String>) {
     let mut contracts = Vec::new();
     for file in files {
         let lc = file.to_ascii_lowercase();
+        if is_artifact_scope(&lc) {
+            continue;
+        }
         if let Some(rank) = entrypoint_rank(&lc) {
             entrypoints.push((rank, file.clone()));
             continue;
@@ -536,6 +539,56 @@ pub(super) fn entrypoint_rank(file_lc: &str) -> Option<usize> {
 }
 
 pub(super) fn is_contract_candidate(file_lc: &str) -> bool {
+    let lc = file_lc.trim();
+    if lc.is_empty() {
+        return false;
+    }
+
+    let basename = lc.rsplit('/').next().unwrap_or(lc);
+    let is_contract_like_ext = lc.ends_with(".proto")
+        || lc.ends_with(".avsc")
+        || lc.ends_with(".yaml")
+        || lc.ends_with(".yml")
+        || lc.ends_with(".json")
+        || lc.ends_with(".toml")
+        || lc.ends_with(".md")
+        || lc.ends_with(".rst")
+        || lc.ends_with(".txt");
+    let is_contract_dir = lc.starts_with("contracts/")
+        || lc.starts_with("proto/")
+        || lc.starts_with("docs/contracts/")
+        || lc.starts_with("docs/contract/")
+        || lc.starts_with("docs/spec/")
+        || lc.starts_with("docs/specs/")
+        || lc.starts_with("docs/protocol/")
+        || lc.starts_with("docs/protocols/")
+        || lc.starts_with("schemas/")
+        || lc.starts_with("schema/")
+        || lc.starts_with("spec/")
+        || lc.starts_with("specs/")
+        || lc.starts_with("protocol/")
+        || lc.starts_with("protocols/")
+        || lc.contains("/contracts/")
+        || lc.contains("/contract/")
+        || lc.contains("/schemas/")
+        || lc.contains("/schema/")
+        || lc.contains("/specs/")
+        || lc.contains("/spec/")
+        || lc.contains("/protocols/")
+        || lc.contains("/protocol/");
+
+    if is_contract_dir && is_contract_like_ext {
+        // Avoid treating “docs/contracts/…” or “protocols/…” as contracts when they are just
+        // directory index files without any spec-like content.
+        if matches!(
+            basename,
+            "readme.md" | "readme.rst" | "readme.txt" | "index.md"
+        ) {
+            return true;
+        }
+        return true;
+    }
+
     file_lc.starts_with("contracts/")
         || file_lc.starts_with("proto/")
         || file_lc.contains("/openapi.")
@@ -1260,24 +1313,72 @@ fn shrink_pack_simple(pack: &mut String) -> bool {
 fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) -> bool {
     // Keep this deterministic: lowest-signal content is removed first.
     // Note: we intentionally do *not* remove `D ...`, `EV ...`, or headers here.
-    const PREFIXES: [&str; 10] = [
-        "MAP ",
-        "AREA ",
-        "SYM ",
-        "FLOW ",
-        "BROKER ",
-        "ENTRY ",
-        "CONTRACT ",
-        "BOUNDARY ",
-        "STEP ",
-        "ANCHOR ",
+    #[derive(Clone, Copy)]
+    struct PrefixPolicy {
+        prefix: &'static str,
+        min_keep: usize,
+    }
+
+    // This is a “graceful degradation” policy: trim *counts* first, preserve claim diversity.
+    // The most valuable navigation primitives are kept longer:
+    // - `ANCHOR` (where to start), `STEP` (how to run), `AREA` (sense map).
+    // - Under extreme budgets we may still fall back to the minimal CP (see shrink_pack()).
+    const POLICIES: [PrefixPolicy; 10] = [
+        PrefixPolicy {
+            prefix: "MAP ",
+            min_keep: 0,
+        },
+        PrefixPolicy {
+            prefix: "SYM ",
+            min_keep: 0,
+        },
+        PrefixPolicy {
+            prefix: "FLOW ",
+            min_keep: 1,
+        },
+        PrefixPolicy {
+            prefix: "BROKER ",
+            min_keep: 1,
+        },
+        PrefixPolicy {
+            prefix: "ENTRY ",
+            min_keep: 1,
+        },
+        PrefixPolicy {
+            prefix: "CONTRACT ",
+            min_keep: 1,
+        },
+        PrefixPolicy {
+            prefix: "BOUNDARY ",
+            min_keep: 1,
+        },
+        PrefixPolicy {
+            prefix: "STEP ",
+            min_keep: 1,
+        },
+        PrefixPolicy {
+            prefix: "ANCHOR ",
+            min_keep: 1,
+        },
+        PrefixPolicy {
+            prefix: "AREA ",
+            min_keep: 1,
+        },
     ];
 
-    for prefix in PREFIXES {
+    for policy in POLICIES {
+        let count = lines
+            .iter()
+            .take(nba_idx)
+            .filter(|line| line.starts_with(policy.prefix))
+            .count();
+        if count <= policy.min_keep {
+            continue;
+        }
         if let Some(idx) = lines
             .iter()
             .take(nba_idx)
-            .rposition(|line| line.starts_with(prefix))
+            .rposition(|line| line.starts_with(policy.prefix))
         {
             lines.remove(idx);
             return true;

@@ -495,7 +495,10 @@ pub async fn meaning_pack(
     }
 
     cp.push_line("S MAP");
-    for area in areas.iter().filter(|area| area.kind == "core") {
+    for area in areas
+        .iter()
+        .filter(|area| !matches!(area.kind, "outputs" | "interfaces"))
+    {
         let label_d = cp.dict_id(&area.label);
         let path_d = cp.dict_id(&area.path);
         let conf = format!("{:.2}", area.confidence.clamp(0.0, 1.0));
@@ -864,7 +867,7 @@ fn select_repo_anchors(
     out
 }
 
-fn best_artifact_store_evidence_file(files: &[String]) -> Option<String> {
+pub(crate) fn best_artifact_store_evidence_file(files: &[String]) -> Option<String> {
     let mut candidates: Vec<(usize, usize, &String)> = Vec::new();
     for file in files {
         let lc = file.to_ascii_lowercase();
@@ -907,7 +910,7 @@ fn best_artifact_store_evidence_file(files: &[String]) -> Option<String> {
     candidates.first().map(|c| (*c.2).clone())
 }
 
-fn best_canon_doc(files: &[String]) -> Option<String> {
+pub(crate) fn best_canon_doc(files: &[String]) -> Option<String> {
     let mut candidates: Vec<(usize, &String)> = Vec::new();
     for file in files {
         let lc = file.to_ascii_lowercase();
@@ -958,7 +961,7 @@ fn best_canon_doc(files: &[String]) -> Option<String> {
     candidates.first().map(|(_, f)| (*f).clone())
 }
 
-fn best_howto_file(files: &[String]) -> Option<String> {
+pub(crate) fn best_howto_file(files: &[String]) -> Option<String> {
     let mut candidates: Vec<(usize, &String)> = Vec::new();
     for file in files {
         let lc = file.to_ascii_lowercase();
@@ -981,18 +984,30 @@ fn best_howto_file(files: &[String]) -> Option<String> {
                     | "compose.yaml"
             ) {
             Some(0usize)
+        } else if lc.starts_with("scripts/")
+            && matches!(
+                basename,
+                "validate_contracts.sh"
+                    | "validate.sh"
+                    | "check.sh"
+                    | "test.sh"
+                    | "ci.sh"
+                    | "verify.sh"
+            )
+        {
+            Some(1usize)
         } else if is_root
             && matches!(
                 basename,
                 "package.json" | "pyproject.toml" | "go.mod" | "cargo.toml"
             )
         {
-            Some(1usize)
+            Some(2usize)
         } else if (lc.starts_with(".github/workflows/")
             && (lc.ends_with(".yml") || lc.ends_with(".yaml")))
             || (is_root && basename == ".gitlab-ci.yml")
         {
-            Some(2usize)
+            Some(3usize)
         } else {
             None
         };
@@ -1006,7 +1021,7 @@ fn best_howto_file(files: &[String]) -> Option<String> {
     candidates.first().map(|(_, f)| (*f).clone())
 }
 
-fn best_experiment_file(files: &[String]) -> Option<String> {
+pub(crate) fn best_experiment_file(files: &[String]) -> Option<String> {
     let mut candidates: Vec<(usize, &String)> = Vec::new();
     for file in files {
         let lc = file.to_ascii_lowercase();
@@ -1058,7 +1073,7 @@ fn best_experiment_file(files: &[String]) -> Option<String> {
     candidates.first().map(|(_, f)| (*f).clone())
 }
 
-fn best_contract_file(contracts: &[String]) -> Option<String> {
+pub(crate) fn best_contract_file(contracts: &[String]) -> Option<String> {
     let mut candidates: Vec<(usize, &String)> = Vec::new();
     for file in contracts {
         let kind = contract_kind(file);
@@ -1066,7 +1081,7 @@ fn best_contract_file(contracts: &[String]) -> Option<String> {
             "asyncapi" => 0usize,
             "openapi" => 1usize,
             "proto" => 2usize,
-            "json_schema" => 3usize,
+            "jsonschema" => 3usize,
             _ => 4usize,
         };
         candidates.push((rank, file));
@@ -1076,7 +1091,7 @@ fn best_contract_file(contracts: &[String]) -> Option<String> {
     candidates.first().map(|(_, f)| (*f).clone())
 }
 
-fn best_infra_file(boundaries: &[BoundaryCandidate]) -> Option<String> {
+pub(crate) fn best_infra_file(boundaries: &[BoundaryCandidate]) -> Option<String> {
     boundaries.iter().find_map(|b| {
         let lc = b.file.to_ascii_lowercase();
         let is_infra = lc.contains("/k8s/")
@@ -1211,7 +1226,7 @@ async fn augment_k8s_manifest_boundaries(
     }
 }
 
-async fn anchor_evidence_window(
+pub(crate) async fn anchor_evidence_window(
     root: &Path,
     rel: &str,
     kind: AnchorKind,
@@ -1393,6 +1408,17 @@ async fn build_pipeline_steps(root: &Path, anchors: &[EmittedAnchor]) -> Vec<Emi
             .unwrap_or(true)
         {
             sources.push(canon);
+        }
+    }
+    if let Some(experiment) = anchors
+        .iter()
+        .find(|a| matches!(a.kind, AnchorKind::Experiment))
+    {
+        if sources
+            .iter()
+            .all(|existing| existing.file.as_str() != experiment.file.as_str())
+        {
+            sources.push(experiment);
         }
     }
 
@@ -1654,6 +1680,9 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
     {
         return Some(PipelineStepKind::Test);
     }
+    if line.contains("validate") || line.contains("check") {
+        return Some(PipelineStepKind::Test);
+    }
     if line.contains("bench") || line.contains("benchmark") || line.contains("eval") {
         return Some(PipelineStepKind::Eval);
     }
@@ -1672,7 +1701,7 @@ fn build_areas(
     _artifact_store_file: Option<&str>,
     anchors: &[EmittedAnchor],
 ) -> Vec<EmittedArea> {
-    const MAX_AREAS: usize = 3;
+    const MAX_AREAS: usize = 5;
 
     let mut out: Vec<EmittedArea> = Vec::new();
     let mut seen: HashSet<&'static str> = HashSet::new();
@@ -1696,6 +1725,15 @@ fn build_areas(
         .find(|a| matches!(a.kind, AnchorKind::Entrypoint))
     {
         push_from_anchor(anchor, "core", "Core: code", 0.82);
+    }
+    if let Some(anchor) = anchors
+        .iter()
+        .find(|a| matches!(a.kind, AnchorKind::Experiment))
+    {
+        push_from_anchor(anchor, "experiments", "Experiments: baselines", 0.8);
+    }
+    if let Some(anchor) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::Infra)) {
+        push_from_anchor(anchor, "infra", "Infra: deploy", 0.8);
     }
     if let Some(anchor) = anchors
         .iter()
