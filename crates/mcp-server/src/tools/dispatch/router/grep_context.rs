@@ -333,6 +333,21 @@ pub(in crate::tools::dispatch) async fn grep_context(
                 if decoded.v == CURSOR_VERSION && decoded.tool == "grep_context" {
                     if let Some(root) = decoded.root.as_deref().map(str::trim) {
                         if !root.is_empty() {
+                            let session_root_display =
+                                { service.session.lock().await.root_display.clone() };
+                            if let Some(session_root_display) = session_root_display {
+                                if session_root_display != root {
+                                    return Ok(invalid_cursor_with_meta(
+                                        "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects.",
+                                        ToolMeta {
+                                            root_fingerprint: Some(root_fingerprint(
+                                                &session_root_display,
+                                            )),
+                                            ..ToolMeta::default()
+                                        },
+                                    ));
+                                }
+                            }
                             request.path = Some(root.to_string());
                         }
                     }

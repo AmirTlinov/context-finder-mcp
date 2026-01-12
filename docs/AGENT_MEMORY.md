@@ -192,7 +192,7 @@ Cursor tokens now embed the project root (and any relevant options), so you don�
 
 For tight-loop read tools (`file_slice`, `grep_context`, `text_search`), cursor-only continuation also works directly on those tools — options are captured in the cursor so you don’t have to retype them.
 
-Safety note (multi-agent): if a session already has a default project root, `read_pack` refuses to switch projects based on a cursor token alone. To switch roots intentionally, pass an explicit `path`.
+Safety note (multi-agent): if a session already has a default project root, tools refuse to switch projects based on a cursor token alone. To switch roots intentionally, pass an explicit `path`.
 
 Note: you can override `max_chars` between pages if you want to change the payload density (smaller budget for “peek”, larger budget for “read more”). If omitted, the tool reuses the cursor’s previous `max_chars`.
 
