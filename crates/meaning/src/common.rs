@@ -1334,35 +1334,35 @@ fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) ->
         },
         PrefixPolicy {
             prefix: "FLOW ",
-            min_keep: 1,
+            min_keep: 0,
         },
         PrefixPolicy {
             prefix: "BROKER ",
-            min_keep: 1,
+            min_keep: 0,
         },
         PrefixPolicy {
             prefix: "ENTRY ",
-            min_keep: 1,
+            min_keep: 0,
         },
         PrefixPolicy {
             prefix: "CONTRACT ",
-            min_keep: 1,
+            min_keep: 0,
         },
         PrefixPolicy {
             prefix: "BOUNDARY ",
-            min_keep: 1,
+            min_keep: 0,
         },
         PrefixPolicy {
             prefix: "STEP ",
             min_keep: 1,
         },
         PrefixPolicy {
-            prefix: "ANCHOR ",
+            prefix: "AREA ",
             min_keep: 1,
         },
         PrefixPolicy {
-            prefix: "AREA ",
-            min_keep: 1,
+            prefix: "ANCHOR ",
+            min_keep: 3,
         },
     ];
 
