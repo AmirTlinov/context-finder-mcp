@@ -65,6 +65,15 @@ const ARTIFACT_STORE_SCOPES: &[&str] = &[
     "output",
     "checkpoints",
     "checkpoint",
+    // Research repos often commit small datasets or references to them. Treat these as
+    // artifact-like to prevent maps from being dominated by non-code files; they still surface
+    // via anchors/areas/evidence when relevant.
+    "data",
+    "dataset",
+    "datasets",
+    "corpus",
+    "corpora",
+    "weights",
 ];
 
 pub(super) fn is_artifact_scope(path: &str) -> bool {

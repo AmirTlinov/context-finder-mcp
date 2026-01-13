@@ -1493,6 +1493,49 @@ async fn meaning_pack_keeps_multiple_anchors_under_tight_budgets_for_research_re
 }
 
 #[tokio::test]
+async fn meaning_pack_recognizes_russian_entrypoint_intent_under_tight_budget() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    build_fixture(root.path(), "rust_contract_broker_flow")?;
+
+    let service = start_mcp_server().await?;
+    let resp = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "где точки входа и как запускается проект?",
+            "max_chars": 2000,
+            "map_limit": 6,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(resp.is_error, Some(true), "meaning_pack returned error");
+
+    let text = resp
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack missing text output")?;
+    let pack = extract_cp_pack(text)?;
+    assert_meaning_invariants(&pack)?;
+
+    anyhow::ensure!(
+        pack.contains("S ENTRYPOINTS"),
+        "expected S ENTRYPOINTS section for RU entrypoint query under tight budget"
+    );
+    anyhow::ensure!(
+        pack.lines().any(|line| line.starts_with("ENTRY ")),
+        "expected at least one ENTRY claim for RU entrypoint query"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn meaning_pack_detects_asyncapi_contract_and_event_boundary() -> Result<()> {
     let root = tempfile::tempdir().context("temp project dir")?;
     std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;

@@ -42,57 +42,133 @@ struct QueryHints {
 
 impl QueryHints {
     fn from_query(query: &str) -> Self {
-        let lc = query.to_ascii_lowercase();
+        // Keep this deterministic and cheap: we only use query hints to prioritize sections under
+        // tight budgets. We intentionally support both English and Russian keywords because the
+        // operator language in this environment is often RU, while code/docs are EN.
+        let lc = query.to_lowercase();
+        let contains_any = |needles: &[&str]| needles.iter().any(|n| lc.contains(n));
 
-        let wants_entrypoints = lc.contains("entrypoint")
-            || lc.contains("entrypoints")
-            || lc.contains("entry")
-            || lc.contains("main")
-            || lc.contains("cli");
-        let wants_contracts = lc.contains("contract")
-            || lc.contains("contracts")
-            || lc.contains("openapi")
-            || lc.contains("asyncapi")
-            || lc.contains("schema")
-            || lc.contains("proto")
-            || lc.contains("api");
-        let wants_brokers = lc.contains("broker")
-            || lc.contains("brokers")
-            || lc.contains("kafka")
-            || lc.contains("nats")
-            || lc.contains("amqp")
-            || lc.contains("rabbit")
-            || lc.contains("redis");
-        let wants_infra = lc.contains("infra")
-            || lc.contains("config")
-            || lc.contains("configs")
-            || lc.contains("env")
-            || lc.contains("environment")
-            || lc.contains("settings")
-            || lc.contains("deploy")
-            || lc.contains("k8s")
-            || lc.contains("kubernetes")
-            || lc.contains("helm")
-            || lc.contains("terraform")
-            || lc.contains("gitops")
-            || lc.contains("boundary");
-        let wants_artifacts = lc.contains("artifact")
-            || lc.contains("artifacts")
-            || lc.contains("output")
-            || lc.contains("outputs")
-            || lc.contains("result")
-            || lc.contains("results")
-            || lc.contains("checkpoint")
-            || lc.contains("checkpoints");
-        let wants_experiments = lc.contains("experiment")
-            || lc.contains("experiments")
-            || lc.contains("baseline")
-            || lc.contains("baselines")
-            || lc.contains("bench")
-            || lc.contains("benchmark")
-            || lc.contains("eval")
-            || lc.contains("evaluation")
-            || lc.contains("research");
+        let wants_entrypoints = contains_any(&[
+            // EN
+            "entrypoint",
+            "entrypoints",
+            "main",
+            "cli",
+            // RU
+            "точка входа",
+            "точки входа",
+            "входная точка",
+            "входные точки",
+            "запуск",
+            "старт",
+        ]);
+        let wants_contracts = contains_any(&[
+            // EN
+            "contract",
+            "contracts",
+            "openapi",
+            "asyncapi",
+            "schema",
+            "proto",
+            "grpc",
+            "api",
+            // RU
+            "контракт",
+            "контракты",
+            "схема",
+            "схемы",
+            "спека",
+            "спеки",
+            "спецификац",
+            "прото",
+            "протокол",
+            "апи",
+        ]);
+        let wants_brokers = contains_any(&[
+            // EN
+            "broker",
+            "brokers",
+            "kafka",
+            "nats",
+            "amqp",
+            "rabbit",
+            "rabbitmq",
+            "redis",
+            // RU
+            "брокер",
+            "брокеры",
+            "кафка",
+            "натс",
+            "очеред",
+            "шина",
+        ]);
+        let wants_infra = contains_any(&[
+            // EN
+            "infra",
+            "config",
+            "configs",
+            "env",
+            "environment",
+            "settings",
+            "deploy",
+            "k8s",
+            "kubernetes",
+            "helm",
+            "terraform",
+            "gitops",
+            "boundary",
+            // RU
+            "инфра",
+            "конфиг",
+            "конфиги",
+            "переменн",
+            "окружен",
+            "настройк",
+            "деплой",
+            "развер",
+        ]);
+        let wants_artifacts = contains_any(&[
+            // EN
+            "artifact",
+            "artifacts",
+            "output",
+            "outputs",
+            "result",
+            "results",
+            "checkpoint",
+            "checkpoints",
+            // RU
+            "артефакт",
+            "артефакты",
+            "вывод",
+            "результат",
+            "результаты",
+            "чекпоинт",
+            "чекпоинты",
+        ]);
+        let wants_experiments = contains_any(&[
+            // EN
+            "experiment",
+            "experiments",
+            "baseline",
+            "baselines",
+            "bench",
+            "benchmark",
+            "eval",
+            "evaluation",
+            "research",
+            "analysis",
+            "notebook",
+            // RU
+            "эксперимент",
+            "эксперименты",
+            "бейслайн",
+            "бенч",
+            "оценк",
+            "исслед",
+            "анализ",
+            "ноутбук",
+        ]);
 
         Self {
             wants_entrypoints,
@@ -1843,7 +1919,8 @@ fn build_areas(
     _artifact_store_file: Option<&str>,
     anchors: &[EmittedAnchor],
 ) -> Vec<EmittedArea> {
-    const MAX_AREAS: usize = 5;
+    // Keep this small: areas are the "map legend" for an agent, not a second directory listing.
+    const MAX_AREAS: usize = 7;
 
     let mut out: Vec<EmittedArea> = Vec::new();
     let mut seen: HashSet<&'static str> = HashSet::new();
@@ -1862,20 +1939,17 @@ fn build_areas(
             });
         };
 
+    if let Some(anchor) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::Canon)) {
+        push_from_anchor(anchor, "docs", "Docs: canon", 0.84);
+    }
+    if let Some(anchor) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::HowTo)) {
+        push_from_anchor(anchor, "tooling", "Tooling: run / test", 0.83);
+    }
     if let Some(anchor) = anchors
         .iter()
         .find(|a| matches!(a.kind, AnchorKind::Entrypoint))
     {
         push_from_anchor(anchor, "core", "Core: code", 0.82);
-    }
-    if let Some(anchor) = anchors
-        .iter()
-        .find(|a| matches!(a.kind, AnchorKind::Experiment))
-    {
-        push_from_anchor(anchor, "experiments", "Experiments: baselines", 0.8);
-    }
-    if let Some(anchor) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::Infra)) {
-        push_from_anchor(anchor, "infra", "Infra: deploy", 0.8);
     }
     if let Some(anchor) = anchors
         .iter()
@@ -1888,6 +1962,15 @@ fn build_areas(
         .find(|a| matches!(a.kind, AnchorKind::Artifact))
     {
         push_from_anchor(anchor, "outputs", "Outputs: artifacts", 0.78);
+    }
+    if let Some(anchor) = anchors
+        .iter()
+        .find(|a| matches!(a.kind, AnchorKind::Experiment))
+    {
+        push_from_anchor(anchor, "experiments", "Experiments: baselines", 0.8);
+    }
+    if let Some(anchor) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::Infra)) {
+        push_from_anchor(anchor, "infra", "Infra: deploy", 0.8);
     }
 
     out.truncate(MAX_AREAS);
