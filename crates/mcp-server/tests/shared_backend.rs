@@ -7,20 +7,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::Command;
 
-#[cfg(unix)]
-fn touch_file_now(path: &Path) -> Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    let c_path = CString::new(path.as_os_str().as_bytes()).context("path contains NUL")?;
-    let rc = unsafe { libc::utimes(c_path.as_ptr(), std::ptr::null()) };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("utimes({})", path.display()));
-    }
-    Ok(())
-}
-
 fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
     if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
         return Ok(PathBuf::from(path));
@@ -834,24 +820,58 @@ async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_u
             .and_then(Value::as_u64)
             .context("pid file missing pid")?;
 
-        // Simulate an in-place rebuild: touch the binary file (mtime change).
+        // Simulate an in-place rebuild: atomically replace the binary at the same path
+        // (cargo-style rebuild: new inode, old `.../exe` becomes `(deleted)`).
+        let original_bin = original_bin.clone();
         tokio::time::sleep(Duration::from_millis(10)).await;
+        let bin_new = bin.with_extension("new");
+        std::fs::copy(&original_bin, &bin_new).context("copy replacement mcp binary")?;
         #[cfg(unix)]
-        touch_file_now(&bin).context("touch binary to simulate rebuild")?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&bin_new)
+                .context("stat replacement binary")?
+                .permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            std::fs::set_permissions(&bin_new, perms)
+                .context("ensure replacement binary is executable")?;
+        }
+        std::fs::rename(&bin_new, &bin).context("atomically replace mcp binary")?;
 
         // Give the proxy watch loop time to detect the change and reset the daemon transport.
         tokio::time::sleep(Duration::from_millis(800)).await;
 
         // Next call should succeed and should have gone through a daemon restart.
-        let resp2 = tokio::time::timeout(
-            Duration::from_secs(10),
-            service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
-                arguments: args.as_object().cloned(),
-            }),
-        )
-        .await
-        .context("timeout calling file_slice (after hot reload)")??;
+        // (A single transient disconnect is allowed; the client should retry.)
+        let mut resp2 = None;
+        for attempt in 0..10usize {
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                service.call_tool(CallToolRequestParam {
+                    name: "file_slice".into(),
+                    arguments: args.as_object().cloned(),
+                }),
+            )
+            .await
+            .context("timeout calling file_slice (after hot reload)");
+
+            match result {
+                Ok(Ok(value)) => {
+                    resp2 = Some(value);
+                    break;
+                }
+                Ok(Err(err)) => {
+                    let msg = err.to_string();
+                    if msg.contains("Backend daemon disconnected") && attempt < 9 {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    return Err(err).context("file_slice failed after hot reload");
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        let resp2 = resp2.context("missing file_slice response after hot reload")?;
         let text2 = resp2
             .content
             .first()

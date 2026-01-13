@@ -125,9 +125,7 @@ fn write_spawn_lock_metadata(file: &mut std::fs::File) {
     // Best-effort: the lock itself is the primary mechanism; metadata is for recovery + debugging.
     let payload = SpawnLockMetadata {
         pid: std::process::id(),
-        exe: std::env::current_exe()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string()),
+        exe: self_exe_on_disk_path().map(|p| p.to_string_lossy().to_string()),
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         acquired_at_ms: system_time_to_unix_ms(std::time::SystemTime::now()),
     };
@@ -1255,11 +1253,97 @@ fn system_time_to_unix_ms(value: std::time::SystemTime) -> Option<u64> {
 }
 
 fn current_exe_mtime_ms() -> u64 {
-    std::env::current_exe()
-        .ok()
+    // Prefer an on-disk path to the executable.
+    //
+    // Why: during `cargo build` / rebuilds, the running process keeps an open inode while the
+    // target path is atomically replaced. `/proc/self/exe` then becomes `(... deleted)`, and
+    // `current_exe()` tracks the old inode, so its mtime stops reflecting rebuilds. Watching
+    // the on-disk path keeps the proxy/daemon hot-reload logic working and allows respawns.
+    self_exe_on_disk_path()
         .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
         .and_then(system_time_to_unix_ms)
         .unwrap_or(0)
+}
+
+fn self_exe_on_disk_path() -> Option<PathBuf> {
+    // Best-effort: we want a path that remains stable across atomic rebuilds (rename-over),
+    // so we can both detect updates (mtime) and spawn the new binary after hot-restart.
+    //
+    // Order of attempts:
+    // 1) `argv[0]` resolved to an existing file (often the build output path).
+    // 2) `current_exe()` if it points to an existing file.
+    // 3) `current_exe()` with the Linux ` (deleted)` suffix stripped (atomic replace case).
+
+    if let Some(arg0) = std::env::args_os().next() {
+        let p = PathBuf::from(arg0);
+        if let Some(resolved) = resolve_exe_candidate(&p) {
+            return Some(resolved);
+        }
+    }
+
+    if let Ok(p) = std::env::current_exe() {
+        if p.is_file() {
+            return Some(p);
+        }
+        if let Some(stripped) = strip_deleted_suffix(&p) {
+            if stripped.is_file() {
+                return Some(stripped);
+            }
+        }
+    }
+
+    None
+}
+
+fn resolve_exe_candidate(candidate: &Path) -> Option<PathBuf> {
+    if candidate.as_os_str().is_empty() {
+        return None;
+    }
+
+    // If the candidate is already a path, resolve it against the current working directory.
+    if candidate.is_absolute() || candidate.components().count() > 1 {
+        let resolved = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            std::env::current_dir().ok()?.join(candidate)
+        };
+        if resolved.is_file() {
+            return Some(resolved);
+        }
+        return None;
+    }
+
+    // Otherwise treat it as a program name and search PATH (like `which`).
+    let name = candidate;
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let p = dir.join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    None
+}
+
+fn strip_deleted_suffix(path: &Path) -> Option<PathBuf> {
+    // Linux-specific: `/proc/self/exe` may resolve to `... (deleted)` after an atomic replace.
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        const SUFFIX: &[u8] = b" (deleted)";
+        let bytes = path.as_os_str().as_bytes();
+        if bytes.ends_with(SUFFIX) {
+            let trimmed = &bytes[..bytes.len().saturating_sub(SUFFIX.len())];
+            return Some(PathBuf::from(std::ffi::OsString::from_vec(
+                trimmed.to_vec(),
+            )));
+        }
+    }
+
+    let _ = path;
+    None
 }
 
 async fn should_restart_running_daemon(socket: &Path) -> bool {
@@ -1290,14 +1374,7 @@ async fn should_restart_running_daemon(socket: &Path) -> bool {
     let Some(started_at_ms) = info.started_at_ms.filter(|ms| *ms > 0) else {
         return false;
     };
-    let Ok(current_exe) = std::env::current_exe() else {
-        return false;
-    };
-    let current_exe_mtime_ms = std::fs::metadata(&current_exe)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(system_time_to_unix_ms)
-        .unwrap_or(0);
+    let current_exe_mtime_ms = current_exe_mtime_ms();
 
     let daemon_exe_mtime_ms = info
         .exe
@@ -1320,7 +1397,7 @@ async fn write_daemon_pid_file(socket: &Path) -> Result<()> {
 
     let payload = serde_json::json!({
         "pid": std::process::id(),
-        "exe": std::env::current_exe().ok().map(|p| p.to_string_lossy().to_string()),
+        "exe": self_exe_on_disk_path().map(|p| p.to_string_lossy().to_string()),
         "version": env!("CARGO_PKG_VERSION"),
         "started_at_ms": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1394,7 +1471,7 @@ async fn spawn_daemon(socket: &Path) -> Result<()> {
         tokio::fs::create_dir_all(parent).await.ok();
     }
 
-    let exe = std::env::current_exe().context("resolve current executable for daemon spawn")?;
+    let exe = self_exe_on_disk_path().context("resolve on-disk executable for daemon spawn")?;
 
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("daemon")
