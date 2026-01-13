@@ -45,6 +45,18 @@ The system responds using a strict “semantic zoom” policy:
 
 This is a *change in what we transmit*, not text compression.
 
+### v0.1 additions (implemented)
+
+- **CI as a first-class anchor**: CI configs (e.g. GitHub Actions workflows) are treated as
+  meaning anchors and become a primary source for extracting the **canon loop** when READMEs
+  are missing or stale.
+- **Noise budget**: dataset/binary/generated/log mass is aggressively suppressed from `S MAP`
+  (while never suppressing code/contracts/CI), preventing “file count gravity” from dominating.
+- **Signal-driven repo archetypes**: defaults (like `map_limit`) are tuned by detected signals
+  (e.g. monorepo vs dataset-heavy), not by hardcoded directory names.
+- **Evidence-impact ranking**: `S MAP` prioritizes directories that back higher-value evidence
+  (canon/how-to/CI/contracts/entrypoints), not just the largest directories.
+
 ---
 
 ## 1) Goals / non-goals

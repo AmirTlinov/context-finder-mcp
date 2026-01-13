@@ -7,9 +7,11 @@ use std::path::Path;
 use crate::common::{
     artifact_scope_rank, build_ev_file_index, classify_boundaries, classify_files, contract_kind,
     detect_brokers, detect_channel_mentions, directory_key, extract_asyncapi_flows,
-    hash_and_count_lines, infer_actor_by_path, infer_flow_actor, is_artifact_scope, json_string,
-    read_file_prefix_utf8, shrink_pack, AnchorKind, BoundaryCandidate, BoundaryKind,
-    BrokerCandidate, CognitivePack, EvidenceItem, EvidenceKind, FlowEdge,
+    hash_and_count_lines, infer_actor_by_path, infer_flow_actor, is_artifact_scope,
+    is_binary_blob_path, is_ci_config_candidate, is_code_file, is_contract_candidate,
+    is_dataset_like_path, json_string, read_file_prefix_utf8, shrink_pack, AnchorKind,
+    BoundaryCandidate, BoundaryKind, BrokerCandidate, CognitivePack, EvidenceItem, EvidenceKind,
+    FlowEdge,
 };
 use crate::model::{MeaningPackBudget, MeaningPackRequest, MeaningPackResult};
 use crate::paths::normalize_relative_path;
@@ -36,6 +38,7 @@ struct QueryHints {
     wants_contracts: bool,
     wants_brokers: bool,
     wants_infra: bool,
+    wants_ci: bool,
     wants_artifacts: bool,
     wants_experiments: bool,
 }
@@ -127,6 +130,23 @@ impl QueryHints {
             "деплой",
             "развер",
         ]);
+        let wants_ci = contains_any(&[
+            // EN
+            "ci",
+            "workflow",
+            "workflows",
+            "github actions",
+            "pipeline",
+            "pipelines",
+            // RU
+            "ci",
+            "пайплайн",
+            "гейт",
+            "гейты",
+            "экшн",
+            "actions",
+            "воркфло",
+        ]);
         let wants_artifacts = contains_any(&[
             // EN
             "artifact",
@@ -175,6 +195,7 @@ impl QueryHints {
             wants_contracts,
             wants_brokers,
             wants_infra,
+            wants_ci,
             wants_artifacts,
             wants_experiments,
         }
@@ -259,6 +280,120 @@ struct EmittedArea {
     ev_id: Option<String>,
 }
 
+#[derive(Default)]
+struct RepoSignals {
+    total_files: usize,
+    code_files: usize,
+    contract_candidates: usize,
+    ci_files: usize,
+    dataset_like_files: usize,
+    dataset_like_bytes: u64,
+    binary_blob_files: usize,
+    manifest_files: usize,
+    manifest_scopes: HashSet<String>,
+}
+
+impl RepoSignals {
+    fn is_dataset_heavy(&self) -> bool {
+        if self.total_files < 50 {
+            return false;
+        }
+        let data_ratio = self.dataset_like_files as f32 / self.total_files as f32;
+        // Fail-soft heuristic: either “lots of dataset files” or “dataset bytes dominate”.
+        data_ratio >= 0.25
+            || (self.dataset_like_files >= 100 && self.dataset_like_files > self.code_files * 2)
+            || self.dataset_like_bytes >= 256 * 1024 * 1024
+    }
+
+    fn is_monorepo(&self) -> bool {
+        let scopes = self
+            .manifest_scopes
+            .iter()
+            .filter(|s| s.as_str() != ".")
+            .count();
+        self.manifest_files >= 4 || scopes >= 2
+    }
+}
+
+fn is_manifest_candidate(file_lc: &str) -> bool {
+    let lc = file_lc.trim();
+    if lc.is_empty() {
+        return false;
+    }
+    let basename = lc.rsplit('/').next().unwrap_or(lc);
+    matches!(
+        basename,
+        "cargo.toml"
+            | "cargo.lock"
+            | "package.json"
+            | "go.mod"
+            | "pyproject.toml"
+            | "requirements.txt"
+            | "setup.py"
+            | "setup.cfg"
+            | "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "cmakelists.txt"
+    )
+}
+
+fn should_suppress_from_map(file_lc: &str, bytes: u64) -> bool {
+    // Never suppress code/entrypoints/contracts/CI: even if large, they are part of “meaning”.
+    if is_code_file(file_lc) || is_contract_candidate(file_lc) || is_ci_config_candidate(file_lc) {
+        return false;
+    }
+
+    let lc = file_lc.trim();
+    if lc.is_empty() {
+        return true;
+    }
+
+    // Obvious heavy blobs that add noise to structure maps.
+    if is_dataset_like_path(lc) || is_binary_blob_path(lc) {
+        return true;
+    }
+
+    // Logs/dumps are rarely part of repo “meaning” (and are often huge).
+    if lc.ends_with(".log")
+        || lc.ends_with(".trace")
+        || lc.ends_with(".out")
+        || lc.ends_with(".dump")
+        || lc.ends_with(".tmp")
+    {
+        return true;
+    }
+
+    // Common generated/build output scopes (best-effort; gitignore may already hide them).
+    for scope in [
+        "dist/",
+        "build/",
+        "out/",
+        ".cache/",
+        ".venv/",
+        ".mypy_cache/",
+        ".pytest_cache/",
+        ".ruff_cache/",
+    ] {
+        if lc.starts_with(scope) || lc.contains(&format!("/{scope}")) {
+            return true;
+        }
+    }
+
+    // Heuristic: very large JSON/YAML/TOML are often datasets or machine outputs.
+    if bytes >= 1_000_000
+        && (lc.ends_with(".json")
+            || lc.ends_with(".yaml")
+            || lc.ends_with(".yml")
+            || lc.ends_with(".toml")
+            || lc.ends_with(".txt"))
+    {
+        return true;
+    }
+
+    false
+}
+
 pub async fn meaning_pack(
     root: &Path,
     root_display: &str,
@@ -271,12 +406,11 @@ pub async fn meaning_pack(
     let hints = QueryHints::from_query(&request.query);
     let tight_budget = max_chars <= 2_200;
 
-    let map_depth = request.map_depth.unwrap_or(DEFAULT_MAP_DEPTH).clamp(1, 4);
-    let map_limit = request.map_limit.unwrap_or(DEFAULT_MAP_LIMIT).clamp(1, 200);
-
     // v0: facts-only map derived from filesystem paths (gitignore-aware), no full-file parsing.
     let scanner = FileScanner::new(root);
     let mut files: Vec<String> = Vec::new();
+    let mut sizes: HashMap<String, u64> = HashMap::new();
+    let mut signals = RepoSignals::default();
     for abs in scanner.scan() {
         let Some(rel) = normalize_relative_path(root, &abs) else {
             continue;
@@ -284,6 +418,36 @@ pub async fn meaning_pack(
         if is_potential_secret_path(&rel) {
             continue;
         }
+        let bytes = std::fs::metadata(&abs).map(|m| m.len()).unwrap_or(0);
+        sizes
+            .entry(rel.clone())
+            .and_modify(|existing| *existing = (*existing).max(bytes))
+            .or_insert(bytes);
+
+        let lc = rel.to_ascii_lowercase();
+        signals.total_files += 1;
+        if is_code_file(&lc) {
+            signals.code_files += 1;
+        }
+        if is_contract_candidate(&lc) {
+            signals.contract_candidates += 1;
+        }
+        if is_ci_config_candidate(&lc) {
+            signals.ci_files += 1;
+        }
+        if is_dataset_like_path(&lc) {
+            signals.dataset_like_files += 1;
+            signals.dataset_like_bytes = signals.dataset_like_bytes.saturating_add(bytes);
+        }
+        if is_binary_blob_path(&lc) {
+            signals.binary_blob_files += 1;
+        }
+        if is_manifest_candidate(&lc) {
+            signals.manifest_files += 1;
+            // Use depth=2 so common monorepo layouts (`crates/x`, `packages/y`) separate naturally.
+            signals.manifest_scopes.insert(directory_key(&rel, 2));
+        }
+
         files.push(rel);
     }
     // Meaning mode cares about some \"noise\" files that we intentionally skip for indexing/watcher
@@ -304,17 +468,41 @@ pub async fn meaning_pack(
     ] {
         if root.join(rel).is_file() && !files.iter().any(|existing| existing == rel) {
             files.push(rel.to_string());
+            let abs = root.join(rel);
+            let bytes = std::fs::metadata(&abs).map(|m| m.len()).unwrap_or(0);
+            sizes
+                .entry(rel.to_string())
+                .and_modify(|existing| *existing = (*existing).max(bytes))
+                .or_insert(bytes);
         }
     }
     files.sort();
     files.dedup();
 
+    // Dynamic defaults (signal-driven): allow a more useful map without requiring explicit
+    // map_depth/map_limit tuning by the caller.
+    let mut map_depth = request.map_depth.unwrap_or(DEFAULT_MAP_DEPTH);
+    let mut map_limit = request.map_limit.unwrap_or(DEFAULT_MAP_LIMIT);
+    if request.map_limit.is_none() && signals.is_dataset_heavy() {
+        map_limit = 10;
+    }
+    if request.map_limit.is_none() && signals.is_monorepo() {
+        map_limit = map_limit.max(16);
+    }
+    map_depth = map_depth.clamp(1, 4);
+    map_limit = map_limit.clamp(1, 200);
+
     let mut dir_files: HashMap<String, usize> = HashMap::new();
     let mut dir_files_with_artifacts: HashMap<String, usize> = HashMap::new();
     for rel in &files {
+        let lc = rel.to_ascii_lowercase();
+        let bytes = sizes.get(rel).copied().unwrap_or(0);
         let key = directory_key(rel, map_depth);
         *dir_files_with_artifacts.entry(key.clone()).or_insert(0) += 1;
-        if is_artifact_scope(rel) {
+        if is_artifact_scope(&lc) {
+            continue;
+        }
+        if should_suppress_from_map(&lc, bytes) {
             continue;
         }
         *dir_files.entry(key).or_insert(0) += 1;
@@ -328,7 +516,6 @@ pub async fn meaning_pack(
         map_rows = dir_files_with_artifacts.into_iter().collect::<Vec<_>>();
         map_rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     }
-    map_rows.truncate(map_limit);
 
     let (entrypoints, contracts) = classify_files(&files);
     let mut boundaries_full = classify_boundaries(&files, &entrypoints, &contracts);
@@ -394,6 +581,34 @@ pub async fn meaning_pack(
     )
     .await;
     let ev_file_index = build_ev_file_index(&evidence);
+
+    // Evidence-driven map ranking: prefer directories that contain “sources of truth” over those
+    // that merely have many files (dataset-heavy repos, vendored trees, etc.).
+    let mut dir_scores: HashMap<String, i32> = HashMap::new();
+    for ev in &evidence {
+        let dir = directory_key(&ev.file, map_depth);
+        let weight = match &ev.kind {
+            EvidenceKind::Anchor(AnchorKind::Canon) => 100,
+            EvidenceKind::Anchor(AnchorKind::HowTo) => 95,
+            EvidenceKind::Anchor(AnchorKind::Ci) => 90,
+            EvidenceKind::Contract | EvidenceKind::Anchor(AnchorKind::Contract) => 85,
+            EvidenceKind::Entrypoint | EvidenceKind::Anchor(AnchorKind::Entrypoint) => 75,
+            EvidenceKind::Anchor(AnchorKind::Experiment) => 65,
+            EvidenceKind::Anchor(AnchorKind::Artifact) => 60,
+            EvidenceKind::Anchor(AnchorKind::Infra) => 55,
+            EvidenceKind::Boundary(_) => 40,
+        };
+        *dir_scores.entry(dir).or_insert(0) += weight;
+    }
+    map_rows.sort_by(|a, b| {
+        let score_a = *dir_scores.get(&a.0).unwrap_or(&0);
+        let score_b = *dir_scores.get(&b.0).unwrap_or(&0);
+        score_b
+            .cmp(&score_a)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    map_rows.truncate(map_limit);
 
     let root_fp = context_indexer::root_fingerprint(root_display);
 
@@ -998,6 +1213,17 @@ fn select_repo_anchors(
         }
     }
 
+    if let Some(file) = best_ci_file(files) {
+        if seen.insert(file.clone()) {
+            out.push(AnchorCandidate {
+                kind: AnchorKind::Ci,
+                label: "CI: gates".to_string(),
+                file,
+                confidence: 0.78,
+            });
+        }
+    }
+
     if let Some(file) = best_contract_file(contracts) {
         if seen.insert(file.clone()) {
             out.push(AnchorCandidate {
@@ -1058,6 +1284,7 @@ fn select_repo_anchors(
             AnchorKind::Canon => 100,
             AnchorKind::HowTo => 95,
             AnchorKind::Contract => 80,
+            AnchorKind::Ci => 78,
             AnchorKind::Experiment => 70,
             AnchorKind::Artifact => 68,
             AnchorKind::Infra => 60,
@@ -1069,6 +1296,7 @@ fn select_repo_anchors(
             AnchorKind::Experiment => i32::from(hints.wants_experiments) * 20,
             AnchorKind::Artifact => i32::from(hints.wants_artifacts) * 20,
             AnchorKind::Infra => i32::from(hints.wants_infra) * 15,
+            AnchorKind::Ci => i32::from(hints.wants_ci) * 15,
             _ => 0,
         };
         base + boost
@@ -1233,6 +1461,42 @@ pub(crate) fn best_howto_file(files: &[String]) -> Option<String> {
         if let Some(rank) = rank {
             candidates.push((rank, file));
         }
+    }
+
+    candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    candidates.first().map(|(_, f)| (*f).clone())
+}
+
+fn best_ci_file(files: &[String]) -> Option<String> {
+    let mut candidates: Vec<(usize, &String)> = Vec::new();
+    for file in files {
+        let lc = file.to_ascii_lowercase();
+        if is_artifact_scope(&lc) {
+            continue;
+        }
+        if !is_ci_config_candidate(&lc) {
+            continue;
+        }
+
+        let basename = lc.rsplit('/').next().unwrap_or(lc.as_str());
+        let is_root = lc == basename;
+        let rank = if (is_root && basename == ".gitlab-ci.yml")
+            || (lc.starts_with(".github/workflows/")
+                && (basename.contains("ci")
+                    || basename.contains("test")
+                    || basename.contains("build")
+                    || basename.contains("preflight")))
+        {
+            0usize
+        } else if lc.starts_with(".github/workflows/") {
+            1usize
+        } else if is_root {
+            2usize
+        } else {
+            3usize
+        };
+
+        candidates.push((rank, file));
     }
 
     candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
@@ -1495,6 +1759,11 @@ pub(crate) async fn anchor_evidence_window(
             ],
         )
         .or_else(|| find_first_commandish(&lc_lines)),
+        AnchorKind::Ci => find_first_heading_like(
+            &lc_lines,
+            &["jobs", "job", "steps", "workflow", "pipeline", "ci"],
+        )
+        .or_else(|| find_first_commandish(&lc_lines)),
         AnchorKind::Artifact => find_first_heading_like(
             &lc_lines,
             &[
@@ -1618,6 +1887,14 @@ async fn build_pipeline_steps(root: &Path, anchors: &[EmittedAnchor]) -> Vec<Emi
     let mut sources: Vec<&EmittedAnchor> = Vec::new();
     if let Some(howto) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::HowTo)) {
         sources.push(howto);
+    }
+    if let Some(ci) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::Ci)) {
+        if sources
+            .iter()
+            .all(|existing| existing.file.as_str() != ci.file.as_str())
+        {
+            sources.push(ci);
+        }
     }
     if let Some(canon) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::Canon)) {
         if sources
@@ -1833,6 +2110,9 @@ fn pipeline_kind_for_target(name_lc: &str) -> Option<PipelineStepKind> {
     if name.is_empty() {
         return None;
     }
+    if name == "doctor" || name == "preflight" {
+        return Some(PipelineStepKind::Setup);
+    }
     if name == "setup"
         || name == "install"
         || name == "bootstrap"
@@ -1849,6 +2129,18 @@ fn pipeline_kind_for_target(name_lc: &str) -> Option<PipelineStepKind> {
         return Some(PipelineStepKind::Run);
     }
     if name.starts_with("test") || name == "unit" || name == "integration" {
+        return Some(PipelineStepKind::Test);
+    }
+    if name == "check"
+        || name == "validate"
+        || name == "verify"
+        || name == "smoke"
+        || name == "skeleton"
+        || name == "ci"
+        || name.starts_with("ci-")
+        || name.contains("smoke")
+        || name.contains("gate")
+    {
         return Some(PipelineStepKind::Test);
     }
     if name.contains("eval") || name.contains("bench") || name.contains("benchmark") {
@@ -1868,6 +2160,9 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
     if line.is_empty() {
         return None;
     }
+    if line.contains("git lfs install") || line.contains("git lfs pull") {
+        return Some(PipelineStepKind::Setup);
+    }
     if line.contains("pip install")
         || line.contains("poetry install")
         || line.contains("uv pip")
@@ -1881,8 +2176,17 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
     {
         return Some(PipelineStepKind::Build);
     }
+    if line.contains("go build") || line.contains("dotnet build") {
+        return Some(PipelineStepKind::Build);
+    }
+    if line.contains("cmake -s") || line.contains("cmake --build") || line.contains("ninja") {
+        return Some(PipelineStepKind::Build);
+    }
     if line.contains("cargo run")
         || line.contains("python -m")
+        || line.starts_with("python ")
+        || line.starts_with("python3 ")
+        || line.contains("go run")
         || line.contains("npm run dev")
         || line.contains("npm start")
         || line.contains("pnpm dev")
@@ -1892,6 +2196,9 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
     }
     if line.contains("cargo test")
         || line.contains("pytest")
+        || line.contains("ctest")
+        || line.contains("go test")
+        || line.contains("dotnet test")
         || line.contains("npm test")
         || line.contains("pnpm test")
         || line.contains("yarn test")
@@ -1904,10 +2211,23 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
     if line.contains("bench") || line.contains("benchmark") || line.contains("eval") {
         return Some(PipelineStepKind::Eval);
     }
-    if line.contains("lint") {
+    if line.contains("lint")
+        || line.contains("clippy")
+        || line.contains("golangci-lint")
+        || line.contains("eslint")
+        || line.contains("ruff")
+        || line.contains("mypy")
+        || line.contains("pylint")
+    {
         return Some(PipelineStepKind::Lint);
     }
-    if line.contains("cargo fmt") || line.contains(" fmt") || line.contains("format") {
+    if line.contains("cargo fmt")
+        || line.contains("rustfmt")
+        || line.contains("gofmt")
+        || line.contains("prettier")
+        || line.contains(" fmt")
+        || line.contains("format")
+    {
         return Some(PipelineStepKind::Format);
     }
     None
@@ -1944,6 +2264,9 @@ fn build_areas(
     }
     if let Some(anchor) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::HowTo)) {
         push_from_anchor(anchor, "tooling", "Tooling: run / test", 0.83);
+    }
+    if let Some(anchor) = anchors.iter().find(|a| matches!(a.kind, AnchorKind::Ci)) {
+        push_from_anchor(anchor, "ci", "CI: gates", 0.82);
     }
     if let Some(anchor) = anchors
         .iter()

@@ -128,6 +128,22 @@
       "min_token_saved": 0.8
     },
     {
+      "id": "ci_only_canon_loop",
+      "fixture": "ci_only_canon_loop",
+      "query": "derive canon loop from CI when docs are missing",
+      "expect_paths": [".github/workflows/ci.yml", "Cargo.toml", "src/main.rs"],
+      "expect_claims": ["ANCHOR", "STEP"],
+      "min_token_saved": 0.75
+    },
+    {
+      "id": "dataset_noise_budget",
+      "fixture": "dataset_noise_budget",
+      "query": "orient on code without drowning in datasets",
+      "expect_paths": ["Cargo.toml", "src/main.rs"],
+      "expect_claims": ["AREA"],
+      "min_token_saved": 0.75
+    },
+    {
       "id": "pinocchio_like_sense_map",
       "fixture": "pinocchio_like_sense_map",
       "query": "orient on canon, how-to-run, contracts, experiments, artifacts",

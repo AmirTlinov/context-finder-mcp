@@ -241,6 +241,8 @@ fn build_fixture(root: &std::path::Path, fixture: &str) -> Result<()> {
         "canon_howto_anchors" => build_fixture_canon_howto_anchors(root),
         "artifact_store_anti_noise" => build_fixture_artifact_store_anti_noise(root),
         "pinocchio_like_sense_map" => build_fixture_pinocchio_like_sense_map(root),
+        "ci_only_canon_loop" => build_fixture_ci_only_canon_loop(root),
+        "dataset_noise_budget" => build_fixture_dataset_noise_budget(root),
         _ => anyhow::bail!("Unknown meaning eval fixture '{fixture}'"),
     }
 }
@@ -869,6 +871,98 @@ fn build_fixture_pinocchio_like_sense_map(root: &std::path::Path) -> Result<()> 
     Ok(())
 }
 
+fn build_fixture_ci_only_canon_loop(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "demo-ci-canon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write Cargo.toml")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+    let main_body = std::iter::once("fn main() { println!(\"ok\"); }".to_string())
+        .chain((0..240).map(|idx| format!("// {idx}: {filler}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(root.join("src").join("main.rs"), main_body).context("write src/main.rs")?;
+
+    // CI is the only reliable "canon" here: no README, no Makefile.
+    // Keep the workflow verbose so evidence windows have a big baseline.
+    let mut workflow_lines = vec![
+        "name: CI".to_string(),
+        "on:".to_string(),
+        "  push:".to_string(),
+        "  pull_request:".to_string(),
+        "".to_string(),
+        "jobs:".to_string(),
+        "  gates:".to_string(),
+        "    runs-on: ubuntu-latest".to_string(),
+        "    steps:".to_string(),
+        "      - uses: actions/checkout@v4".to_string(),
+        "      - name: fmt".to_string(),
+        "        run: cargo fmt --all -- --check".to_string(),
+        "      - name: clippy".to_string(),
+        "        run: cargo clippy --workspace --all-targets -- -D warnings".to_string(),
+        "      - name: test".to_string(),
+        "        run: cargo test --workspace".to_string(),
+        "".to_string(),
+    ];
+    workflow_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    workflow_lines.push(String::new());
+    std::fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        workflow_lines.join("\n"),
+    )
+    .context("write .github/workflows/ci.yml")?;
+
+    Ok(())
+}
+
+fn build_fixture_dataset_noise_budget(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::create_dir_all(root.join("data")).context("mkdir data")?;
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "demo-dataset-heavy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write Cargo.toml")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+    let main_body = std::iter::once("fn main() { println!(\"ok\"); }".to_string())
+        .chain((0..240).map(|idx| format!("// {idx}: {filler}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(root.join("src").join("main.rs"), main_body).context("write src/main.rs")?;
+
+    // Dataset-heavy repos should not drown MAP: only code/CI/contracts count by default.
+    let row = format!("col_a,col_b\n1,{filler}\n");
+    for idx in 0..220usize {
+        let name = format!("part_{idx:04}.csv");
+        std::fs::write(root.join("data").join(name), &row)
+            .with_context(|| format!("write data/part_{idx:04}.csv"))?;
+    }
+
+    Ok(())
+}
+
 fn build_fixture_rust_contract_broker_flow_with_prefix(
     root: &std::path::Path,
     channel_prefix: &str,
@@ -1232,6 +1326,153 @@ async fn meaning_pack_suppresses_artifact_dirs_in_map_but_emits_artifact_anchor(
         assert_ne!(
             path, "artifacts",
             "expected artifacts dir to be suppressed in S MAP (anti-noise)"
+        );
+    }
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn meaning_pack_emits_ci_anchor_and_steps_reference_ci_evidence() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    build_fixture(root.path(), "ci_only_canon_loop")?;
+
+    let service = start_mcp_server().await?;
+    let resp = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "derive canon loop from CI config",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(resp.is_error, Some(true), "meaning_pack returned error");
+
+    let text = resp
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack missing text output")?;
+    let pack = extract_cp_pack(text)?;
+    assert_meaning_invariants(&pack)?;
+
+    let dict = parse_cp_dict(&pack)?;
+
+    let ci_anchor = pack
+        .lines()
+        .find(|line| line.starts_with("ANCHOR ") && line.contains("kind=ci"))
+        .context("expected meaning_pack to emit a CI anchor")?;
+    let ci_file_id = ci_anchor
+        .split_whitespace()
+        .find_map(|tok| tok.strip_prefix("file="))
+        .context("CI anchor missing file=")?;
+    let ci_file = dict.get(ci_file_id).cloned().unwrap_or_default();
+    assert!(
+        ci_file.contains(".github/workflows/ci.yml"),
+        "expected CI anchor file to reference .github/workflows/ci.yml (got: {ci_file})"
+    );
+
+    let mut ev_for_ci: HashSet<&str> = HashSet::new();
+    for line in pack.lines() {
+        if !line.starts_with("EV ") {
+            continue;
+        }
+        let Some(ev_id) = line
+            .strip_prefix("EV ")
+            .and_then(|rest| rest.split_whitespace().next())
+        else {
+            continue;
+        };
+        let Some((file_id, _, _)) = parse_ev_file_and_range(line) else {
+            continue;
+        };
+        if file_id == ci_file_id {
+            ev_for_ci.insert(ev_id);
+        }
+    }
+    anyhow::ensure!(
+        !ev_for_ci.is_empty(),
+        "expected at least one EV line pointing to CI file"
+    );
+
+    let has_step_with_ci_evidence = pack.lines().any(|line| {
+        if !line.starts_with("STEP ") {
+            return false;
+        }
+        let Some(ev) = extract_ev_ref(line) else {
+            return false;
+        };
+        ev_for_ci.contains(ev)
+    });
+    assert!(
+        has_step_with_ci_evidence,
+        "expected at least one STEP claim to reference CI evidence"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn meaning_pack_suppresses_dataset_dirs_in_map() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    build_fixture(root.path(), "dataset_noise_budget")?;
+
+    let service = start_mcp_server().await?;
+    let resp = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "orient on code without drowning in datasets",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(resp.is_error, Some(true), "meaning_pack returned error");
+
+    let text = resp
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack missing text output")?;
+    let pack = extract_cp_pack(text)?;
+    assert_meaning_invariants(&pack)?;
+
+    let dict = parse_cp_dict(&pack)?;
+
+    let mut in_map = false;
+    for line in pack.lines() {
+        if line == "S MAP" {
+            in_map = true;
+            continue;
+        }
+        if !in_map {
+            continue;
+        }
+        if line.starts_with("S ") {
+            break;
+        }
+        if !line.starts_with("MAP ") {
+            continue;
+        }
+        let path_id = line
+            .split_whitespace()
+            .find_map(|tok| tok.strip_prefix("path="))
+            .unwrap_or("");
+        let path = dict.get(path_id).cloned().unwrap_or_default();
+        assert_ne!(
+            path, "data",
+            "expected dataset dir to be suppressed in S MAP (noise budget)"
         );
     }
 

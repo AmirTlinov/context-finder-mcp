@@ -33,6 +33,7 @@ impl BoundaryKind {
 pub(super) enum AnchorKind {
     Canon,
     HowTo,
+    Ci,
     Infra,
     Contract,
     Entrypoint,
@@ -45,6 +46,7 @@ impl AnchorKind {
         match self {
             AnchorKind::Canon => "canon",
             AnchorKind::HowTo => "howto",
+            AnchorKind::Ci => "ci",
             AnchorKind::Infra => "infra",
             AnchorKind::Contract => "contract",
             AnchorKind::Entrypoint => "entrypoint",
@@ -52,6 +54,101 @@ impl AnchorKind {
             AnchorKind::Experiment => "experiment",
         }
     }
+}
+
+pub(super) fn is_ci_config_candidate(file_lc: &str) -> bool {
+    let lc = file_lc.trim();
+    if lc.is_empty() {
+        return false;
+    }
+    let basename = lc.rsplit('/').next().unwrap_or(lc);
+
+    if basename == "jenkinsfile" {
+        return true;
+    }
+    if basename == ".gitlab-ci.yml" {
+        return true;
+    }
+    if basename == "azure-pipelines.yml" || basename == "azure-pipelines.yaml" {
+        return true;
+    }
+    if basename == "buildspec.yml" || basename == "buildspec.yaml" {
+        return true;
+    }
+
+    if (lc.starts_with(".github/workflows/") || lc.contains("/.github/workflows/"))
+        && (lc.ends_with(".yml") || lc.ends_with(".yaml"))
+    {
+        return true;
+    }
+    if (lc.starts_with(".circleci/") || lc.contains("/.circleci/")) && basename == "config.yml" {
+        return true;
+    }
+    if (lc.starts_with(".buildkite/") || lc.contains("/.buildkite/"))
+        && (lc.ends_with(".yml") || lc.ends_with(".yaml"))
+    {
+        return true;
+    }
+
+    false
+}
+
+pub(super) fn is_dataset_like_path(file_lc: &str) -> bool {
+    let lc = file_lc.trim();
+    if lc.is_empty() {
+        return false;
+    }
+    let basename = lc.rsplit('/').next().unwrap_or(lc);
+    if basename.ends_with(".jsonl") || basename.ends_with(".ndjson") {
+        return true;
+    }
+    let ext = basename.rsplit('.').next().unwrap_or("");
+    matches!(
+        ext,
+        // tabular / columnar
+        "csv" | "tsv" | "parquet" | "arrow" | "feather"
+            // numpy / scientific
+            | "npy" | "npz" | "h5" | "hdf5"
+            // DB / storage
+            | "sqlite" | "db"
+            // ML weights / checkpoints
+            | "pt" | "pth" | "ckpt" | "safetensors"
+    )
+}
+
+pub(super) fn is_binary_blob_path(file_lc: &str) -> bool {
+    let lc = file_lc.trim();
+    if lc.is_empty() {
+        return false;
+    }
+    let basename = lc.rsplit('/').next().unwrap_or(lc);
+    let ext = basename.rsplit('.').next().unwrap_or("");
+    matches!(
+        ext,
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "bmp"
+            | "ico"
+            | "pdf"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "bz2"
+            | "xz"
+            | "7z"
+            | "mp3"
+            | "wav"
+            | "mp4"
+            | "mov"
+            | "avi"
+    )
+}
+
+pub(super) fn is_code_file(file_lc: &str) -> bool {
+    is_code_file_candidate(file_lc)
 }
 
 // Artifact stores are huge by definition. We treat them as "meaning" (anchors) instead of
