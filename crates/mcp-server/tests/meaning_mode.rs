@@ -1536,6 +1536,101 @@ async fn meaning_pack_recognizes_russian_entrypoint_intent_under_tight_budget() 
 }
 
 #[tokio::test]
+async fn meaning_pack_detects_c_entrypoint_from_russian_query() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.path().join("src").join("main.c"),
+        "static void helper(void) {}\nint main(void) { helper(); return 0; }\n",
+    )
+    .context("write src/main.c")?;
+
+    let service = start_mcp_server().await?;
+    let resp = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "где точки входа?",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(resp.is_error, Some(true), "meaning_pack returned error");
+
+    let text = resp
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack missing text output")?;
+    let pack = extract_cp_pack(text)?;
+    assert_meaning_invariants(&pack)?;
+
+    anyhow::ensure!(
+        pack.contains("S ENTRYPOINTS"),
+        "expected S ENTRYPOINTS section for C entrypoint under RU query"
+    );
+    anyhow::ensure!(
+        pack.contains("src/main.c"),
+        "expected src/main.c to appear in meaning_pack output"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn meaning_focus_emits_outline_for_c_file() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.path().join("src").join("main.c"),
+        "static void helper(void) {}\nint main(void) { helper(); return 0; }\n",
+    )
+    .context("write src/main.c")?;
+
+    let service = start_mcp_server().await?;
+    let resp = call_tool(
+        &service,
+        "meaning_focus",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "focus": "src/main.c",
+            "query": "outline",
+            "max_chars": 4000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(resp.is_error, Some(true), "meaning_focus returned error");
+
+    let text = resp
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_focus missing text output")?;
+    let pack = extract_cp_pack(text)?;
+    assert_meaning_invariants(&pack)?;
+
+    anyhow::ensure!(
+        pack.contains("S OUTLINE"),
+        "expected S OUTLINE section for C file focus"
+    );
+    anyhow::ensure!(
+        pack.lines().any(|line| line.starts_with("SYM kind=fn ")),
+        "expected at least one SYM kind=fn line for C file focus"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn meaning_pack_detects_asyncapi_contract_and_event_boundary() -> Result<()> {
     let root = tempfile::tempdir().context("temp project dir")?;
     std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;

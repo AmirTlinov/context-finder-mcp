@@ -493,6 +493,10 @@ pub(super) fn entrypoint_rank(file_lc: &str) -> Option<usize> {
             | "server.js"
             | "main.ts"
             | "server.ts"
+            | "main.c"
+            | "main.cpp"
+            | "main.cc"
+            | "main.cxx"
     ) {
         return Some(0);
     }
@@ -507,6 +511,10 @@ pub(super) fn entrypoint_rank(file_lc: &str) -> Option<usize> {
             | "src/server.py"
             | "src/index.js"
             | "src/index.ts"
+            | "src/main.c"
+            | "src/main.cpp"
+            | "src/main.cc"
+            | "src/main.cxx"
     ) {
         return Some(1);
     }
@@ -519,6 +527,10 @@ pub(super) fn entrypoint_rank(file_lc: &str) -> Option<usize> {
         || file_lc.ends_with("/src/server.py")
         || file_lc.ends_with("/src/index.js")
         || file_lc.ends_with("/src/index.ts")
+        || file_lc.ends_with("/src/main.c")
+        || file_lc.ends_with("/src/main.cpp")
+        || file_lc.ends_with("/src/main.cc")
+        || file_lc.ends_with("/src/main.cxx")
     {
         return Some(2);
     }
@@ -1510,6 +1522,7 @@ pub(super) async fn extract_code_outline(root: &Path, focus_rel: &str) -> Vec<Ou
     if !is_code_file_candidate(&focus_lc) {
         return Vec::new();
     }
+    let is_c_like = is_c_like_outline_candidate(&focus_lc);
 
     let abs = root.join(focus_rel);
     let Ok(meta) = tokio::fs::metadata(&abs).await else {
@@ -1525,7 +1538,8 @@ pub(super) async fn extract_code_outline(root: &Path, focus_rel: &str) -> Vec<Ou
             include_documentation: false,
             ..ChunkerConfig::default()
         });
-        let chunks = chunker.chunk_file(abs).ok()?;
+        let abs_for_fallback = abs.clone();
+        let chunks = chunker.chunk_file(abs).unwrap_or_default();
 
         let mut seen: HashSet<String> = HashSet::new();
         let mut symbols: Vec<(u8, OutlineSymbol)> = Vec::new();
@@ -1584,7 +1598,18 @@ pub(super) async fn extract_code_outline(root: &Path, focus_rel: &str) -> Vec<Ou
             .map(|(_, s)| s)
             .take(MAX_SYMBOLS)
             .collect::<Vec<_>>();
-        Some(out)
+        if !out.is_empty() || !is_c_like {
+            return Some(out);
+        }
+
+        // Heuristic fallback for C/C++-like sources: chunker declarations may be sparse, but
+        // meaning_focus still benefits from a tiny “outline” (top functions/macros).
+        let fallback = extract_c_like_outline_fallback(&abs_for_fallback, MAX_SYMBOLS);
+        if fallback.is_empty() {
+            Some(out)
+        } else {
+            Some(fallback)
+        }
     })
     .await
     .ok()
@@ -1592,6 +1617,311 @@ pub(super) async fn extract_code_outline(root: &Path, focus_rel: &str) -> Vec<Ou
     .unwrap_or_default();
 
     outline
+}
+
+fn is_c_like_outline_candidate(path_lc: &str) -> bool {
+    let ext = path_lc.rsplit('.').next().unwrap_or("");
+    matches!(
+        ext,
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "cu"
+    )
+}
+
+fn extract_c_like_outline_fallback(
+    abs: &std::path::Path,
+    max_symbols: usize,
+) -> Vec<OutlineSymbol> {
+    let Ok(bytes) = std::fs::read(abs) else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    extract_c_like_outline_from_text(&text, max_symbols)
+}
+
+fn extract_c_like_outline_from_text(text: &str, max_symbols: usize) -> Vec<OutlineSymbol> {
+    let mut in_block_comment = false;
+    let mut cleaned_lines: Vec<String> = Vec::new();
+    for line in text.lines() {
+        cleaned_lines.push(strip_c_like_comments(line, &mut in_block_comment));
+    }
+
+    let mut out: Vec<(u8, OutlineSymbol)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    #[derive(Default)]
+    struct SigBuf {
+        start_line: usize,
+        open_idx: Option<usize>,
+        buf: String,
+    }
+
+    fn reset(sig: &mut SigBuf) {
+        sig.start_line = 0;
+        sig.open_idx = None;
+        sig.buf.clear();
+    }
+
+    fn extract_define_name(line: &str) -> Option<&str> {
+        let rest = line.strip_prefix("#define")?.trim_start();
+        if rest.is_empty() {
+            return None;
+        }
+        let mut end = 0usize;
+        let bytes = rest.as_bytes();
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        (end > 0).then(|| &rest[..end])
+    }
+
+    fn is_c_keyword(name: &str) -> bool {
+        matches!(
+            name,
+            "if" | "for"
+                | "while"
+                | "switch"
+                | "case"
+                | "return"
+                | "sizeof"
+                | "do"
+                | "goto"
+                | "break"
+                | "continue"
+                | "else"
+        )
+    }
+
+    fn extract_fn_name(sig: &str) -> Option<String> {
+        let flat = sig.replace('\n', " ");
+        let paren = flat.find('(')?;
+        let before = flat[..paren].trim_end();
+        if before.is_empty() {
+            return None;
+        }
+
+        let bytes = before.as_bytes();
+        let mut end = bytes.len();
+        while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        if end == 0 {
+            return None;
+        }
+        let mut start = end;
+        while start > 0 {
+            let b = bytes[start - 1];
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        if start >= end {
+            return None;
+        }
+        let name = &before[start..end];
+        if name.is_empty() || is_c_keyword(name) {
+            return None;
+        }
+        Some(name.to_string())
+    }
+
+    fn find_block_end_line(cleaned_lines: &[String], open_idx: usize) -> usize {
+        let mut depth: i32 = 0;
+        let mut started = false;
+        for (idx, line) in cleaned_lines.iter().enumerate().skip(open_idx) {
+            for ch in line.chars() {
+                if ch == '{' {
+                    depth += 1;
+                    started = true;
+                } else if ch == '}' && started {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return idx + 1;
+                    }
+                }
+            }
+        }
+        open_idx + 1
+    }
+
+    let mut sig = SigBuf::default();
+    for (idx, line) in cleaned_lines.iter().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if sig.start_line == 0 {
+            if let Some(name) = extract_define_name(trimmed) {
+                let key = format!("macro:{line_no}:{name}");
+                if seen.insert(key) {
+                    out.push((
+                        40,
+                        OutlineSymbol {
+                            kind: "macro",
+                            name: name.to_string(),
+                            start_line: line_no,
+                            end_line: line_no,
+                            confidence: 0.7,
+                        },
+                    ));
+                }
+                continue;
+            }
+            if trimmed.starts_with('#') {
+                continue;
+            }
+
+            // Start accumulating a possible function signature (multi-line).
+            if trimmed.contains('(') {
+                sig.start_line = line_no;
+                sig.open_idx = trimmed.contains('{').then_some(idx);
+                sig.buf.clear();
+                sig.buf.push_str(trimmed);
+                sig.buf.push('\n');
+            }
+        } else {
+            sig.buf.push_str(trimmed);
+            sig.buf.push('\n');
+            if sig.open_idx.is_none() && trimmed.contains('{') {
+                sig.open_idx = Some(idx);
+            }
+        }
+
+        if sig.start_line == 0 {
+            continue;
+        }
+
+        // Safety caps: avoid pathological captures (e.g., a giant macro block).
+        if sig.buf.len() > 8_000 || line_no.saturating_sub(sig.start_line) > 32 {
+            reset(&mut sig);
+            continue;
+        }
+
+        // Prototype (ends with ';' before '{') — ignore and reset.
+        if sig.open_idx.is_none() && sig.buf.contains(';') {
+            reset(&mut sig);
+            continue;
+        }
+
+        let Some(open_idx) = sig.open_idx else {
+            continue;
+        };
+        let Some(name) = extract_fn_name(&sig.buf) else {
+            reset(&mut sig);
+            continue;
+        };
+        if is_c_keyword(&name) {
+            reset(&mut sig);
+            continue;
+        }
+
+        let end_line = find_block_end_line(&cleaned_lines, open_idx).max(sig.start_line);
+        let key = format!("fn:{}:{}:{}", sig.start_line, end_line, name);
+        if seen.insert(key) {
+            out.push((
+                100,
+                OutlineSymbol {
+                    kind: "fn",
+                    name,
+                    start_line: sig.start_line,
+                    end_line,
+                    confidence: 0.82,
+                },
+            ));
+        }
+        reset(&mut sig);
+    }
+
+    out.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.start_line.cmp(&b.1.start_line))
+            .then_with(|| a.1.name.cmp(&b.1.name))
+    });
+    out.into_iter()
+        .map(|(_, s)| s)
+        .take(max_symbols.max(1))
+        .collect()
+}
+
+fn strip_c_like_comments(line: &str, in_block_comment: &mut bool) -> String {
+    let mut out = String::new();
+    let mut chars = line.chars().peekable();
+    let mut in_string = false;
+    let mut in_char = false;
+
+    while let Some(ch) = chars.next() {
+        if *in_block_comment {
+            if ch == '*' {
+                if let Some('/') = chars.peek().copied() {
+                    chars.next();
+                    *in_block_comment = false;
+                }
+            }
+            continue;
+        }
+
+        if in_string {
+            out.push(ch);
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if in_char {
+            out.push(ch);
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+                continue;
+            }
+            if ch == '\'' {
+                in_char = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+        if ch == '\'' {
+            in_char = true;
+            out.push(ch);
+            continue;
+        }
+
+        if ch == '/' {
+            match chars.peek().copied() {
+                Some('/') => break,
+                Some('*') => {
+                    chars.next();
+                    *in_block_comment = true;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        out.push(ch);
+    }
+
+    out
 }
 
 #[derive(Default)]
