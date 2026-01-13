@@ -512,6 +512,20 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
     });
     let default_root = compute_proxy_default_root();
 
+    // Hot-reload ergonomics:
+    //
+    // Agents often rebuild the `context-mcp` binary in-place (same path) without restarting the MCP
+    // session. The long-lived shared daemon keeps running the old code, and the change looks like
+    // "it didn't update" until someone manually restarts processes.
+    //
+    // Agent-native behavior: detect an in-place binary update (mtime change) and proactively reset
+    // the daemon transport so the next tool call re-validates and (if needed) restarts the daemon.
+    // We only do this when there are no in-flight requests to avoid breaking active tool calls.
+    let mut last_exe_mtime_ms = current_exe_mtime_ms();
+    let mut hot_restart_pending = false;
+    let mut hot_restart_watch = tokio::time::interval(Duration::from_millis(500));
+    hot_restart_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     let mut client_closed = false;
 
     #[derive(Default)]
@@ -834,6 +848,20 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
                             }
                         }
                         None => LoopStep::ResetDaemon,
+                    }
+                }
+                _ = hot_restart_watch.tick() => {
+                    let current = current_exe_mtime_ms();
+                    if current > last_exe_mtime_ms {
+                        last_exe_mtime_ms = current;
+                        hot_restart_pending = true;
+                    }
+
+                    if hot_restart_pending && session.pending_request_ids.is_empty() {
+                        hot_restart_pending = false;
+                        LoopStep::ResetDaemon
+                    } else {
+                        LoopStep::Continue
                     }
                 }
             }
@@ -1224,6 +1252,14 @@ fn system_time_to_unix_ms(value: std::time::SystemTime) -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|d| d.as_millis() as u64)
+}
+
+fn current_exe_mtime_ms() -> u64 {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .and_then(system_time_to_unix_ms)
+        .unwrap_or(0)
 }
 
 async fn should_restart_running_daemon(socket: &Path) -> bool {

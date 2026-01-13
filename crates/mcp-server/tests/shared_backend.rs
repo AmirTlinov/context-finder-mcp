@@ -7,6 +7,20 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::Command;
 
+#[cfg(unix)]
+fn touch_file_now(path: &Path) -> Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes()).context("path contains NUL")?;
+    let rc = unsafe { libc::utimes(c_path.as_ptr(), std::ptr::null()) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("utimes({})", path.display()));
+    }
+    Ok(())
+}
+
 fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
     if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
         return Ok(PathBuf::from(path));
@@ -731,6 +745,148 @@ async fn shared_backend_sessions_do_not_share_default_root() -> Result<()> {
             .map(|t| t.text.as_str())
             .context("missing file_slice B (no path) text content")?;
         assert!(text_b2.contains("\nbeta\n"));
+
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    daemon.start_kill().ok();
+    let _ = daemon.wait().await;
+
+    outcome
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_update() -> Result<()>
+{
+    let original_bin = locate_context_finder_mcp_bin()?;
+
+    let bin_dir = tempfile::tempdir().context("tempdir for binary copy")?;
+    let bin = bin_dir.path().join("context-finder-mcp");
+    std::fs::copy(&original_bin, &bin).context("copy mcp binary for hot-reload test")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&bin)
+            .context("stat copied binary")?
+            .permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(&bin, perms).context("ensure copied binary is executable")?;
+    }
+
+    let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
+    let socket = socket_dir.path().join("mcp.sock");
+    let pid_path = socket.with_extension("pid");
+
+    let mut daemon_cmd = Command::new(&bin);
+    daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
+    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.stdin(std::process::Stdio::null());
+    daemon_cmd.stdout(std::process::Stdio::null());
+    daemon_cmd.stderr(std::process::Stdio::null());
+    let mut daemon = daemon_cmd.spawn().context("spawn mcp daemon")?;
+
+    let outcome = async {
+        wait_for_socket(&socket).await?;
+
+        let service = spawn_shared_proxy_allow_daemon_spawn(&bin, &socket, None).await?;
+
+        let tmp = tempfile::tempdir().context("temp project dir")?;
+        let root = tmp.path();
+        std::fs::write(root.join("README.md"), "hello\nworld\n").context("write README.md")?;
+
+        let args = serde_json::json!({
+            "path": root.to_string_lossy(),
+            "file": "README.md",
+            "max_lines": 1,
+            "max_chars": 2048,
+        });
+
+        // Establish the initial session.
+        let resp1 = tokio::time::timeout(
+            Duration::from_secs(10),
+            service.call_tool(CallToolRequestParam {
+                name: "file_slice".into(),
+                arguments: args.as_object().cloned(),
+            }),
+        )
+        .await
+        .context("timeout calling file_slice (before hot reload)")??;
+        let text1 = resp1
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .context("missing file_slice (before hot reload) text content")?;
+        assert!(text1.contains("\nhello\n"));
+        assert!(!text1.contains("world"));
+
+        let pid_bytes = tokio::fs::read(&pid_path)
+            .await
+            .with_context(|| format!("read daemon pid file at {}", pid_path.display()))?;
+        let pid_json: Value =
+            serde_json::from_slice(&pid_bytes).context("parse daemon pid JSON")?;
+        let old_pid = pid_json
+            .get("pid")
+            .and_then(Value::as_u64)
+            .context("pid file missing pid")?;
+
+        // Simulate an in-place rebuild: touch the binary file (mtime change).
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        #[cfg(unix)]
+        touch_file_now(&bin).context("touch binary to simulate rebuild")?;
+
+        // Give the proxy watch loop time to detect the change and reset the daemon transport.
+        tokio::time::sleep(Duration::from_millis(800)).await;
+
+        // Next call should succeed and should have gone through a daemon restart.
+        let resp2 = tokio::time::timeout(
+            Duration::from_secs(10),
+            service.call_tool(CallToolRequestParam {
+                name: "file_slice".into(),
+                arguments: args.as_object().cloned(),
+            }),
+        )
+        .await
+        .context("timeout calling file_slice (after hot reload)")??;
+        let text2 = resp2
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .context("missing file_slice (after hot reload) text content")?;
+        assert!(text2.contains("\nhello\n"));
+        assert!(!text2.contains("world"));
+
+        let new_pid_bytes = tokio::fs::read(&pid_path)
+            .await
+            .with_context(|| format!("read updated daemon pid file at {}", pid_path.display()))?;
+        let new_pid_json: Value =
+            serde_json::from_slice(&new_pid_bytes).context("parse updated daemon pid JSON")?;
+        let new_pid = new_pid_json
+            .get("pid")
+            .and_then(Value::as_u64)
+            .context("updated pid file missing pid")?;
+        assert_ne!(
+            old_pid, new_pid,
+            "expected proxy to restart daemon after in-place binary update"
+        );
+
+        service.cancel().await.context("shutdown proxy service")?;
+
+        // Cleanup: if the proxy spawned a daemon, terminate it via pid file.
+        if let Ok(bytes) = tokio::fs::read(&pid_path).await {
+            if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                if let Some(pid) = value.get("pid").and_then(Value::as_u64) {
+                    unsafe {
+                        let _ = libc::kill(pid as i32, libc::SIGKILL);
+                    }
+                }
+            }
+        }
 
         Ok::<(), anyhow::Error>(())
     }
