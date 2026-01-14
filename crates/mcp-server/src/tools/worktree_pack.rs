@@ -1,6 +1,7 @@
 use anyhow::{Context as AnyhowContext, Result};
 use context_indexer::ToolMeta;
 use context_protocol::ToolNextAction;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
@@ -216,6 +217,9 @@ async fn git_dirty_paths(worktree: &Path, limit: usize) -> Option<Vec<String>> {
         } else {
             rest
         };
+        if path == ".worktrees" || path.starts_with(".worktrees/") {
+            continue;
+        }
         if !path.is_empty() {
             paths.push(path.to_string());
         }
@@ -320,6 +324,7 @@ fn ev_to_pointer(ev: &Cpv1EvidencePointer) -> EvidencePointer {
 async fn compute_worktree_purpose_summary(
     worktree_root: &Path,
     worktree_display: &str,
+    dirty_paths: Option<&[String]>,
 ) -> Option<WorktreePurposeSummary> {
     if !worktree_root.is_dir() {
         return None;
@@ -372,6 +377,190 @@ async fn compute_worktree_purpose_summary(
         })
         .collect();
 
+    fn area_kind_rank(kind: &str) -> usize {
+        match kind {
+            "interfaces" => 0,
+            "core" => 1,
+            "ci" => 2,
+            "docs" => 3,
+            "tooling" => 4,
+            "infra" => 5,
+            "outputs" => 6,
+            "experiments" => 7,
+            _ => 99,
+        }
+    }
+
+    let mut touched_areas: Vec<String> = Vec::new();
+    if let Some(dirty_paths) = dirty_paths {
+        if !dirty_paths.is_empty() {
+            fn classify_dirty_path(path: &str) -> Option<&'static str> {
+                let lc = path.trim().to_ascii_lowercase();
+                if lc.is_empty() {
+                    return None;
+                }
+
+                // Worktree stores are workspace noise; don't let them claim a zone.
+                if lc == ".worktrees" || lc.starts_with(".worktrees/") {
+                    return None;
+                }
+
+                // Contracts/protocols are the most important "what changed" signal.
+                let basename = lc.rsplit('/').next().unwrap_or(lc.as_str());
+                let is_contract_like_ext = lc.ends_with(".proto")
+                    || lc.ends_with(".avsc")
+                    || lc.ends_with(".yaml")
+                    || lc.ends_with(".yml")
+                    || lc.ends_with(".json")
+                    || lc.ends_with(".toml")
+                    || lc.ends_with(".md")
+                    || lc.ends_with(".rst")
+                    || lc.ends_with(".txt");
+                let is_contract_dir = lc.starts_with("contracts/")
+                    || lc.starts_with("proto/")
+                    || lc.starts_with("docs/contracts/")
+                    || lc.starts_with("docs/contract/")
+                    || lc.starts_with("docs/spec/")
+                    || lc.starts_with("docs/specs/")
+                    || lc.starts_with("docs/protocol/")
+                    || lc.starts_with("docs/protocols/")
+                    || lc.contains("/contracts/")
+                    || lc.contains("/contract/")
+                    || lc.contains("/schemas/")
+                    || lc.contains("/schema/")
+                    || lc.contains("/specs/")
+                    || lc.contains("/spec/")
+                    || lc.contains("/protocols/")
+                    || lc.contains("/protocol/");
+                if is_contract_dir
+                    && is_contract_like_ext
+                    && !matches!(
+                        basename,
+                        "readme.md" | "readme.rst" | "readme.txt" | "index.md"
+                    )
+                {
+                    return Some("interfaces");
+                }
+                if basename == ".gitlab-ci.yml"
+                    || basename == "jenkinsfile"
+                    || lc.starts_with(".github/workflows/")
+                {
+                    return Some("ci");
+                }
+                if lc.starts_with("k8s/")
+                    || lc.contains("/k8s/")
+                    || lc.starts_with("kubernetes/")
+                    || lc.contains("/kubernetes/")
+                    || lc.starts_with("manifests/")
+                    || lc.contains("/manifests/")
+                    || lc.starts_with("gitops/")
+                    || lc.contains("/gitops/")
+                    || lc.starts_with("infra/")
+                    || lc.contains("/infra/")
+                    || lc.contains("/terraform/")
+                    || lc.starts_with("terraform/")
+                    || lc.contains("/charts/")
+                    || lc.starts_with("charts/")
+                {
+                    return Some("infra");
+                }
+
+                // Artifacts/outputs (research + ML repos).
+                let first = lc.split('/').next().unwrap_or("").trim();
+                if matches!(
+                    first,
+                    "artifacts"
+                        | "artifact"
+                        | "results"
+                        | "runs"
+                        | "outputs"
+                        | "output"
+                        | "checkpoints"
+                        | "checkpoint"
+                        | "data"
+                        | "dataset"
+                        | "datasets"
+                        | "corpus"
+                        | "corpora"
+                        | "weights"
+                ) {
+                    return Some("outputs");
+                }
+
+                if lc.starts_with("experiments/")
+                    || lc.starts_with("experiment/")
+                    || lc.starts_with("baselines/")
+                    || lc.starts_with("baseline/")
+                    || lc.starts_with("bench/")
+                    || lc.starts_with("benches/")
+                    || lc.contains("/eval/")
+                    || lc.contains("/evaluation/")
+                    || lc.contains("/analysis/")
+                    || lc.contains("/notebooks/")
+                {
+                    return Some("experiments");
+                }
+
+                if basename == "makefile"
+                    || basename == "justfile"
+                    || basename == "cargo.toml"
+                    || basename == "package.json"
+                    || basename == "pyproject.toml"
+                    || lc.starts_with("scripts/")
+                {
+                    return Some("tooling");
+                }
+
+                // Code files (best-effort, extensions only to keep it cheap).
+                if matches!(
+                    lc.rsplit('.').next().unwrap_or(""),
+                    "rs" | "py"
+                        | "js"
+                        | "ts"
+                        | "tsx"
+                        | "go"
+                        | "java"
+                        | "kt"
+                        | "c"
+                        | "cc"
+                        | "cpp"
+                        | "cxx"
+                        | "h"
+                        | "hpp"
+                        | "cs"
+                        | "rb"
+                        | "php"
+                        | "swift"
+                ) {
+                    return Some("core");
+                }
+
+                if lc.starts_with("docs/")
+                    || matches!(lc.rsplit('.').next().unwrap_or(""), "md" | "rst" | "txt")
+                {
+                    return Some("docs");
+                }
+
+                None
+            }
+
+            let mut touched: HashSet<&'static str> = HashSet::new();
+            for dirty in dirty_paths {
+                if let Some(kind) = classify_dirty_path(dirty) {
+                    touched.insert(kind);
+                }
+            }
+
+            let mut rendered = touched.into_iter().collect::<Vec<_>>();
+            rendered.sort_by(|a, b| area_kind_rank(a).cmp(&area_kind_rank(b)).then(a.cmp(b)));
+            touched_areas = rendered
+                .into_iter()
+                .take(5)
+                .map(|v| v.to_string())
+                .collect();
+        }
+    }
+
     if canon.is_empty() && anchors.is_empty() {
         return None;
     }
@@ -379,6 +568,7 @@ async fn compute_worktree_purpose_summary(
     Some(WorktreePurposeSummary {
         canon,
         anchors,
+        touched_areas,
         meaning_truncated: Some(engine.budget.truncated),
     })
 }
@@ -451,6 +641,12 @@ fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
                 .join("; ");
             if !rendered.trim().is_empty() {
                 lines.push(format!("  anchors: {rendered}"));
+            }
+        }
+        if !purpose.touched_areas.is_empty() {
+            let rendered = purpose.touched_areas.join("; ");
+            if !rendered.trim().is_empty() {
+                lines.push(format!("  touches: {rendered}"));
             }
         }
         if purpose.meaning_truncated.unwrap_or(false) {
@@ -609,7 +805,12 @@ pub(super) async fn compute_worktree_pack_result(
                 break;
             }
             let worktree_root = Path::new(&wt.path);
-            wt.purpose = compute_worktree_purpose_summary(worktree_root, wt.path.as_str()).await;
+            wt.purpose = compute_worktree_purpose_summary(
+                worktree_root,
+                wt.path.as_str(),
+                wt.dirty_paths.as_deref(),
+            )
+            .await;
         }
 
         // Budget guard: if purpose summaries blow the `.context` budget, drop them from the tail.

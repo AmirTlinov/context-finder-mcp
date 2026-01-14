@@ -233,7 +233,9 @@ jobs:
         ],
     )
     .await?;
-    std::fs::write(w1.join("WIP.txt"), "wip\n").context("write worktree WIP")?;
+    // Touch a contracts/protocol-like area so the purpose summary can surface "touched" zones.
+    std::fs::write(w1.join("docs").join("contracts").join("WIP.md"), "wip\n")
+        .context("write worktree WIP")?;
 
     let service = start_mcp_server().await?;
     let text = call_tool_text(
@@ -262,6 +264,10 @@ jobs:
     assert!(
         text.contains("anchors:") && text.contains("ci="),
         "expected purpose anchors to be rendered (got: {text})"
+    );
+    assert!(
+        text.contains("touches:") && text.contains("interfaces"),
+        "expected purpose touched areas to mention interfaces (got: {text})"
     );
     assert!(
         text.contains("next_actions:")

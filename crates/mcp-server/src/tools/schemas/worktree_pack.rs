@@ -95,6 +95,13 @@ pub struct WorktreePurposeSummary {
     /// High-signal anchors (CI/contracts/entrypoints/artifacts...). Bounded.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub anchors: Vec<WorktreePurposeAnchor>,
+    /// Meaning zones “touched” by the worktree's dirty paths (best-effort, bounded).
+    ///
+    /// This is a product UX hint to quickly scan what a worktree is working on (e.g. interfaces,
+    /// CI, core code). It is derived from git status + meaning zones; use `evidence_fetch` to
+    /// verify underlying anchors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub touched_areas: Vec<String>,
     /// Whether the underlying meaning extraction was truncated (budget).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meaning_truncated: Option<bool>,

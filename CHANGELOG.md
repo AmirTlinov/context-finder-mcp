@@ -32,6 +32,10 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Worktree atlas: in `response_mode=full`, `worktree_pack` now includes a bounded, evidence-backed
   purpose summary per worktree (canon loop + anchors like CI/contracts) and suggests an
   `evidence_fetch` follow-up for quick verification.
+- Worktree atlas: purpose summaries now also include `touched_areas` (best-effort zones derived from
+  dirty paths, like `interfaces`/`ci`/`core`) so an agent can scan “what this branch is about”.
+- Worktree atlas: suppress `.worktrees/` from dirty path samples (worktree storage is workspace
+  noise, not a meaningful repo change).
 - Worktree atlas: improve large-repo behavior by increasing the internal meaning budget used for
   purpose summaries (prevents “dict-only truncation” that could suppress canon/anchor signals).
 - Meaning canon extraction: avoid false positives where `checkout` matched `check`, which could
