@@ -27,7 +27,11 @@ Real-repo runs are not required for CI to keep the loop fast and offline-friendl
 
 ## 2) Golden datasets (`datasets/*.json`)
 
-### Format
+### 2.1) Retrieval datasets (CLI eval)
+
+These datasets measure retrieval quality (search/ranking) and are used by the CLI `eval` commands.
+
+#### Format
 
 Datasets are JSON files with schema version `1`:
 
@@ -41,11 +45,36 @@ Datasets are used by:
 
 - CLI: `context-finder eval` and `context-finder eval-compare`
 
-### Philosophy
+#### Philosophy
 
 Golden datasets are for **positive** retrieval: they must specify expected paths.
 Negative behaviors (e.g. “must not return unrelated hits”) are validated via **tests**
 because they require richer assertions than “path must appear”.
+
+### 2.2) Meaning-mode datasets (CP quality)
+
+Meaning-mode is evaluated separately because its output is not a ranked list — it is a bounded,
+evidence-backed “orientation pack” (Cognitive Pack / CP).
+
+We gate meaning-mode quality in CI using:
+
+- Dataset: `datasets/meaning_stub_smoke.json`
+- Runner: `crates/mcp-server/tests/meaning_mode.rs` (under `cargo test`, stub mode)
+
+Each case builds a small synthetic repo fixture and validates that the meaning output stays:
+
+- **high-signal** (expected anchors/zones appear),
+- **low-noise** (generated/dataset trees do not dominate the map),
+- **token-efficient** (`min_token_saved` thresholds),
+- and **stable under truncation** (boundedness and degradation rules).
+
+Meaning dataset fields are intentionally richer than retrieval datasets:
+
+- `expect_paths`: must appear in the CP
+- `expect_claims`: expected CP “claim” kinds (e.g. `ENTRY`, `CONTRACT`, `AREA`, `STEP`)
+- `expect_anchor_kinds`: expected anchor categories (e.g. `ci`, `contract`, `canon`)
+- `forbid_map_paths`: paths that must not appear in the CP map (noise budget)
+- `min_token_saved`: minimum `token_saved` ratio (prevents “quality by flooding”)
 
 ## 3) Metrics we gate
 
@@ -60,6 +89,12 @@ For premium reliability (see `docs/QUALITY_CHARTER.md`), we also track:
 - wrong-root rate (must be 0)
 - anchorless-hit rate (should trend to 0 for anchored queries)
 - fallback-rate (should be explainable, not chaotic)
+
+For meaning-mode specifically, we also gate:
+
+- anchor recall by category (CI/contracts/canon/entrypoints)
+- map noise suppression (generated/dataset/binary “mass” must not win)
+- token efficiency (`token_saved` floors on the stub zoo)
 
 ## 4) CI gates (required)
 
@@ -80,4 +115,3 @@ When you add a new feature or fix a bug:
 2) Add/adjust a focused test (if it’s a negative/edge-case behavior).
 3) Make the smallest implementation change that fixes root cause.
 4) Ensure CI gates remain green.
-

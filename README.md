@@ -10,6 +10,8 @@ If you’re tired of “search → open file → search again → maybe the righ
 - Install + run + integrations: `docs/QUICK_START.md`
 - The UX/product goals: `PHILOSOPHY.md`
 - Premium quality gates (prevents regressions): `docs/QUALITY_CHARTER.md`
+- How we ship without breaking trust: `docs/RELEASE_TRAIN.md`
+- Behavioral deltas by release: `CHANGELOG.md`
 
 ## Agent UX: “project memory” (the whole point)
 

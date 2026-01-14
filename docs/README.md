@@ -17,6 +17,8 @@ If you are integrating Context programmatically, treat the **contracts** as the 
 - [USAGE_EXAMPLES.md](../USAGE_EXAMPLES.md) — agent-first workflows (best defaults and patterns)
 - [docs/QUALITY_CHARTER.md](QUALITY_CHARTER.md) — premium-quality invariants, SLOs, and release gates (prevents regressions)
 - [docs/EVALUATION.md](EVALUATION.md) — evaluation loop, metrics, and how we prevent quality regressions
+- [CHANGELOG.md](../CHANGELOG.md) — behavioral deltas by release (optimized for agent-first tooling)
+- [docs/RELEASE_TRAIN.md](RELEASE_TRAIN.md) — contracts-first delivery and “how we ship without breaking trust”
 - [docs/ARCHITECTURE.md](ARCHITECTURE.md) — crate map + data flow + on-disk layout
 - [PHILOSOPHY.md](../PHILOSOPHY.md) — why the project is contract-first and agent-first
 

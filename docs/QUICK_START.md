@@ -62,6 +62,9 @@ Suggested “semantic zoom” flow:
 2) (optional) `meaning_focus` when you need to zoom in on a specific area before reading.
 3) `evidence_fetch` only for the specific EV pointers you need to verify or implement changes.
 
+Note: to surface the actionable `next_actions` guidance in MCP `.context`, use `response_mode=full`.
+Default modes (`facts` / `minimal`) stay intentionally low-noise and omit these hints.
+
 ### Multi-session safety
 
 When you have multiple agent sessions (or multiple repos open at once), prefer explicit roots:
