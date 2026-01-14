@@ -111,6 +111,9 @@ async fn worktree_pack_lists_git_worktrees_and_branch_hints() -> Result<()> {
     git(root, &["init"]).await?;
     git(root, &["config", "user.email", "test@example.com"]).await?;
     git(root, &["config", "user.name", "Test"]).await?;
+    // Force untracked entries to collapse into directories (matches many real-world configs),
+    // so `dirty_paths` can contain `contracts/` instead of `contracts/WIP.md`.
+    git(root, &["config", "status.showUntrackedFiles", "normal"]).await?;
 
     std::fs::write(root.join("README.md"), "root\n").context("write README")?;
     git(root, &["add", "README.md"]).await?;
@@ -234,8 +237,9 @@ jobs:
     )
     .await?;
     // Touch a contracts/protocol-like area so the purpose summary can surface "touched" zones.
-    std::fs::write(w1.join("docs").join("contracts").join("WIP.md"), "wip\n")
-        .context("write worktree WIP")?;
+    // Use an untracked contracts directory to exercise directory-style `dirty_paths` (e.g. `contracts/`).
+    std::fs::create_dir_all(w1.join("contracts")).context("mkdir worktree contracts")?;
+    std::fs::write(w1.join("contracts").join("WIP.md"), "wip\n").context("write worktree WIP")?;
 
     let service = start_mcp_server().await?;
     let text = call_tool_text(

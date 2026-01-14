@@ -407,6 +407,7 @@ async fn compute_worktree_purpose_summary(
 
                 // Contracts/protocols are the most important "what changed" signal.
                 let basename = lc.rsplit('/').next().unwrap_or(lc.as_str());
+                let is_dir_marker = lc.ends_with('/') || basename.is_empty();
                 let is_contract_like_ext = lc.ends_with(".proto")
                     || lc.ends_with(".avsc")
                     || lc.ends_with(".yaml")
@@ -433,7 +434,7 @@ async fn compute_worktree_purpose_summary(
                     || lc.contains("/protocols/")
                     || lc.contains("/protocol/");
                 if is_contract_dir
-                    && is_contract_like_ext
+                    && (is_contract_like_ext || is_dir_marker)
                     && !matches!(
                         basename,
                         "readme.md" | "readme.rst" | "readme.txt" | "index.md"
