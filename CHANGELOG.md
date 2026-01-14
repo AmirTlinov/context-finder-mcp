@@ -39,6 +39,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   dirty paths, like `interfaces`/`ci`/`core`) so an agent can scan “what this branch is about”.
 - Worktree atlas: `touched_areas` now correctly treats untracked directory entries (e.g. `contracts/`)
   as a zone signal (common when `status.showUntrackedFiles=normal`).
+- Worktree atlas: `touched_areas` is now also derived from committed branch diffs vs a best-effort
+  base ref (e.g. `main`), so clean feature branches still show “what they’re about”.
 - Worktree atlas: suppress `.worktrees/` from dirty path samples (worktree storage is workspace
   noise, not a meaningful repo change).
 - Worktree atlas: improve large-repo behavior by increasing the internal meaning budget used for

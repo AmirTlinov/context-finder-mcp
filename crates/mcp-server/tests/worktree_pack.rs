@@ -281,3 +281,97 @@ jobs:
 
     Ok(())
 }
+
+#[tokio::test]
+async fn worktree_pack_full_touches_clean_branch_diff() -> Result<()> {
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    git(root, &["init"]).await?;
+    git(root, &["config", "user.email", "test@example.com"]).await?;
+    git(root, &["config", "user.name", "Test"]).await?;
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::create_dir_all(root.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "demo-worktree-diff"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write Cargo.toml")?;
+    std::fs::write(root.join("src").join("main.rs"), "fn main() {}\n").context("write main")?;
+    std::fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        "name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo test --workspace\n",
+    )
+    .context("write ci.yml")?;
+
+    git(root, &["add", "."]).await?;
+    git(root, &["commit", "-m", "init"]).await?;
+    let _ = git(root, &["branch", "-M", "main"]).await;
+
+    let w1 = root.join(".worktrees").join("w1");
+    git(
+        root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature-w1",
+            w1.to_string_lossy().as_ref(),
+        ],
+    )
+    .await?;
+
+    std::fs::create_dir_all(w1.join("contracts")).context("mkdir contracts")?;
+    std::fs::write(w1.join("contracts").join("WIP.md"), "wip\n").context("write WIP")?;
+    git(&w1, &["add", "."]).await?;
+    git(&w1, &["commit", "-m", "contracts: wip"]).await?;
+
+    let service = start_mcp_server().await?;
+    let text = call_tool_text(
+        &service,
+        "worktree_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "response_mode": "full",
+            "max_chars": 6000
+        }),
+    )
+    .await?;
+
+    let mut w1_header: Option<String> = None;
+    let mut w1_touches_interfaces = false;
+    let mut in_w1 = false;
+    for line in text.lines() {
+        if line.starts_with("WT ") {
+            in_w1 = line.contains(".worktrees/w1") || line.contains(".worktrees\\w1");
+            if in_w1 {
+                w1_header = Some(line.to_string());
+            }
+            continue;
+        }
+        if in_w1 && line.trim_start().starts_with("touches:") && line.contains("interfaces") {
+            w1_touches_interfaces = true;
+        }
+    }
+
+    let w1_header = w1_header.context("failed to find worktree w1 header")?;
+    assert!(
+        w1_header.contains("dirty=0"),
+        "expected w1 to be clean (got header: {w1_header})"
+    );
+    assert!(
+        w1_touches_interfaces,
+        "expected w1 touches to include interfaces from committed diff (got: {text})"
+    );
+
+    Ok(())
+}
