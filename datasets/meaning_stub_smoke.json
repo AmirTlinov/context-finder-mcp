@@ -172,6 +172,18 @@
       "min_token_saved": 0.75
     },
     {
+      "id": "polyglot_monorepo_ci_contracts",
+      "fixture": "polyglot_monorepo_ci_contracts",
+      "query": "orient on canon loop, CI gates, and contracts in a polyglot monorepo",
+      "expect_paths": [
+        ".github/workflows/ci.yml",
+        "contracts/openapi.yaml"
+      ],
+      "expect_claims": ["ANCHOR", "STEP"],
+      "expect_anchor_kinds": ["ci", "contract"],
+      "min_token_saved": 0.75
+    },
+    {
       "id": "generated_noise_budget",
       "fixture": "generated_noise_budget",
       "query": "orient on entrypoints without drowning in generated output",

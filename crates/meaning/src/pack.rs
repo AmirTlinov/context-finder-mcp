@@ -371,6 +371,7 @@ fn should_suppress_from_map(file_lc: &str, bytes: u64) -> bool {
         "out/",
         ".cache/",
         ".venv/",
+        ".worktrees/",
         ".mypy_cache/",
         ".pytest_cache/",
         ".ruff_cache/",
@@ -875,28 +876,6 @@ pub async fn meaning_pack(
         }
     }
 
-    let output_areas: Vec<&EmittedArea> = areas
-        .iter()
-        .filter(|area| matches!(area.kind, "outputs" | "interfaces"))
-        .collect();
-    if !output_areas.is_empty() {
-        cp.push_line("S OUTPUTS");
-        for area in output_areas {
-            let label_d = cp.dict_id(&area.label);
-            let path_d = cp.dict_id(&area.path);
-            let conf = format!("{:.2}", area.confidence.clamp(0.0, 1.0));
-            let ev = area
-                .ev_id
-                .as_deref()
-                .map(|id| format!(" ev={id}"))
-                .unwrap_or_default();
-            cp.push_line(&format!(
-                "AREA kind={} label={label_d} path={path_d} conf={conf}{ev}",
-                area.kind
-            ));
-        }
-    }
-
     cp.push_line("S MAP");
     for area in areas
         .iter()
@@ -918,6 +897,30 @@ pub async fn meaning_pack(
     for (path, files) in &map_rows {
         let d = cp.dict_id(path);
         cp.push_line(&format!("MAP path={d} files={files}"));
+    }
+
+    // Keep OUTPUTS after the general map: under tight budgets, we prefer preserving the
+    // repo-wide sense map (docs/tooling/ci/core) longer than artifact-heavy areas.
+    let output_areas: Vec<&EmittedArea> = areas
+        .iter()
+        .filter(|area| matches!(area.kind, "outputs" | "interfaces"))
+        .collect();
+    if !output_areas.is_empty() {
+        cp.push_line("S OUTPUTS");
+        for area in output_areas {
+            let label_d = cp.dict_id(&area.label);
+            let path_d = cp.dict_id(&area.path);
+            let conf = format!("{:.2}", area.confidence.clamp(0.0, 1.0));
+            let ev = area
+                .ev_id
+                .as_deref()
+                .map(|id| format!(" ev={id}"))
+                .unwrap_or_default();
+            cp.push_line(&format!(
+                "AREA kind={} label={label_d} path={path_d} conf={conf}{ev}",
+                area.kind
+            ));
+        }
     }
 
     if !emitted_entrypoints.is_empty() {

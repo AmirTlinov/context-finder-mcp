@@ -263,6 +263,7 @@ fn build_fixture(root: &std::path::Path, fixture: &str) -> Result<()> {
         "ci_only_canon_loop" => build_fixture_ci_only_canon_loop(root),
         "dataset_noise_budget" => build_fixture_dataset_noise_budget(root),
         "monorepo_rust_workspace" => build_fixture_monorepo_rust_workspace(root),
+        "polyglot_monorepo_ci_contracts" => build_fixture_polyglot_monorepo_ci_contracts(root),
         "no_docs_contracts_and_ci" => build_fixture_no_docs_contracts_and_ci(root),
         "generated_noise_budget" => build_fixture_generated_noise_budget(root),
         _ => anyhow::bail!("Unknown meaning eval fixture '{fixture}'"),
@@ -1080,6 +1081,126 @@ demo-lib = { path = "../lib" }
         "".to_string(),
     ];
     workflow_lines.extend((0..200).map(|idx| format!("# {idx}: {filler}")));
+    workflow_lines.push(String::new());
+    std::fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        workflow_lines.join("\n"),
+    )
+    .context("write .github/workflows/ci.yml")?;
+
+    Ok(())
+}
+
+fn build_fixture_polyglot_monorepo_ci_contracts(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+    std::fs::create_dir_all(root.join("contracts")).context("mkdir contracts")?;
+    std::fs::create_dir_all(root.join("crates").join("app").join("src"))
+        .context("mkdir crates/app/src")?;
+    std::fs::create_dir_all(root.join("packages").join("web").join("src"))
+        .context("mkdir packages/web/src")?;
+    std::fs::create_dir_all(root.join("python")).context("mkdir python")?;
+
+    // Monorepo-like manifests (Rust + Node + Python) with minimal code to keep the fixture cheap.
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[workspace]
+members = ["crates/app"]
+resolver = "2"
+"#,
+    )
+    .context("write Cargo.toml")?;
+    std::fs::write(
+        root.join("crates").join("app").join("Cargo.toml"),
+        r#"[package]
+name = "polyglot-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write crates/app/Cargo.toml")?;
+    std::fs::write(
+        root.join("crates").join("app").join("src").join("main.rs"),
+        "fn main() { println!(\"ok\"); }\n",
+    )
+    .context("write crates/app/src/main.rs")?;
+
+    std::fs::write(
+        root.join("packages").join("web").join("package.json"),
+        r#"{
+  "name": "polyglot-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node src/index.ts"
+  }
+}
+"#,
+    )
+    .context("write packages/web/package.json")?;
+    std::fs::write(
+        root.join("packages")
+            .join("web")
+            .join("src")
+            .join("index.ts"),
+        "console.log('ok');\n",
+    )
+    .context("write packages/web/src/index.ts")?;
+
+    std::fs::write(
+        root.join("python").join("pyproject.toml"),
+        r#"[project]
+name = "polyglot-python"
+version = "0.1.0"
+requires-python = ">=3.10"
+"#,
+    )
+    .context("write python/pyproject.toml")?;
+
+    // Keep evidence windows large enough for token_saved to be meaningful (avoid tiny-baseline
+    // artifacts that make the ratio noisy).
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+
+    let mut openapi_lines = vec![
+        "openapi: 3.0.0".to_string(),
+        "info:".to_string(),
+        "  title: Polyglot API".to_string(),
+        "  version: 0.1.0".to_string(),
+        "paths:".to_string(),
+        "  /health:".to_string(),
+        "    get:".to_string(),
+        "      responses:".to_string(),
+        "        '200':".to_string(),
+        "          description: ok".to_string(),
+        "".to_string(),
+    ];
+    openapi_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    openapi_lines.push(String::new());
+    std::fs::write(
+        root.join("contracts").join("openapi.yaml"),
+        openapi_lines.join("\n"),
+    )
+    .context("write contracts/openapi.yaml")?;
+
+    let mut workflow_lines = vec![
+        "name: CI".to_string(),
+        "on: [push, pull_request]".to_string(),
+        "jobs:".to_string(),
+        "  gates:".to_string(),
+        "    runs-on: ubuntu-latest".to_string(),
+        "    steps:".to_string(),
+        "      - uses: actions/checkout@v4".to_string(),
+        "      - name: rust tests".to_string(),
+        "        run: cargo test --workspace".to_string(),
+        "      - name: node tests".to_string(),
+        "        run: npm test".to_string(),
+        "      - name: python checks".to_string(),
+        "        run: python -m compileall .".to_string(),
+        "".to_string(),
+    ];
+    workflow_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
     workflow_lines.push(String::new());
     std::fs::write(
         root.join(".github").join("workflows").join("ci.yml"),

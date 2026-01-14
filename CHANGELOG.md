@@ -13,6 +13,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   in MCP `.context` output when `response_mode=full` (keeps defaults low-noise).
 - Meaning eval: expanded the stub smoke dataset with additional repo archetypes
   (monorepo/workspace, “no docs but CI+contracts”, generated/noise-heavy trees).
+- Meaning eval: added a polyglot monorepo fixture (Rust + Node + Python) to ensure
+  CI-derived canon loop + contract anchors remain reliable across mixed ecosystems.
 - Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.
 - Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
   (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
@@ -23,6 +25,10 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 
 - Meaning degradation: under tight budgets, the CP shrink policy preserves multiple
   `ENTRY` points (better behavior for monorepos / workspaces).
+- Meaning map: suppress `.worktrees/` from `S MAP` (treated as a workspace worktree store; avoids
+  “branch checkout mass” dominating structure maps).
+- Meaning degradation: emit the general sense map (`S MAP`) before `S OUTPUTS` so the
+  repo-wide orientation survives truncation longer than artifact-heavy areas.
 - Worktree atlas: in `response_mode=full`, `worktree_pack` now includes a bounded, evidence-backed
   purpose summary per worktree (canon loop + anchors like CI/contracts) and suggests an
   `evidence_fetch` follow-up for quick verification.
