@@ -191,6 +191,10 @@ struct MeaningEvalCase {
     #[serde(default)]
     expect_claims: Vec<String>,
     #[serde(default)]
+    expect_anchor_kinds: Vec<String>,
+    #[serde(default)]
+    forbid_map_paths: Vec<String>,
+    #[serde(default)]
     min_token_saved: Option<f64>,
 }
 
@@ -219,6 +223,21 @@ fn validate_meaning_dataset(dataset: &MeaningEvalDataset) -> Result<()> {
             "Meaning eval dataset case '{}' query must not be empty",
             case.id
         );
+
+        for kind in &case.expect_anchor_kinds {
+            anyhow::ensure!(
+                !kind.trim().is_empty(),
+                "Meaning eval dataset case '{}' expect_anchor_kinds must not contain empty values",
+                case.id
+            );
+        }
+        for path in &case.forbid_map_paths {
+            anyhow::ensure!(
+                !path.trim().is_empty(),
+                "Meaning eval dataset case '{}' forbid_map_paths must not contain empty values",
+                case.id
+            );
+        }
     }
     Ok(())
 }
@@ -243,6 +262,9 @@ fn build_fixture(root: &std::path::Path, fixture: &str) -> Result<()> {
         "pinocchio_like_sense_map" => build_fixture_pinocchio_like_sense_map(root),
         "ci_only_canon_loop" => build_fixture_ci_only_canon_loop(root),
         "dataset_noise_budget" => build_fixture_dataset_noise_budget(root),
+        "monorepo_rust_workspace" => build_fixture_monorepo_rust_workspace(root),
+        "no_docs_contracts_and_ci" => build_fixture_no_docs_contracts_and_ci(root),
+        "generated_noise_budget" => build_fixture_generated_noise_budget(root),
         _ => anyhow::bail!("Unknown meaning eval fixture '{fixture}'"),
     }
 }
@@ -963,6 +985,230 @@ edition = "2021"
     Ok(())
 }
 
+fn build_fixture_monorepo_rust_workspace(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+    std::fs::create_dir_all(root.join("crates").join("app").join("src"))
+        .context("mkdir crates/app/src")?;
+    std::fs::create_dir_all(root.join("crates").join("lib").join("src"))
+        .context("mkdir crates/lib/src")?;
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[workspace]
+members = ["crates/app", "crates/lib"]
+resolver = "2"
+"#,
+    )
+    .context("write Cargo.toml")?;
+
+    std::fs::write(
+        root.join("crates").join("lib").join("Cargo.toml"),
+        r#"[package]
+name = "demo-lib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write crates/lib/Cargo.toml")?;
+
+    std::fs::write(
+        root.join("crates").join("app").join("Cargo.toml"),
+        r#"[package]
+name = "demo-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+demo-lib = { path = "../lib" }
+"#,
+    )
+    .context("write crates/app/Cargo.toml")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+    let lib_body = std::iter::once("pub fn answer() -> u32 { 42 }".to_string())
+        .chain((0..220).map(|idx| format!("// {idx}: {filler}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(
+        root.join("crates").join("lib").join("src").join("lib.rs"),
+        lib_body,
+    )
+    .context("write crates/lib/src/lib.rs")?;
+
+    let app_body =
+        std::iter::once("fn main() { println!(\"{}\", demo_lib::answer()); }".to_string())
+            .chain((0..220).map(|idx| format!("// {idx}: {filler}")))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+    std::fs::write(
+        root.join("crates").join("app").join("src").join("main.rs"),
+        app_body,
+    )
+    .context("write crates/app/src/main.rs")?;
+
+    let mut readme_lines = vec![
+        "# Monorepo Rust Workspace".to_string(),
+        "".to_string(),
+        "## Canon".to_string(),
+        "Run CI-equivalent checks locally via: `cargo test --workspace`.".to_string(),
+        "".to_string(),
+    ];
+    readme_lines.extend((0..180).map(|idx| format!("{idx}: {filler}")));
+    readme_lines.push(String::new());
+    std::fs::write(root.join("README.md"), readme_lines.join("\n")).context("write README.md")?;
+
+    let mut workflow_lines = vec![
+        "name: CI".to_string(),
+        "on: [push, pull_request]".to_string(),
+        "".to_string(),
+        "jobs:".to_string(),
+        "  gates:".to_string(),
+        "    runs-on: ubuntu-latest".to_string(),
+        "    steps:".to_string(),
+        "      - uses: actions/checkout@v4".to_string(),
+        "      - name: test".to_string(),
+        "        run: cargo test --workspace".to_string(),
+        "      - name: fmt".to_string(),
+        "        run: cargo fmt --all -- --check".to_string(),
+        "      - name: clippy".to_string(),
+        "        run: cargo clippy --workspace --all-targets -- -D warnings".to_string(),
+        "".to_string(),
+    ];
+    workflow_lines.extend((0..200).map(|idx| format!("# {idx}: {filler}")));
+    workflow_lines.push(String::new());
+    std::fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        workflow_lines.join("\n"),
+    )
+    .context("write .github/workflows/ci.yml")?;
+
+    Ok(())
+}
+
+fn build_fixture_no_docs_contracts_and_ci(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+    std::fs::create_dir_all(root.join("contracts")).context("mkdir contracts")?;
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "demo-no-docs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write Cargo.toml")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+    let main_body = std::iter::once("fn main() { println!(\"ok\"); }".to_string())
+        .chain((0..220).map(|idx| format!("// {idx}: {filler}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(root.join("src").join("main.rs"), main_body).context("write src/main.rs")?;
+
+    let mut openapi_lines = vec![
+        "openapi: 3.0.0".to_string(),
+        "info:".to_string(),
+        "  title: Demo API".to_string(),
+        "  version: 0.1.0".to_string(),
+        "paths:".to_string(),
+        "  /health:".to_string(),
+        "    get:".to_string(),
+        "      responses:".to_string(),
+        "        '200':".to_string(),
+        "          description: ok".to_string(),
+        "".to_string(),
+    ];
+    openapi_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    openapi_lines.push(String::new());
+    std::fs::write(
+        root.join("contracts").join("openapi.yaml"),
+        openapi_lines.join("\n"),
+    )
+    .context("write contracts/openapi.yaml")?;
+
+    let mut workflow_lines = vec![
+        "name: CI".to_string(),
+        "on: [push, pull_request]".to_string(),
+        "".to_string(),
+        "jobs:".to_string(),
+        "  gates:".to_string(),
+        "    runs-on: ubuntu-latest".to_string(),
+        "    steps:".to_string(),
+        "      - uses: actions/checkout@v4".to_string(),
+        "      - name: test".to_string(),
+        "        run: cargo test --workspace".to_string(),
+        "".to_string(),
+    ];
+    workflow_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    workflow_lines.push(String::new());
+    std::fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        workflow_lines.join("\n"),
+    )
+    .context("write .github/workflows/ci.yml")?;
+
+    Ok(())
+}
+
+fn build_fixture_generated_noise_budget(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::create_dir_all(root.join("dist")).context("mkdir dist")?;
+    std::fs::create_dir_all(root.join("build")).context("mkdir build")?;
+    std::fs::create_dir_all(root.join("out")).context("mkdir out")?;
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "demo-generated-noise"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write Cargo.toml")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+    let main_body = std::iter::once("fn main() { println!(\"ok\"); }".to_string())
+        .chain((0..220).map(|idx| format!("// {idx}: {filler}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(root.join("src").join("main.rs"), main_body).context("write src/main.rs")?;
+
+    let js_line = format!("// generated: {filler}\n");
+    for idx in 0..220usize {
+        let name = format!("bundle_{idx:04}.js");
+        std::fs::write(root.join("dist").join(name), &js_line)
+            .with_context(|| format!("write dist/bundle_{idx:04}.js"))?;
+    }
+    let json_line = format!("{{\"generated\":true,\"note\":\"{filler}\"}}\n");
+    for idx in 0..160usize {
+        let name = format!("gen_{idx:04}.json");
+        std::fs::write(root.join("build").join(name), &json_line)
+            .with_context(|| format!("write build/gen_{idx:04}.json"))?;
+    }
+    let out_line = format!("{filler}\n");
+    for idx in 0..160usize {
+        let name = format!("out_{idx:04}.txt");
+        std::fs::write(root.join("out").join(name), &out_line)
+            .with_context(|| format!("write out/out_{idx:04}.txt"))?;
+    }
+
+    Ok(())
+}
+
 fn build_fixture_rust_contract_broker_flow_with_prefix(
     root: &std::path::Path,
     channel_prefix: &str,
@@ -1159,6 +1405,172 @@ async fn meaning_pack_is_bounded_and_has_cp_header() -> Result<()> {
     assert!(
         used_chars <= max_chars,
         "expected used_chars <= max_chars (used={used_chars}, max={max_chars})"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn meaning_pack_emits_next_actions_in_full_mode_only() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.path().join("src").join("main.rs"),
+        "fn main() { println!(\"ok\"); }\n",
+    )
+    .context("write src/main.rs")?;
+    std::fs::write(
+        root.path().join("README.md"),
+        "# Demo\n\n## Canon\nRun: `cargo test`.\n",
+    )
+    .context("write README.md")?;
+
+    let service = start_mcp_server().await?;
+
+    let resp_facts = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "orient on canon and entrypoints",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        resp_facts.is_error,
+        Some(true),
+        "expected meaning_pack to succeed (response_mode=facts)"
+    );
+    let facts_text = resp_facts
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack facts missing text output")?;
+    assert!(
+        !facts_text.contains("next_actions:"),
+        "expected next_actions section to be omitted in response_mode=facts"
+    );
+
+    let resp_full = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "orient on canon and entrypoints",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "full",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        resp_full.is_error,
+        Some(true),
+        "expected meaning_pack to succeed (response_mode=full)"
+    );
+    let full_text = resp_full
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack full missing text output")?;
+    assert!(
+        full_text.contains("next_actions:"),
+        "expected next_actions section to be present in response_mode=full"
+    );
+    assert!(
+        full_text.contains("next_action tool=evidence_fetch"),
+        "expected evidence_fetch next_action in response_mode=full"
+    );
+    assert!(
+        full_text.contains("next_action tool=meaning_focus"),
+        "expected meaning_focus next_action in response_mode=full"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn meaning_focus_emits_next_actions_in_full_mode_only() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.path().join("src").join("main.rs"),
+        "fn main() { println!(\"ok\"); }\n",
+    )
+    .context("write src/main.rs")?;
+    std::fs::write(
+        root.path().join("README.md"),
+        "# Demo\n\n## Canon\nRun: `cargo test`.\n",
+    )
+    .context("write README.md")?;
+
+    let service = start_mcp_server().await?;
+
+    let resp_facts = call_tool(
+        &service,
+        "meaning_focus",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "focus": "src/main.rs",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        resp_facts.is_error,
+        Some(true),
+        "expected meaning_focus to succeed (response_mode=facts)"
+    );
+    let facts_text = resp_facts
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_focus facts missing text output")?;
+    assert!(
+        !facts_text.contains("next_actions:"),
+        "expected next_actions section to be omitted in response_mode=facts"
+    );
+
+    let resp_full = call_tool(
+        &service,
+        "meaning_focus",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "focus": "src/main.rs",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "full",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        resp_full.is_error,
+        Some(true),
+        "expected meaning_focus to succeed (response_mode=full)"
+    );
+    let full_text = resp_full
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_focus full missing text output")?;
+    assert!(
+        full_text.contains("next_actions:"),
+        "expected next_actions section to be present in response_mode=full"
+    );
+    assert!(
+        full_text.contains("next_action tool=evidence_fetch"),
+        "expected evidence_fetch next_action in response_mode=full"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -2140,8 +2552,58 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             );
         }
 
+        for kind in &case.expect_anchor_kinds {
+            let needle = format!("kind={}", kind.trim());
+            assert!(
+                pack.lines()
+                    .any(|line| line.starts_with("ANCHOR ") && line.contains(&needle)),
+                "expected CP to include ANCHOR kind={kind} (case={})",
+                case.id
+            );
+        }
+
+        let needs_dict = case.min_token_saved.is_some() || !case.forbid_map_paths.is_empty();
+        let dict = if needs_dict {
+            Some(parse_cp_dict(&pack)?)
+        } else {
+            None
+        };
+
+        if !case.forbid_map_paths.is_empty() {
+            let dict = dict.as_ref().context("missing dict for forbid_map_paths")?;
+            let mut in_map = false;
+            for line in pack.lines() {
+                if line == "S MAP" {
+                    in_map = true;
+                    continue;
+                }
+                if !in_map {
+                    continue;
+                }
+                if line.starts_with("S ") {
+                    break;
+                }
+                if !line.starts_with("MAP ") {
+                    continue;
+                }
+                let path_id = line
+                    .split_whitespace()
+                    .find_map(|tok| tok.strip_prefix("path="))
+                    .unwrap_or("");
+                let path = dict.get(path_id).cloned().unwrap_or_default();
+                for forbid in &case.forbid_map_paths {
+                    assert_ne!(
+                        path,
+                        forbid.as_str(),
+                        "expected S MAP to suppress dir '{forbid}' (case={})",
+                        case.id
+                    );
+                }
+            }
+        }
+
         if let Some(min_saved) = case.min_token_saved {
-            let dict = parse_cp_dict(&pack)?;
+            let dict = dict.as_ref().context("missing dict for token_saved")?;
             let mut seen: HashSet<String> = HashSet::new();
             let mut baseline_chars = 0usize;
             for line in pack.lines() {

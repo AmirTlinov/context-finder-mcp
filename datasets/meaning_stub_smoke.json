@@ -144,6 +144,43 @@
       "min_token_saved": 0.75
     },
     {
+      "id": "no_docs_contracts_and_ci",
+      "fixture": "no_docs_contracts_and_ci",
+      "query": "orient on contracts and CI gates when docs are missing",
+      "expect_paths": [
+        "contracts/openapi.yaml",
+        ".github/workflows/ci.yml",
+        "src/main.rs"
+      ],
+      "expect_claims": ["ANCHOR", "CONTRACT", "STEP"],
+      "expect_anchor_kinds": ["ci", "contract"],
+      "min_token_saved": 0.75
+    },
+    {
+      "id": "monorepo_rust_workspace",
+      "fixture": "monorepo_rust_workspace",
+      "query": "orient on canon loop, CI gates, and entrypoints in a rust workspace monorepo",
+      "expect_paths": [
+        "Cargo.toml",
+        "README.md",
+        ".github/workflows/ci.yml",
+        "crates/app/src/main.rs",
+        "crates/lib/src/lib.rs"
+      ],
+      "expect_claims": ["ANCHOR", "STEP"],
+      "expect_anchor_kinds": ["ci", "canon"],
+      "min_token_saved": 0.75
+    },
+    {
+      "id": "generated_noise_budget",
+      "fixture": "generated_noise_budget",
+      "query": "orient on entrypoints without drowning in generated output",
+      "expect_paths": ["Cargo.toml", "src/main.rs"],
+      "expect_claims": ["ANCHOR"],
+      "forbid_map_paths": ["dist", "build", "out"],
+      "min_token_saved": 0.75
+    },
+    {
       "id": "pinocchio_like_sense_map",
       "fixture": "pinocchio_like_sense_map",
       "query": "orient on canon, how-to-run, contracts, experiments, artifacts",

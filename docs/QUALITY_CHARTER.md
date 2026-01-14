@@ -37,6 +37,21 @@ The system may fall back from semantic to filesystem strategies, but it MUST:
 - Read tools refuse common secret locations by default.
 - `allow_secrets=true` is explicit opt-in and must be audited by tests.
 
+### I5 — Meaning is evidence-backed (no “hand-wavy” claims)
+
+Meaning-mode tools (`meaning_pack`, `meaning_focus`) must not emit non-trivial claims without evidence.
+
+- Any claim that could change behavior MUST include ≥1 evidence pointer.
+- Evidence pointers are invalidated by file changes (hash mismatch) and must surface staleness.
+- If evidence cannot be produced under budget, the system should emit fewer claims (not guesses).
+
+### I6 — Meaning maps must stay low-noise under file mass
+
+Meaning-mode output must not be dominated by “file count gravity” (datasets, binaries, generated trees, logs).
+
+- `S MAP` should prioritize evidence-bearing zones (canon/how-to/CI/contracts/entrypoints).
+- Artifact/dataset-heavy trees must be suppressed in maps by default, while still being discoverable via anchors.
+
 ## 2) Retrieval quality policy
 
 ### Q1 — Layered retrieval is mandatory

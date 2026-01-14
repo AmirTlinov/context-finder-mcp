@@ -7,6 +7,7 @@ mod batch;
 pub(crate) mod catalog;
 mod context_doc;
 mod context_legend;
+mod cpv1;
 mod cursor;
 mod dispatch;
 mod evidence_fetch;

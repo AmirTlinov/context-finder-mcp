@@ -81,6 +81,22 @@ pub(in crate::tools::dispatch) async fn meaning_pack(
                 doc.push_note("truncated=true");
             }
         }
+        if response_mode == ResponseMode::Full && !result.next_actions.is_empty() {
+            doc.push_blank();
+            doc.push_note("next_actions:");
+            for action in &result.next_actions {
+                let mut args =
+                    serde_json::to_string(&action.args).unwrap_or_else(|_| "{}".to_string());
+                if args.len() > 400 {
+                    args.truncate(400);
+                    args.push('…');
+                }
+                doc.push_note(&format!(
+                    "next_action tool={} args={} reason={}",
+                    action.tool, args, action.reason
+                ));
+            }
+        }
         contents.push(Content::text(doc.finish()));
     }
     if want_diagram {

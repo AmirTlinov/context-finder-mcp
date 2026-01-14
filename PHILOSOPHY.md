@@ -30,6 +30,22 @@ Practical target UX:
 - **Project memory, not shell probing:** `read_pack` (MCP) is the “apply_patch of context” — one call returns stable `project_facts` + relevant snippets under one budget.
 - **One warm brain, many hands:** the MCP server defaults to a shared backend daemon so cursor continuation and caches stay stable across sessions (set `CONTEXT_MCP_SHARED=0` only if you need an isolated per-session server).
 - **Low-noise by default:** default outputs should be mostly *project content*, not tool meta (“semantic sugar” is opt-in).
+
+## Product promise (v1)
+
+Context Finder is “done” when it is **objectively better** than ad‑hoc probing for a small set of daily agent workflows:
+
+1) **Onboarding / orientation** (repo of any size)
+   - An agent gets a bounded, high-signal map of what matters and where to look next.
+   - Golden path: `repo_onboarding_pack` → `meaning_pack` (or `read_pack` for daily memory).
+
+2) **Where are the entrypoints, contracts, and gates?**
+   - An agent can quickly locate the executable entrypoints, interface contracts, and CI gates.
+   - Golden path: `meaning_pack` (anchors + canon loop) → `meaning_focus` → `evidence_fetch`.
+
+3) **How do I run / check / verify this repo?**
+   - An agent can extract a “canon loop” (run/test/lint/format/build/eval) from README/Makefile/CI.
+   - CI configs are treated as first-class evidence when docs are missing or stale.
 - **Context-first output:** MCP tools return `.context` text only (agent-native). For machine-readable JSON, use the Command API (CLI/HTTP/gRPC).
 - **Cursor-first continuation:** if it doesn’t fit, the next step is always `cursor`, not “retype parameters”.
 - **Compact cursors:** continuation tokens should be cheap in the agent context window (short cursor aliases, server-backed when needed).
