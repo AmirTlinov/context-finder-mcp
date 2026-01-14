@@ -2,6 +2,7 @@ use super::super::{
     CallToolResult, Content, ContextFinderService, McpError, ResponseMode, ToolMeta,
 };
 use crate::tools::context_doc::ContextDocBuilder;
+use crate::tools::cpv1::cpv1_coverage;
 use crate::tools::{
     atlas_pack::compute_atlas_pack_result,
     schemas::{atlas_pack::AtlasPackRequest, worktree_pack::WorktreePackResult},
@@ -81,6 +82,17 @@ pub(in crate::tools::dispatch) async fn atlas_pack(
 
     doc.push_note("meaning_pack:");
     doc.push_block_smart(&result.meaning_pack);
+    if response_mode != ResponseMode::Minimal {
+        let cov = cpv1_coverage(&result.meaning_pack);
+        doc.push_note(&format!(
+            "meaning_coverage: anchors_ev={}/{} steps_ev={}/{} ev={}",
+            cov.anchors_with_evidence,
+            cov.anchors_total,
+            cov.steps_with_evidence,
+            cov.steps_total,
+            cov.evidence_total
+        ));
+    }
     if result.meaning_truncated {
         if let Some(truncation) = result.meaning_truncation.as_ref() {
             doc.push_note(&format!("meaning_truncated=true ({truncation:?})"));

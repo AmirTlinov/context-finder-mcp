@@ -226,3 +226,36 @@ pub(crate) fn parse_cpv1_anchor_details(
     }
     out
 }
+
+#[derive(Debug, Clone)]
+pub(crate) struct Cpv1Coverage {
+    pub(crate) anchors_total: usize,
+    pub(crate) anchors_with_evidence: usize,
+    pub(crate) steps_total: usize,
+    pub(crate) steps_with_evidence: usize,
+    pub(crate) evidence_total: usize,
+}
+
+pub(crate) fn cpv1_coverage(pack: &str) -> Cpv1Coverage {
+    let dict = parse_cpv1_dict(pack);
+    let evidence = parse_cpv1_evidence(pack, &dict);
+    let anchors = parse_cpv1_anchor_details(pack, &dict);
+    let steps = parse_cpv1_steps(pack, &dict);
+
+    let anchors_with_evidence = anchors
+        .iter()
+        .filter(|a| evidence.contains_key(&a.ev))
+        .count();
+    let steps_with_evidence = steps
+        .iter()
+        .filter(|s| evidence.contains_key(&s.ev))
+        .count();
+
+    Cpv1Coverage {
+        anchors_total: anchors.len(),
+        anchors_with_evidence,
+        steps_total: steps.len(),
+        steps_with_evidence,
+        evidence_total: evidence.len(),
+    }
+}

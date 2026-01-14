@@ -27,6 +27,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   `ENTRY` points (better behavior for monorepos / workspaces).
 - Meaning map: suppress `.worktrees/` from `S MAP` (treated as a workspace worktree store; avoids
   “branch checkout mass” dominating structure maps).
+- Meaning trust: in `response_mode=facts|full`, `meaning_pack` / `meaning_focus` now emit a compact
+  evidence-coverage hint (`coverage: anchors_ev=… steps_ev=… ev=…`) to help agents judge trust
+  without expanding token budgets; `atlas_pack` emits the same signal as `meaning_coverage`.
 - Meaning degradation: emit the general sense map (`S MAP`) before `S OUTPUTS` so the
   repo-wide orientation survives truncation longer than artifact-heavy areas.
 - Worktree atlas: in `response_mode=full`, `worktree_pack` now includes a bounded, evidence-backed

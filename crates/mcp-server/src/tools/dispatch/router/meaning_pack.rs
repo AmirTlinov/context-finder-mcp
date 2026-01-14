@@ -3,6 +3,7 @@ use super::super::{
     McpError, MeaningPackRequest, ResponseMode, ToolMeta,
 };
 use crate::tools::context_doc::ContextDocBuilder;
+use crate::tools::cpv1::cpv1_coverage;
 use crate::tools::schemas::meaning_pack::MeaningPackOutputFormat;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
@@ -80,6 +81,17 @@ pub(in crate::tools::dispatch) async fn meaning_pack(
             } else {
                 doc.push_note("truncated=true");
             }
+        }
+        if response_mode != ResponseMode::Minimal {
+            let cov = cpv1_coverage(&result.pack);
+            doc.push_note(&format!(
+                "coverage: anchors_ev={}/{} steps_ev={}/{} ev={}",
+                cov.anchors_with_evidence,
+                cov.anchors_total,
+                cov.steps_with_evidence,
+                cov.steps_total,
+                cov.evidence_total
+            ));
         }
         if response_mode == ResponseMode::Full && !result.next_actions.is_empty() {
             doc.push_blank();
