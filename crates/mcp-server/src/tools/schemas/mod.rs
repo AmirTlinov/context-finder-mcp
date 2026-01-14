@@ -1,3 +1,4 @@
+pub mod atlas_pack;
 pub mod batch;
 pub mod capabilities;
 pub mod content_format;

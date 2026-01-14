@@ -3,6 +3,7 @@
 //! This module is intentionally split into submodules to keep schemas, dispatch, and per-tool
 //! implementations reviewable and evolvable.
 
+mod atlas_pack;
 mod batch;
 pub(crate) mod catalog;
 mod context_doc;

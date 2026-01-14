@@ -1,12 +1,12 @@
 use super::super::{
     compute_used_chars, extract_path_from_input, parse_tool_result_as_json, prepare_item_input,
-    push_item_or_truncate, resolve_batch_refs, trim_output_to_budget, BatchBudget, BatchItemResult,
-    BatchItemStatus, BatchRequest, BatchResult, BatchToolName, CallToolResult, CapabilitiesRequest,
-    Content, ContextFinderService, ContextPackRequest, ContextRequest, DoctorRequest,
-    EvidenceFetchRequest, ExplainRequest, FileSliceRequest, GrepContextRequest, HelpRequest,
-    ImpactRequest, ListFilesRequest, MapRequest, McpError, MeaningFocusRequest, MeaningPackRequest,
-    OverviewRequest, ResponseMode, SearchRequest, TextSearchRequest, ToolMeta, TraceRequest,
-    WorktreePackRequest,
+    push_item_or_truncate, resolve_batch_refs, trim_output_to_budget, AtlasPackRequest,
+    BatchBudget, BatchItemResult, BatchItemStatus, BatchRequest, BatchResult, BatchToolName,
+    CallToolResult, CapabilitiesRequest, Content, ContextFinderService, ContextPackRequest,
+    ContextRequest, DoctorRequest, EvidenceFetchRequest, ExplainRequest, FileSliceRequest,
+    GrepContextRequest, HelpRequest, ImpactRequest, ListFilesRequest, MapRequest, McpError,
+    MeaningFocusRequest, MeaningPackRequest, OverviewRequest, ResponseMode, SearchRequest,
+    TextSearchRequest, ToolMeta, TraceRequest, WorktreePackRequest,
 };
 use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::schemas::batch::BatchItem;
@@ -94,6 +94,7 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::MeaningPack => "meaning_pack",
         BatchToolName::MeaningFocus => "meaning_focus",
         BatchToolName::WorktreePack => "worktree_pack",
+        BatchToolName::AtlasPack => "atlas_pack",
         BatchToolName::EvidenceFetch => "evidence_fetch",
         BatchToolName::Impact => "impact",
         BatchToolName::Trace => "trace",
@@ -218,6 +219,13 @@ async fn dispatch_tool(
             super::worktree_pack::worktree_pack,
             "worktree_pack"
         ),
+        BatchToolName::AtlasPack => {
+            typed_call!(
+                AtlasPackRequest,
+                super::atlas_pack::atlas_pack,
+                "atlas_pack"
+            )
+        }
         BatchToolName::EvidenceFetch => typed_call!(
             EvidenceFetchRequest,
             super::evidence_fetch::evidence_fetch,

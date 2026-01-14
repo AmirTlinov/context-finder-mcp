@@ -18,6 +18,7 @@ use super::meaning_focus::compute_meaning_focus_result;
 use super::meaning_pack::compute_meaning_pack_result;
 use super::paths::normalize_relative_path;
 use super::repo_onboarding_pack::compute_repo_onboarding_pack_result;
+use super::schemas::atlas_pack::AtlasPackRequest;
 use super::schemas::batch::{
     BatchBudget, BatchItemResult, BatchItemStatus, BatchRequest, BatchResult, BatchToolName,
 };
@@ -3383,6 +3384,19 @@ impl ContextFinderService {
     ) -> Result<CallToolResult, McpError> {
         Ok(strip_structured_content(
             router::worktree_pack::worktree_pack(self, request).await?,
+        ))
+    }
+
+    /// One-call atlas: meaning-first CP + worktree overview (onboarding-first, evidence-backed).
+    #[tool(
+        description = "One-call atlas for agent onboarding: meaning-first CP (canon loop, CI/contracts/entrypoints) + worktree overview. Evidence-backed, bounded, deterministic."
+    )]
+    pub async fn atlas_pack(
+        &self,
+        Parameters(request): Parameters<AtlasPackRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::atlas_pack::atlas_pack(self, request).await?,
         ))
     }
 

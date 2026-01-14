@@ -28,12 +28,13 @@ pub(in crate::tools::dispatch) async fn capabilities(
 
     let budgets = super::super::mcp_default_budgets();
     let start_route = ToolNextAction {
-        tool: "read_pack".to_string(),
+        tool: "atlas_pack".to_string(),
         args: json!({
             "path": root_display,
-            "max_chars": budgets.read_pack_max_chars
+            "max_chars": budgets.read_pack_max_chars,
+            "response_mode": "facts"
         }),
-        reason: "Start with a bounded project memory pack (facts + key snippets) via read_pack."
+        reason: "Start with a bounded onboarding atlas (meaning CP + worktrees) via atlas_pack."
             .to_string(),
     };
 

@@ -20,6 +20,10 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Map + key docs + next_actions (best first call).",
     },
     ToolDescriptor {
+        name: "atlas_pack",
+        summary: "One-call onboarding atlas: meaning CP + worktrees (canon/CI/contracts).",
+    },
+    ToolDescriptor {
         name: "meaning_pack",
         summary: "Meaning-first CP (high signal) + evidence pointers.",
     },
@@ -114,7 +118,7 @@ pub(crate) fn tool_inventory_json(version: &str) -> serde_json::Value {
 pub(crate) fn tool_instructions() -> String {
     let mut lines = vec![
         "Context provides semantic code search for AI agents.".to_string(),
-        "Recommended flow: repo_onboarding_pack → read_pack → context_pack; use batch for multi-step queries."
+        "Recommended flow: atlas_pack → meaning_focus/evidence_fetch → context_pack; use worktree_pack for multi-branch repos; use batch for multi-step queries."
             .to_string(),
         "Use help for the `.context` legend (A/R/N/M).".to_string(),
         "Tools:".to_string(),

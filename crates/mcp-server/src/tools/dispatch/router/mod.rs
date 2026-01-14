@@ -1,5 +1,6 @@
 // Per-tool dispatch functions used by the MCP tool router.
 
+pub(super) mod atlas_pack;
 pub(super) mod batch;
 pub(super) mod capabilities;
 pub(super) mod context;
