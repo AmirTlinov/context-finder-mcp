@@ -160,3 +160,94 @@ async fn worktree_pack_lists_git_worktrees_and_branch_hints() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn worktree_pack_full_includes_purpose_summary_when_available() -> Result<()> {
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    git(root, &["init"]).await?;
+    git(root, &["config", "user.email", "test@example.com"]).await?;
+    git(root, &["config", "user.name", "Test"]).await?;
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::create_dir_all(root.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "demo-worktree-purpose"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+"#,
+    )
+    .context("write Cargo.toml")?;
+    std::fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() { println!(\"ok\"); }\n",
+    )
+    .context("write src/main.rs")?;
+    std::fs::write(
+        root.join(".github").join("workflows").join("ci.yml"),
+        r#"name: CI
+on:
+  push:
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test
+        run: cargo test --workspace
+"#,
+    )
+    .context("write .github/workflows/ci.yml")?;
+
+    git(root, &["add", "."]).await?;
+    git(root, &["commit", "-m", "init"]).await?;
+    let _ = git(root, &["branch", "-M", "main"]).await;
+
+    let w1 = root.join(".worktrees").join("w1");
+    git(
+        root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature-w1",
+            w1.to_string_lossy().as_ref(),
+        ],
+    )
+    .await?;
+    std::fs::write(w1.join("WIP.txt"), "wip\n").context("write worktree WIP")?;
+
+    let service = start_mcp_server().await?;
+    let text = call_tool_text(
+        &service,
+        "worktree_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "response_mode": "full",
+            "max_chars": 4000
+        }),
+    )
+    .await?;
+
+    assert!(
+        text.contains(".worktrees/w1") || text.contains(".worktrees\\w1"),
+        "expected worktree path in output"
+    );
+    assert!(
+        text.contains("canon:") && text.contains("cargo test"),
+        "expected purpose canon loop to mention cargo test (got: {text})"
+    );
+    assert!(
+        text.contains(".github/workflows/ci.yml"),
+        "expected purpose anchors to mention CI workflow file (got: {text})"
+    );
+
+    Ok(())
+}

@@ -4,10 +4,18 @@ use context_protocol::ToolNextAction;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
+use context_meaning as meaning;
+
+use super::cpv1::{
+    parse_cpv1_anchor_details, parse_cpv1_dict, parse_cpv1_evidence, parse_cpv1_steps,
+    Cpv1EvidencePointer,
+};
 use super::cursor::{cursor_fingerprint, decode_cursor, encode_cursor, CURSOR_VERSION};
+use super::schemas::evidence_fetch::EvidencePointer;
 use super::schemas::response_mode::ResponseMode;
 use super::schemas::worktree_pack::{
     WorktreeInfo, WorktreePackCursorV1, WorktreePackRequest, WorktreePackResult,
+    WorktreePurposeAnchor, WorktreePurposeStep, WorktreePurposeSummary,
 };
 
 const VERSION: u32 = 1;
@@ -20,6 +28,14 @@ const MAX_LIMIT: usize = 200;
 
 const MAX_DIRTY_PATHS_PER_WORKTREE: usize = 6;
 const MAX_HEAD_SUBJECT_CHARS: usize = 96;
+const MAX_PURPOSE_LABEL_CHARS: usize = 120;
+
+const PURPOSE_SUMMARY_QUERY: &str =
+    "canon loop (run/test/verify), CI gates, contracts, entrypoints, artifacts";
+const PURPOSE_MAX_WORKTREES_PER_PAGE: usize = 5;
+const PURPOSE_MEANING_MAX_CHARS: usize = 1_400;
+const PURPOSE_MAX_CANON_STEPS: usize = 4;
+const PURPOSE_MAX_ANCHORS: usize = 6;
 
 #[derive(Debug, Clone)]
 struct GitWorktreeInfo {
@@ -254,6 +270,119 @@ fn worktree_pack_content_budget(max_chars: usize) -> usize {
     max_chars.saturating_sub(reserve).max(1)
 }
 
+fn step_kind_rank(kind: &str) -> usize {
+    match kind {
+        "setup" => 0,
+        "build" => 1,
+        "run" => 2,
+        "test" => 3,
+        "eval" => 4,
+        "lint" => 5,
+        "format" => 6,
+        _ => 99,
+    }
+}
+
+fn anchor_kind_rank(kind: &str) -> usize {
+    match kind {
+        "ci" => 0,
+        "contract" => 1,
+        "entrypoint" => 2,
+        "artifact" => 3,
+        "infra" => 4,
+        "howto" => 5,
+        "experiment" => 6,
+        "canon" => 7,
+        _ => 99,
+    }
+}
+
+fn truncate_label(value: &str) -> String {
+    let value = value.trim();
+    if value.chars().count() <= MAX_PURPOSE_LABEL_CHARS {
+        value.to_string()
+    } else {
+        let mut out = crate::tools::util::truncate_to_chars(value, MAX_PURPOSE_LABEL_CHARS);
+        out.push('…');
+        out
+    }
+}
+
+fn ev_to_pointer(ev: &Cpv1EvidencePointer) -> EvidencePointer {
+    EvidencePointer {
+        file: ev.file.clone(),
+        start_line: ev.start_line,
+        end_line: ev.end_line,
+        source_hash: ev.source_hash.clone(),
+    }
+}
+
+async fn compute_worktree_purpose_summary(
+    worktree_root: &Path,
+    worktree_display: &str,
+) -> Option<WorktreePurposeSummary> {
+    if !worktree_root.is_dir() {
+        return None;
+    }
+
+    let request = meaning::MeaningPackRequest {
+        query: PURPOSE_SUMMARY_QUERY.to_string(),
+        map_depth: Some(2),
+        map_limit: Some(10),
+        max_chars: Some(PURPOSE_MEANING_MAX_CHARS),
+    };
+
+    let engine = meaning::meaning_pack(worktree_root, worktree_display, &request)
+        .await
+        .ok()?;
+
+    let dict = parse_cpv1_dict(&engine.pack);
+    let ev_map = parse_cpv1_evidence(&engine.pack, &dict);
+
+    let mut steps = parse_cpv1_steps(&engine.pack, &dict);
+    steps.sort_by_key(|s| step_kind_rank(&s.kind));
+    let canon: Vec<WorktreePurposeStep> = steps
+        .into_iter()
+        .take(PURPOSE_MAX_CANON_STEPS)
+        .filter_map(|s| {
+            let ev = ev_map.get(&s.ev)?;
+            Some(WorktreePurposeStep {
+                kind: s.kind,
+                label: truncate_label(&s.label),
+                confidence: s.confidence,
+                evidence: Some(ev_to_pointer(ev)),
+            })
+        })
+        .collect();
+
+    let mut anchors = parse_cpv1_anchor_details(&engine.pack, &dict);
+    anchors.sort_by_key(|a| anchor_kind_rank(&a.kind));
+    let anchors: Vec<WorktreePurposeAnchor> = anchors
+        .into_iter()
+        .take(PURPOSE_MAX_ANCHORS)
+        .filter_map(|a| {
+            let ev = ev_map.get(&a.ev)?;
+            Some(WorktreePurposeAnchor {
+                kind: a.kind,
+                label: a.label.map(|v| truncate_label(&v)),
+                file: a.file.map(|v| truncate_label(&v)),
+                confidence: a.confidence,
+                evidence: Some(ev_to_pointer(ev)),
+            })
+        })
+        .collect();
+
+    if canon.is_empty() && anchors.is_empty() {
+        return None;
+    }
+
+    Some(WorktreePurposeSummary {
+        canon,
+        anchors,
+        meaning_truncated: Some(engine.budget.truncated),
+    })
+}
+
 fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
     let mut lines = Vec::new();
     let display_path = worktree
@@ -290,6 +419,42 @@ fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!("  dirty_paths: {joined}"));
+        }
+    }
+    if let Some(purpose) = worktree.purpose.as_ref() {
+        if !purpose.canon.is_empty() {
+            let rendered = purpose
+                .canon
+                .iter()
+                .map(|step| format!("{}={}", step.kind, serde_json::json!(step.label)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            lines.push(format!("  canon: {rendered}"));
+        }
+        if !purpose.anchors.is_empty() {
+            let rendered = purpose
+                .anchors
+                .iter()
+                .map(|anchor| {
+                    let v = anchor
+                        .file
+                        .as_deref()
+                        .or(anchor.label.as_deref())
+                        .unwrap_or("");
+                    if v.is_empty() {
+                        anchor.kind.clone()
+                    } else {
+                        format!("{}={}", anchor.kind, serde_json::json!(v))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            if !rendered.trim().is_empty() {
+                lines.push(format!("  anchors: {rendered}"));
+            }
+        }
+        if purpose.meaning_truncated.unwrap_or(false) {
+            lines.push("  purpose_truncated=1".to_string());
         }
     }
     lines
@@ -376,6 +541,7 @@ pub(super) async fn compute_worktree_pack_result(
             head_subject,
             dirty,
             dirty_paths,
+            purpose: None,
         });
     }
 
@@ -436,6 +602,39 @@ pub(super) async fn compute_worktree_pack_result(
         None
     };
 
+    // Optional (full mode): attach a small, evidence-backed purpose summary per worktree.
+    if response_mode == ResponseMode::Full {
+        for (idx, wt) in returned.iter_mut().enumerate() {
+            if idx >= PURPOSE_MAX_WORKTREES_PER_PAGE {
+                break;
+            }
+            let worktree_root = Path::new(&wt.path);
+            wt.purpose = compute_worktree_purpose_summary(worktree_root, wt.path.as_str()).await;
+        }
+
+        // Budget guard: if purpose summaries blow the `.context` budget, drop them from the tail.
+        let recompute_used_chars = |items: &[WorktreeInfo]| -> usize {
+            items
+                .iter()
+                .flat_map(render_worktree_lines)
+                .map(|line| line.chars().count().saturating_add(1))
+                .sum::<usize>()
+        };
+
+        let mut used = recompute_used_chars(&returned);
+        if used > content_budget {
+            for idx in (0..returned.len()).rev() {
+                if returned[idx].purpose.take().is_some() {
+                    used = recompute_used_chars(&returned);
+                    if used <= content_budget {
+                        break;
+                    }
+                }
+            }
+        }
+        used_chars = used;
+    }
+
     let next_actions = if response_mode == ResponseMode::Full {
         let mut actions: Vec<ToolNextAction> = Vec::new();
         if let Some(best) = returned.first() {
@@ -444,10 +643,7 @@ pub(super) async fn compute_worktree_pack_result(
                 .query
                 .clone()
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| {
-                    "orient on canon loop (run/test), CI gates, contracts, entrypoints, artifacts"
-                        .to_string()
-                });
+                .unwrap_or_else(|| PURPOSE_SUMMARY_QUERY.to_string());
             actions.push(ToolNextAction {
                 tool: "meaning_pack".to_string(),
                 args: serde_json::json!({
@@ -459,6 +655,56 @@ pub(super) async fn compute_worktree_pack_result(
                 reason: "Drill into the most relevant worktree with a meanings-first pack"
                     .to_string(),
             });
+
+            if let Some(purpose) = best.purpose.as_ref() {
+                let mut items: Vec<EvidencePointer> = Vec::new();
+                let mut seen: std::collections::BTreeSet<(String, usize, usize, Option<String>)> =
+                    std::collections::BTreeSet::new();
+
+                for step in &purpose.canon {
+                    if let Some(ev) = step.evidence.as_ref() {
+                        let key = (
+                            ev.file.clone(),
+                            ev.start_line,
+                            ev.end_line,
+                            ev.source_hash.clone(),
+                        );
+                        if seen.insert(key) {
+                            items.push(ev.clone());
+                        }
+                    }
+                }
+                for anchor in &purpose.anchors {
+                    if items.len() >= 4 {
+                        break;
+                    }
+                    if let Some(ev) = anchor.evidence.as_ref() {
+                        let key = (
+                            ev.file.clone(),
+                            ev.start_line,
+                            ev.end_line,
+                            ev.source_hash.clone(),
+                        );
+                        if seen.insert(key) {
+                            items.push(ev.clone());
+                        }
+                    }
+                }
+                if !items.is_empty() {
+                    actions.push(ToolNextAction {
+                        tool: "evidence_fetch".to_string(),
+                        args: serde_json::json!({
+                            "path": best.path.clone(),
+                            "items": items,
+                            "max_chars": 2000,
+                            "max_lines": 200,
+                            "response_mode": "facts",
+                        }),
+                        reason: "Fetch evidence for canon/CI/contracts claims in the top worktree"
+                            .to_string(),
+                    });
+                }
+            }
         }
         if truncated {
             if let Some(cursor) = next_cursor.clone() {

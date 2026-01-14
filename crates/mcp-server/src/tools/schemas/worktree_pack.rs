@@ -2,6 +2,7 @@ use context_indexer::ToolMeta;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
+use super::evidence_fetch::EvidencePointer;
 use super::response_mode::ResponseMode;
 use super::ToolNextAction;
 
@@ -55,6 +56,51 @@ pub(in crate::tools) struct WorktreePackCursorV1 {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+pub struct WorktreePurposeStep {
+    /// Step kind (setup/build/run/test/eval/lint/format).
+    pub kind: String,
+    /// Human label / command snippet.
+    pub label: String,
+    /// Best-effort confidence (0..=1). Not all sources provide this signal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// Evidence pointer backing this claim (when available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<EvidencePointer>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+pub struct WorktreePurposeAnchor {
+    /// Anchor kind (ci/contract/entrypoint/artifact/infra/howto/experiment/canon).
+    pub kind: String,
+    /// Optional anchor label (best-effort).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Optional anchor file path (repo-relative when available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Best-effort confidence (0..=1). Not all sources provide this signal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// Evidence pointer backing this anchor (when available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<EvidencePointer>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+pub struct WorktreePurposeSummary {
+    /// Canon loop steps (how to run/test/verify). Bounded, evidence-backed when possible.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub canon: Vec<WorktreePurposeStep>,
+    /// High-signal anchors (CI/contracts/entrypoints/artifacts...). Bounded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<WorktreePurposeAnchor>,
+    /// Whether the underlying meaning extraction was truncated (budget).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meaning_truncated: Option<bool>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
 pub struct WorktreeInfo {
     /// Worktree path. Prefer absolute paths so follow-up tool calls can pass it verbatim.
     pub path: String,
@@ -79,6 +125,9 @@ pub struct WorktreeInfo {
     /// Sample of modified paths (best-effort, bounded).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dirty_paths: Option<Vec<String>>,
+    /// Optional evidence-backed purpose summary (only in `response_mode=full`, bounded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<WorktreePurposeSummary>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]

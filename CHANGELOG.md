@@ -20,3 +20,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 
 - Meaning degradation: under tight budgets, the CP shrink policy preserves multiple
   `ENTRY` points (better behavior for monorepos / workspaces).
+- Worktree atlas: in `response_mode=full`, `worktree_pack` now includes a bounded, evidence-backed
+  purpose summary per worktree (canon loop + anchors like CI/contracts) and suggests an
+  `evidence_fetch` follow-up for quick verification.
+- Meaning canon extraction: avoid false positives where `checkout` matched `check`, which could
+  incorrectly label CI setup steps as “test” canon.

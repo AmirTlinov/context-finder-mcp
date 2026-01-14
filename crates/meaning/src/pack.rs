@@ -2205,7 +2205,7 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
     {
         return Some(PipelineStepKind::Test);
     }
-    if line.contains("validate") || line.contains("check") {
+    if line.contains("validate") || contains_ascii_word(line, "check") {
         return Some(PipelineStepKind::Test);
     }
     if line.contains("bench") || line.contains("benchmark") || line.contains("eval") {
@@ -2231,6 +2231,22 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
         return Some(PipelineStepKind::Format);
     }
     None
+}
+
+fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    for (idx, _) in haystack.match_indices(needle) {
+        let bytes = haystack.as_bytes();
+        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
+        let after_idx = idx.saturating_add(needle.len());
+        let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
 }
 
 fn build_areas(

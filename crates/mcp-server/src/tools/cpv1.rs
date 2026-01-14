@@ -112,3 +112,117 @@ pub(crate) fn parse_cpv1_anchors(pack: &str) -> Vec<(String, String)> {
     }
     out
 }
+
+#[derive(Debug, Clone)]
+pub(crate) struct Cpv1Step {
+    pub(crate) kind: String,
+    pub(crate) label: String,
+    pub(crate) confidence: Option<f32>,
+    pub(crate) ev: String,
+}
+
+pub(crate) fn parse_cpv1_steps(pack: &str, dict: &HashMap<String, String>) -> Vec<Cpv1Step> {
+    let mut out: Vec<Cpv1Step> = Vec::new();
+    for raw in pack.lines() {
+        let line = raw.trim_end_matches('\r');
+        if !line.starts_with("STEP ") {
+            continue;
+        }
+        let mut kind: Option<String> = None;
+        let mut label: Option<String> = None;
+        let mut confidence: Option<f32> = None;
+        let mut ev: Option<String> = None;
+
+        for token in line.split_whitespace() {
+            if let Some(v) = token.strip_prefix("kind=") {
+                kind = Some(v.to_string());
+                continue;
+            }
+            if let Some(v) = token.strip_prefix("label=") {
+                label = dict.get(v).cloned().or_else(|| Some(v.to_string()));
+                continue;
+            }
+            if let Some(v) = token.strip_prefix("conf=") {
+                confidence = v.parse::<f32>().ok();
+                continue;
+            }
+            if let Some(v) = token.strip_prefix("ev=") {
+                ev = Some(v.to_string());
+                continue;
+            }
+        }
+
+        let (Some(kind), Some(label), Some(ev)) = (kind, label, ev) else {
+            continue;
+        };
+        out.push(Cpv1Step {
+            kind,
+            label,
+            confidence,
+            ev,
+        });
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Cpv1Anchor {
+    pub(crate) kind: String,
+    pub(crate) label: Option<String>,
+    pub(crate) file: Option<String>,
+    pub(crate) confidence: Option<f32>,
+    pub(crate) ev: String,
+}
+
+pub(crate) fn parse_cpv1_anchor_details(
+    pack: &str,
+    dict: &HashMap<String, String>,
+) -> Vec<Cpv1Anchor> {
+    let mut out: Vec<Cpv1Anchor> = Vec::new();
+    for raw in pack.lines() {
+        let line = raw.trim_end_matches('\r');
+        if !line.starts_with("ANCHOR ") {
+            continue;
+        }
+        let mut kind: Option<String> = None;
+        let mut label: Option<String> = None;
+        let mut file: Option<String> = None;
+        let mut confidence: Option<f32> = None;
+        let mut ev: Option<String> = None;
+
+        for token in line.split_whitespace() {
+            if let Some(v) = token.strip_prefix("kind=") {
+                kind = Some(v.to_string());
+                continue;
+            }
+            if let Some(v) = token.strip_prefix("label=") {
+                label = dict.get(v).cloned().or_else(|| Some(v.to_string()));
+                continue;
+            }
+            if let Some(v) = token.strip_prefix("file=") {
+                file = dict.get(v).cloned().or_else(|| Some(v.to_string()));
+                continue;
+            }
+            if let Some(v) = token.strip_prefix("conf=") {
+                confidence = v.parse::<f32>().ok();
+                continue;
+            }
+            if let Some(v) = token.strip_prefix("ev=") {
+                ev = Some(v.to_string());
+                continue;
+            }
+        }
+
+        let (Some(kind), Some(ev)) = (kind, ev) else {
+            continue;
+        };
+        out.push(Cpv1Anchor {
+            kind,
+            label,
+            file,
+            confidence,
+            ev,
+        });
+    }
+    out
+}
