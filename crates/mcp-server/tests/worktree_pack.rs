@@ -259,6 +259,15 @@ jobs:
         text.contains(".github/workflows/ci.yml"),
         "expected purpose anchors to mention CI workflow file (got: {text})"
     );
+    assert!(
+        text.contains("anchors:") && text.contains("ci="),
+        "expected purpose anchors to be rendered (got: {text})"
+    );
+    assert!(
+        text.contains("next_actions:")
+            && (text.contains("tool=evidence_fetch") || text.contains("\"evidence_fetch\"")),
+        "expected evidence_fetch follow-up in full mode (got: {text})"
+    );
 
     Ok(())
 }

@@ -76,6 +76,24 @@ Meaning dataset fields are intentionally richer than retrieval datasets:
 - `forbid_map_paths`: paths that must not appear in the CP map (noise budget)
 - `min_token_saved`: minimum `token_saved` ratio (prevents “quality by flooding”)
 
+### 2.3) Onboarding atlas surfaces (`atlas_pack`, `worktree_pack`)
+
+`atlas_pack` and `worktree_pack` are **product surfaces** (they drive the first 1–3 tool calls an
+agent makes). They are evaluated in CI via **synthetic repo tests**, because they combine multiple
+subsystems (meaning CP + worktree inspection + next-actions).
+
+We gate them using:
+
+- `crates/mcp-server/tests/atlas_pack.rs` (integration: CP + worktrees + next-actions wiring)
+- `crates/mcp-server/tests/atlas_pack_quality.rs` (noise suppression + determinism for meaning)
+- `crates/mcp-server/tests/worktree_pack.rs` (worktree listing + purpose summary + evidence follow-up)
+
+The invariants are intentionally **evidence-first**:
+
+- No “what to do next” without an evidence-backed anchor (`evidence_fetch` items).
+- Deterministic behavior for the same root + query under bounded budgets.
+- Noise budgets prevent dataset/build/output mass from dominating onboarding maps.
+
 ## 3) Metrics we gate
 
 At minimum, we track:
@@ -95,6 +113,12 @@ For meaning-mode specifically, we also gate:
 - anchor recall by category (CI/contracts/canon/entrypoints)
 - map noise suppression (generated/dataset/binary “mass” must not win)
 - token efficiency (`token_saved` floors on the stub zoo)
+
+For onboarding atlas surfaces, we gate:
+
+- evidence coverage (next-actions include `evidence_fetch` when anchors exist)
+- worktree visibility (worktrees appear with deterministic pagination)
+- purpose signal presence (in `response_mode=full`, canon loop + anchor hints render without flooding)
 
 ## 4) CI gates (required)
 

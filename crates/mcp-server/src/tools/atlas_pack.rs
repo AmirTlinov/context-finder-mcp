@@ -232,7 +232,7 @@ pub(super) async fn compute_atlas_pack_result(
     let meaning_request = meaning::MeaningPackRequest {
         query: query.clone(),
         map_depth: Some(2),
-        map_limit: Some(12),
+        map_limit: None,
         max_chars: Some(meaning_max_chars),
     };
     let meaning_result = meaning::meaning_pack(root, root_display, &meaning_request)

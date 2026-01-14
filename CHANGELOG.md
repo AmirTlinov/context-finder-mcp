@@ -13,6 +13,7 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   in MCP `.context` output when `response_mode=full` (keeps defaults low-noise).
 - Meaning eval: expanded the stub smoke dataset with additional repo archetypes
   (monorepo/workspace, “no docs but CI+contracts”, generated/noise-heavy trees).
+- Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.
 - Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
   (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
 - Onboarding atlas: new `atlas_pack` tool returns a meaning-first CP (canon/CI/contracts/entrypoints)
@@ -31,5 +32,7 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   incorrectly label CI setup steps as “test” canon.
 - Capabilities: the recommended `start` route now points to `atlas_pack` (meaning CP + worktrees)
   instead of `read_pack`.
+- Onboarding atlas: `atlas_pack` now lets meaning-mode choose signal-driven map defaults (dataset-heavy
+  vs monorepo) instead of hardcoding a fixed map limit.
 - Batch: accept legacy `items: string[]` payloads (best-effort parsing) for compatibility with
   older clients, while keeping batch v2 `$ref` support for structured callers.
