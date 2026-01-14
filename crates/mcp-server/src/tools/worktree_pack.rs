@@ -33,7 +33,7 @@ const MAX_PURPOSE_LABEL_CHARS: usize = 120;
 const PURPOSE_SUMMARY_QUERY: &str =
     "canon loop (run/test/verify), CI gates, contracts, entrypoints, artifacts";
 const PURPOSE_MAX_WORKTREES_PER_PAGE: usize = 5;
-const PURPOSE_MEANING_MAX_CHARS: usize = 1_400;
+const PURPOSE_MEANING_MAX_CHARS: usize = 3_000;
 const PURPOSE_MAX_CANON_STEPS: usize = 4;
 const PURPOSE_MAX_ANCHORS: usize = 6;
 

@@ -173,6 +173,7 @@ async fn worktree_pack_full_includes_purpose_summary_when_available() -> Result<
     std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
     std::fs::create_dir_all(root.join(".github").join("workflows"))
         .context("mkdir .github/workflows")?;
+    std::fs::create_dir_all(root.join("docs").join("contracts")).context("mkdir docs/contracts")?;
 
     std::fs::write(
         root.join("Cargo.toml"),
@@ -205,6 +206,16 @@ jobs:
 "#,
     )
     .context("write .github/workflows/ci.yml")?;
+
+    for idx in 0..60u32 {
+        std::fs::write(
+            root.join("docs")
+                .join("contracts")
+                .join(format!("contract_{idx:02}.md")),
+            format!("# Contract {idx}\n\nThis is a synthetic contract doc.\n\n- field: value\n"),
+        )
+        .with_context(|| format!("write docs/contracts/contract_{idx:02}.md"))?;
+    }
 
     git(root, &["add", "."]).await?;
     git(root, &["commit", "-m", "init"]).await?;

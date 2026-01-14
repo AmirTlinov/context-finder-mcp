@@ -232,6 +232,65 @@ async fn batch_v2_respects_max_chars_budget() -> Result<()> {
 }
 
 #[tokio::test]
+async fn batch_accepts_legacy_string_items_for_back_compat() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("src").join("a.txt"), "hello\n").context("write a.txt")?;
+
+    // This matches older clients that send `items: string[]` where each item is:
+    // "<tool> <json?>".
+    let args = serde_json::json!({
+        "version": 2,
+        "path": root.to_string_lossy(),
+        "max_chars": 5000,
+        "items": [
+            "list_files {\"file_pattern\":\"src/*\",\"limit\":10}"
+        ]
+    });
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "batch".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling batch")??;
+
+    assert_ne!(result.is_error, Some(true), "batch returned error");
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("batch missing text output")?;
+    assert!(
+        text.contains("tool=list_files status=ok"),
+        "expected list_files to succeed"
+    );
+    assert!(text.contains("src/a.txt"), "expected src/a.txt in output");
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn batch_v2_ref_to_failed_item_data_returns_error() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 

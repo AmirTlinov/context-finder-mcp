@@ -1,6 +1,8 @@
+use anyhow::Context as _;
 use context_indexer::ToolMeta;
 use context_protocol::{BudgetTruncation, ErrorEnvelope, ToolNextAction};
 use rmcp::schemars;
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 
 use super::response_mode::ResponseMode;
@@ -70,6 +72,7 @@ pub struct BatchRequest {
 
     /// Batch items to execute.
     #[schemars(description = "Batch items to execute.")]
+    #[serde(deserialize_with = "deserialize_batch_items")]
     pub items: Vec<BatchItem>,
 }
 
@@ -92,6 +95,72 @@ pub struct BatchItem {
     /// The wrapper is recognized only when the object contains exactly `$ref` (+ optional `$default`).
     #[serde(default, alias = "payload")]
     pub input: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BatchItemWire {
+    Object(BatchItem),
+    String(String),
+}
+
+fn deserialize_batch_items<'de, D>(deserializer: D) -> Result<Vec<BatchItem>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let items: Vec<BatchItemWire> = Vec::deserialize(deserializer)?;
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(idx, item)| match item {
+            BatchItemWire::Object(item) => Ok(item),
+            BatchItemWire::String(raw) => {
+                parse_legacy_batch_item(idx, &raw).map_err(D::Error::custom)
+            }
+        })
+        .collect()
+}
+
+fn parse_legacy_batch_item(index: usize, raw: &str) -> anyhow::Result<BatchItem> {
+    let text = raw.trim();
+    if text.is_empty() {
+        anyhow::bail!("batch item string must be non-empty");
+    }
+
+    // Allow embedding a full BatchItem JSON object as a string.
+    if text.starts_with('{') {
+        let value: serde_json::Value = serde_json::from_str(text)
+            .with_context(|| format!("parse batch item #{index} as JSON"))?;
+        let item: BatchItem = serde_json::from_value(value)
+            .with_context(|| format!("decode batch item #{index} JSON into BatchItem"))?;
+        return Ok(item);
+    }
+
+    // Legacy DSL: "<tool> <json?>"
+    // Example: "meaning_pack {\"query\":\"...\"}"
+    let mut parts = text.splitn(2, char::is_whitespace);
+    let tool_raw = parts.next().unwrap_or("").trim();
+    if tool_raw.is_empty() {
+        anyhow::bail!("batch item #{index}: missing tool name");
+    }
+    let tool: BatchToolName =
+        serde_json::from_value(serde_json::Value::String(tool_raw.to_string()))
+            .with_context(|| format!("batch item #{index}: invalid tool '{tool_raw}'"))?;
+
+    let rest = parts.next().unwrap_or("").trim();
+    let input = if rest.is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str(rest).with_context(|| {
+            format!("batch item #{index}: parse input JSON for tool '{tool_raw}'")
+        })?
+    };
+
+    Ok(BatchItem {
+        id: format!("legacy_{index}_{tool_raw}"),
+        tool,
+        input,
+    })
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]

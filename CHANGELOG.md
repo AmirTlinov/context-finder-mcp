@@ -25,7 +25,11 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Worktree atlas: in `response_mode=full`, `worktree_pack` now includes a bounded, evidence-backed
   purpose summary per worktree (canon loop + anchors like CI/contracts) and suggests an
   `evidence_fetch` follow-up for quick verification.
+- Worktree atlas: improve large-repo behavior by increasing the internal meaning budget used for
+  purpose summaries (prevents “dict-only truncation” that could suppress canon/anchor signals).
 - Meaning canon extraction: avoid false positives where `checkout` matched `check`, which could
   incorrectly label CI setup steps as “test” canon.
 - Capabilities: the recommended `start` route now points to `atlas_pack` (meaning CP + worktrees)
   instead of `read_pack`.
+- Batch: accept legacy `items: string[]` payloads (best-effort parsing) for compatibility with
+  older clients, while keeping batch v2 `$ref` support for structured callers.

@@ -48,7 +48,6 @@ Start with one of these:
 - `atlas_pack` — onboarding atlas: meaning-first CP + worktrees (answers “how to run/verify”, “where are CI gates/contracts/entrypoints”).
 - `read_pack` — daily “project memory”: stable repo facts + key snippets under one `max_chars` budget.
 - `repo_onboarding_pack` — onboarding: map + a few key docs under one budget.
-- `atlas_pack` — onboarding atlas: meaning CP + worktrees; designed to quickly answer “where is the canon loop / CI gates / contracts / entrypoints”.
 - `meaning_pack` — meanings-first orientation: a compact “Cognitive Pack (CP)” with evidence pointers (high signal, low tokens).
 - `meaning_focus` — semantic zoom-in around a specific file/dir (scoped CP + evidence pointers).
 - `worktree_pack` — worktree/branch atlas: list active worktrees and what is being worked on (best when a repo uses `.worktrees/`; in `response_mode=full` includes evidence-backed canon/CI/contracts summary).
