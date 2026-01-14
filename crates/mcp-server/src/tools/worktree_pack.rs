@@ -1,0 +1,529 @@
+use anyhow::{Context as AnyhowContext, Result};
+use context_indexer::ToolMeta;
+use context_protocol::ToolNextAction;
+use std::path::{Path, PathBuf};
+use tokio::process::Command;
+
+use super::cursor::{cursor_fingerprint, decode_cursor, encode_cursor, CURSOR_VERSION};
+use super::schemas::response_mode::ResponseMode;
+use super::schemas::worktree_pack::{
+    WorktreeInfo, WorktreePackCursorV1, WorktreePackRequest, WorktreePackResult,
+};
+
+const VERSION: u32 = 1;
+const DEFAULT_MAX_CHARS: usize = 2_000;
+const MIN_MAX_CHARS: usize = 800;
+const MAX_MAX_CHARS: usize = 500_000;
+
+const DEFAULT_LIMIT: usize = 20;
+const MAX_LIMIT: usize = 200;
+
+const MAX_DIRTY_PATHS_PER_WORKTREE: usize = 6;
+const MAX_HEAD_SUBJECT_CHARS: usize = 96;
+
+#[derive(Debug, Clone)]
+struct GitWorktreeInfo {
+    path: PathBuf,
+    head: Option<String>,
+    branch: Option<String>,
+    detached: bool,
+}
+
+fn normalize_query(query: Option<&str>) -> Option<String> {
+    query
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+fn short_branch_name(branch: &str) -> String {
+    branch
+        .trim()
+        .strip_prefix("refs/heads/")
+        .unwrap_or(branch.trim())
+        .to_string()
+}
+
+fn display_worktree_path(root: &Path, worktree: &Path) -> String {
+    if let Ok(rel) = worktree.strip_prefix(root) {
+        let rel = rel.to_string_lossy().to_string();
+        if rel.is_empty() {
+            ".".to_string()
+        } else {
+            rel
+        }
+    } else {
+        worktree.to_string_lossy().to_string()
+    }
+}
+
+fn worktree_name(worktree: &Path) -> Option<String> {
+    worktree
+        .file_name()
+        .map(|v| v.to_string_lossy().to_string())
+        .filter(|s| !s.trim().is_empty())
+}
+
+async fn git_worktree_list(root: &Path) -> Option<Vec<GitWorktreeInfo>> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("worktree")
+        .arg("list")
+        .arg("--porcelain")
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut out_worktrees: Vec<GitWorktreeInfo> = Vec::new();
+    let mut current: Option<GitWorktreeInfo> = None;
+
+    for raw in text.lines() {
+        let line = raw.trim_end_matches('\r');
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(prev) = current.take() {
+                out_worktrees.push(prev);
+            }
+            current = Some(GitWorktreeInfo {
+                path: PathBuf::from(path.trim()),
+                head: None,
+                branch: None,
+                detached: false,
+            });
+            continue;
+        }
+        let Some(ref mut wt) = current else {
+            continue;
+        };
+        if let Some(head) = line.strip_prefix("HEAD ") {
+            let head = head.trim();
+            if !head.is_empty() {
+                wt.head = Some(head.to_string());
+            }
+            continue;
+        }
+        if let Some(branch) = line.strip_prefix("branch ") {
+            let branch = branch.trim();
+            if !branch.is_empty() {
+                wt.branch = Some(short_branch_name(branch));
+            }
+            continue;
+        }
+        if line == "detached" {
+            wt.detached = true;
+        }
+    }
+    if let Some(last) = current.take() {
+        out_worktrees.push(last);
+    }
+    if out_worktrees.is_empty() {
+        None
+    } else {
+        Some(out_worktrees)
+    }
+}
+
+async fn git_head_subject(worktree: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .arg("log")
+        .arg("-1")
+        .arg("--pretty=%s")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let subject = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if subject.is_empty() {
+        None
+    } else {
+        Some(subject)
+    }
+}
+
+async fn git_head_short(worktree: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .arg("rev-parse")
+        .arg("--short")
+        .arg("HEAD")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if head.is_empty() {
+        None
+    } else {
+        Some(head)
+    }
+}
+
+async fn git_dirty_paths(worktree: &Path, limit: usize) -> Option<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .arg("status")
+        .arg("--porcelain")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut paths: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        if paths.len() >= limit {
+            break;
+        }
+        // Porcelain format: XY <path> (renames: <old> -> <new>)
+        let line = raw.trim_end_matches('\r');
+        if line.len() < 4 {
+            continue;
+        }
+        let rest = line[3..].trim();
+        if rest.is_empty() {
+            continue;
+        }
+        let path = if let Some((_, new)) = rest.rsplit_once("->") {
+            new.trim()
+        } else {
+            rest
+        };
+        if !path.is_empty() {
+            paths.push(path.to_string());
+        }
+    }
+    Some(paths)
+}
+
+fn query_score(query: &str, worktree: &WorktreeInfo) -> i32 {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return 0;
+    }
+    let hay = [
+        worktree.name.as_deref().unwrap_or(""),
+        worktree.branch.as_deref().unwrap_or(""),
+        worktree.head_subject.as_deref().unwrap_or(""),
+        worktree.path.as_str(),
+    ]
+    .join(" ")
+    .to_lowercase();
+    let mut score = 0i32;
+    for token in query.split_whitespace().filter(|t| t.len() >= 2) {
+        if hay.contains(token) {
+            score += 3;
+        }
+    }
+    if worktree.dirty.unwrap_or(false) {
+        score += 2;
+    }
+    score
+}
+
+fn clamp_max_chars(max_chars: Option<usize>) -> usize {
+    max_chars
+        .unwrap_or(DEFAULT_MAX_CHARS)
+        .clamp(MIN_MAX_CHARS, MAX_MAX_CHARS)
+}
+
+fn clamp_limit(limit: Option<usize>) -> usize {
+    limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT)
+}
+
+fn worktree_pack_content_budget(max_chars: usize) -> usize {
+    const MIN_CONTENT_CHARS: usize = 160;
+    const MAX_RESERVE_CHARS: usize = 4_096;
+
+    // Reserve headroom for `.context` envelope lines + provenance note + an optional cursor.
+    let base_reserve = 220usize;
+    let proportional = max_chars / 18;
+    let mut reserve = base_reserve.max(proportional).min(MAX_RESERVE_CHARS);
+    reserve = reserve.min(max_chars.saturating_sub(MIN_CONTENT_CHARS));
+    max_chars.saturating_sub(reserve).max(1)
+}
+
+fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
+    let mut lines = Vec::new();
+    let display_path = worktree
+        .display_path
+        .as_deref()
+        .unwrap_or(worktree.path.as_str());
+    let mut line = format!("WT path={display_path}");
+    if let Some(branch) = worktree.branch.as_deref() {
+        line.push_str(&format!(" branch={branch}"));
+    }
+    if let Some(head) = worktree.head.as_deref() {
+        line.push_str(&format!(" head={head}"));
+    }
+    if let Some(subject) = worktree.head_subject.as_deref() {
+        let mut subject = subject.trim().to_string();
+        if subject.chars().count() > MAX_HEAD_SUBJECT_CHARS {
+            subject = crate::tools::util::truncate_to_chars(&subject, MAX_HEAD_SUBJECT_CHARS);
+            subject.push('…');
+        }
+        if !subject.is_empty() {
+            line.push_str(&format!(" subject={}", serde_json::json!(subject)));
+        }
+    }
+    if let Some(dirty) = worktree.dirty {
+        line.push_str(if dirty { " dirty=1" } else { " dirty=0" });
+    }
+    lines.push(line);
+    if let Some(paths) = worktree.dirty_paths.as_ref() {
+        if !paths.is_empty() {
+            let joined = paths
+                .iter()
+                .take(MAX_DIRTY_PATHS_PER_WORKTREE)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("  dirty_paths: {joined}"));
+        }
+    }
+    lines
+}
+
+pub(super) fn decode_worktree_pack_cursor(cursor: &str) -> Result<WorktreePackCursorV1> {
+    decode_cursor(cursor).with_context(|| "decode worktree_pack cursor")
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn compute_worktree_pack_result(
+    root: &Path,
+    root_display: &str,
+    request: &WorktreePackRequest,
+    cursor: Option<&str>,
+) -> Result<WorktreePackResult> {
+    let response_mode = request.response_mode.unwrap_or(ResponseMode::Minimal);
+    let max_chars = clamp_max_chars(request.max_chars);
+    let limit = clamp_limit(request.limit);
+    let query = normalize_query(request.query.as_deref());
+
+    let mut offset: usize = 0;
+    if let Some(cursor) = cursor {
+        let decoded = decode_worktree_pack_cursor(cursor)?;
+        if decoded.v != CURSOR_VERSION || decoded.tool != "worktree_pack" {
+            anyhow::bail!("Invalid cursor: wrong tool/version");
+        }
+        if let Some(root_hash) = decoded.root_hash {
+            let expected = cursor_fingerprint(root_display);
+            if root_hash != expected {
+                anyhow::bail!("Invalid cursor: different root");
+            }
+        }
+        if decoded.limit != 0 && decoded.limit != limit {
+            anyhow::bail!("Invalid cursor: different limit");
+        }
+        if decoded.query != query {
+            anyhow::bail!("Invalid cursor: different query");
+        }
+        offset = decoded.offset;
+    }
+
+    let git_worktrees = git_worktree_list(root).await.unwrap_or_else(|| {
+        vec![GitWorktreeInfo {
+            path: root.to_path_buf(),
+            head: None,
+            branch: None,
+            detached: false,
+        }]
+    });
+
+    let mut worktrees: Vec<WorktreeInfo> = Vec::new();
+    for wt in git_worktrees {
+        let absolute_path = wt.path.to_string_lossy().to_string();
+        let display_candidate = display_worktree_path(root, &wt.path);
+        let display_path = if display_candidate != absolute_path {
+            Some(display_candidate)
+        } else {
+            None
+        };
+        let name = worktree_name(&wt.path);
+        let branch = if wt.detached { None } else { wt.branch.clone() };
+        // HEAD short + subject come from the worktree itself (best-effort).
+        let head_short = git_head_short(&wt.path).await;
+        let head_subject = git_head_subject(&wt.path).await;
+        let dirty_paths = git_dirty_paths(&wt.path, MAX_DIRTY_PATHS_PER_WORKTREE).await;
+        let dirty = dirty_paths.as_ref().map(|v| !v.is_empty());
+        let head = head_short.or_else(|| {
+            wt.head.as_deref().and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.chars().take(12).collect::<String>())
+                }
+            })
+        });
+        worktrees.push(WorktreeInfo {
+            path: absolute_path,
+            display_path,
+            name,
+            branch,
+            head,
+            head_subject,
+            dirty,
+            dirty_paths,
+        });
+    }
+
+    // Deterministic ranking: query relevance (if present) → dirty-first → stable path.
+    if let Some(q) = query.as_deref() {
+        worktrees.sort_by(|a, b| {
+            let sa = query_score(q, a);
+            let sb = query_score(q, b);
+            sb.cmp(&sa)
+                .then_with(|| b.dirty.unwrap_or(false).cmp(&a.dirty.unwrap_or(false)))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+    } else {
+        worktrees.sort_by(|a, b| {
+            b.dirty
+                .unwrap_or(false)
+                .cmp(&a.dirty.unwrap_or(false))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+    }
+
+    let total_worktrees = worktrees.len();
+    let mut returned: Vec<WorktreeInfo> = Vec::new();
+    let mut used_chars: usize = 0;
+    let content_budget = worktree_pack_content_budget(max_chars);
+    let mut next_offset = offset;
+
+    for wt in worktrees.into_iter().skip(offset) {
+        if returned.len() >= limit {
+            break;
+        }
+        let rendered_lines = render_worktree_lines(&wt);
+        let rendered_chars = rendered_lines
+            .iter()
+            .map(|line| line.chars().count().saturating_add(1))
+            .sum::<usize>();
+        if !returned.is_empty() && used_chars.saturating_add(rendered_chars) > content_budget {
+            break;
+        }
+        used_chars = used_chars.saturating_add(rendered_chars);
+        returned.push(wt);
+        next_offset = next_offset.saturating_add(1);
+    }
+
+    let truncated = next_offset < total_worktrees;
+    let next_cursor = if truncated {
+        let cursor = WorktreePackCursorV1 {
+            v: CURSOR_VERSION,
+            tool: "worktree_pack".to_string(),
+            root: None,
+            root_hash: Some(cursor_fingerprint(root_display)),
+            limit,
+            offset: next_offset,
+            query: query.clone(),
+        };
+        encode_cursor(&cursor).ok()
+    } else {
+        None
+    };
+
+    let next_actions = if response_mode == ResponseMode::Full {
+        let mut actions: Vec<ToolNextAction> = Vec::new();
+        if let Some(best) = returned.first() {
+            // Suggest drilling into the highest-ranked worktree.
+            let drill_query = request
+                .query
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| {
+                    "orient on canon loop (run/test), CI gates, contracts, entrypoints, artifacts"
+                        .to_string()
+                });
+            actions.push(ToolNextAction {
+                tool: "meaning_pack".to_string(),
+                args: serde_json::json!({
+                    "path": best.path.clone(),
+                    "query": drill_query,
+                    "max_chars": 2000,
+                    "response_mode": "full",
+                }),
+                reason: "Drill into the most relevant worktree with a meanings-first pack"
+                    .to_string(),
+            });
+        }
+        if truncated {
+            if let Some(cursor) = next_cursor.clone() {
+                actions.push(ToolNextAction {
+                    tool: "worktree_pack".to_string(),
+                    args: serde_json::json!({
+                        "path": request.path,
+                        "cursor": cursor,
+                        "response_mode": "facts",
+                    }),
+                    reason: "Continue listing worktrees via cursor pagination".to_string(),
+                });
+            }
+        }
+        if actions.is_empty() {
+            None
+        } else {
+            Some(actions)
+        }
+    } else {
+        None
+    };
+
+    Ok(WorktreePackResult {
+        total_worktrees: if response_mode == ResponseMode::Minimal {
+            None
+        } else {
+            Some(total_worktrees)
+        },
+        returned: if response_mode == ResponseMode::Minimal {
+            None
+        } else {
+            Some(returned.len())
+        },
+        used_chars: if response_mode == ResponseMode::Minimal {
+            None
+        } else {
+            Some(used_chars)
+        },
+        limit: if response_mode == ResponseMode::Minimal {
+            None
+        } else {
+            Some(limit)
+        },
+        max_chars: if response_mode == ResponseMode::Minimal {
+            None
+        } else {
+            Some(max_chars)
+        },
+        truncated,
+        next_cursor,
+        next_actions,
+        meta: Some(ToolMeta::default()),
+        worktrees: returned,
+    })
+}
+
+pub(super) fn render_worktree_pack_block(result: &WorktreePackResult) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("WTV{VERSION}\n"));
+    for wt in &result.worktrees {
+        for line in render_worktree_lines(wt) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}

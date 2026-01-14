@@ -6,6 +6,7 @@ use super::super::{
     EvidenceFetchRequest, ExplainRequest, FileSliceRequest, GrepContextRequest, HelpRequest,
     ImpactRequest, ListFilesRequest, MapRequest, McpError, MeaningFocusRequest, MeaningPackRequest,
     OverviewRequest, ResponseMode, SearchRequest, TextSearchRequest, ToolMeta, TraceRequest,
+    WorktreePackRequest,
 };
 use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::schemas::batch::BatchItem;
@@ -92,6 +93,7 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::ContextPack => "context_pack",
         BatchToolName::MeaningPack => "meaning_pack",
         BatchToolName::MeaningFocus => "meaning_focus",
+        BatchToolName::WorktreePack => "worktree_pack",
         BatchToolName::EvidenceFetch => "evidence_fetch",
         BatchToolName::Impact => "impact",
         BatchToolName::Trace => "trace",
@@ -210,6 +212,11 @@ async fn dispatch_tool(
             MeaningFocusRequest,
             super::meaning_focus::meaning_focus,
             "meaning_focus"
+        ),
+        BatchToolName::WorktreePack => typed_call!(
+            WorktreePackRequest,
+            super::worktree_pack::worktree_pack,
+            "worktree_pack"
         ),
         BatchToolName::EvidenceFetch => typed_call!(
             EvidenceFetchRequest,

@@ -13,9 +13,10 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   in MCP `.context` output when `response_mode=full` (keeps defaults low-noise).
 - Meaning eval: expanded the stub smoke dataset with additional repo archetypes
   (monorepo/workspace, “no docs but CI+contracts”, generated/noise-heavy trees).
+- Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
+  (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
 
 ### Changed
 
 - Meaning degradation: under tight budgets, the CP shrink policy preserves multiple
   `ENTRY` points (better behavior for monorepos / workspaces).
-

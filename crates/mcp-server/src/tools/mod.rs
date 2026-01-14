@@ -24,5 +24,6 @@ mod repo_onboarding_pack;
 mod schemas;
 mod secrets;
 mod util;
+mod worktree_pack;
 
 pub use dispatch::ContextFinderService;

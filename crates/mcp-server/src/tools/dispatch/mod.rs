@@ -57,7 +57,9 @@ use super::schemas::text_search::{
     TextSearchResult,
 };
 use super::schemas::trace::{TraceRequest, TraceResult, TraceStep};
+use super::schemas::worktree_pack::WorktreePackRequest;
 use super::util::{path_has_extension_ignore_ascii_case, unix_ms};
+use super::worktree_pack::{compute_worktree_pack_result, render_worktree_pack_block};
 use anyhow::{Context as AnyhowContext, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use context_graph::{
@@ -3368,6 +3370,19 @@ impl ContextFinderService {
     ) -> Result<CallToolResult, McpError> {
         Ok(strip_structured_content(
             router::meaning_focus::meaning_focus(self, request).await?,
+        ))
+    }
+
+    /// Worktree atlas: list git worktrees/branches and what is being worked on.
+    #[tool(
+        description = "Worktree atlas: list git worktrees/branches and what is being worked on (bounded, deterministic). Provides next actions to drill down via meaning tools."
+    )]
+    pub async fn worktree_pack(
+        &self,
+        Parameters(request): Parameters<WorktreePackRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::worktree_pack::worktree_pack(self, request).await?,
         ))
     }
 

@@ -21,5 +21,6 @@ pub mod response_mode;
 pub mod search;
 pub mod text_search;
 pub mod trace;
+pub mod worktree_pack;
 
 pub use context_protocol::ToolNextAction;

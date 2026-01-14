@@ -28,6 +28,10 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Meaning-first semantic zoom-in around a file/dir (scoped CP + evidence).",
     },
     ToolDescriptor {
+        name: "worktree_pack",
+        summary: "Worktree atlas: branches/worktrees + what is being worked on.",
+    },
+    ToolDescriptor {
         name: "read_pack",
         summary: "One-call file/grep/query/onboarding with cursor-only continuation.",
     },

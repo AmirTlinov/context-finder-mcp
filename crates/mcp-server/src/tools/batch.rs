@@ -49,6 +49,7 @@ pub(super) fn prepare_item_input(
             | BatchToolName::GrepContext
             | BatchToolName::MeaningPack
             | BatchToolName::MeaningFocus
+            | BatchToolName::WorktreePack
             | BatchToolName::EvidenceFetch
     ) {
         if let serde_json::Value::Object(ref mut map) = input {

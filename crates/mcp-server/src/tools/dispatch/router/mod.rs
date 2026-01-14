@@ -24,3 +24,4 @@ pub(super) mod search;
 pub(super) mod semantic_fallback;
 pub(super) mod text_search;
 pub(super) mod trace;
+pub(super) mod worktree_pack;

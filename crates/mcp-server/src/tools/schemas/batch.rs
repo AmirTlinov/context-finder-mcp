@@ -21,6 +21,7 @@ pub enum BatchToolName {
     ContextPack,
     MeaningPack,
     MeaningFocus,
+    WorktreePack,
     EvidenceFetch,
     Impact,
     Trace,
