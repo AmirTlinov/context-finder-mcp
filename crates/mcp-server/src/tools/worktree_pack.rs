@@ -746,6 +746,28 @@ async fn compute_worktree_purpose_summary(
 }
 
 fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
+    fn render_worktree_hint(worktree: &WorktreeInfo) -> Option<String> {
+        let mut tags: Vec<&'static str> = Vec::new();
+        if worktree.branch.is_none() && worktree.head.is_some() {
+            tags.push("detached_head");
+        }
+        if worktree.behind.unwrap_or(0) > 0 {
+            tags.push("sync_base");
+        }
+        if worktree.dirty.unwrap_or(false) {
+            tags.push("uncommitted_changes");
+        }
+        if worktree.ahead.unwrap_or(0) > 0 {
+            tags.push("ahead_of_base");
+        }
+
+        if tags.is_empty() {
+            None
+        } else {
+            Some(format!("hint: {}", tags.join(" ")))
+        }
+    }
+
     let mut lines = Vec::new();
     let display_path = worktree
         .display_path
@@ -783,6 +805,9 @@ fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
         line.push_str(&format!(" behind={behind}"));
     }
     lines.push(line);
+    if let Some(hint) = render_worktree_hint(worktree) {
+        lines.push(format!("  {hint}"));
+    }
     if let Some(paths) = worktree.dirty_paths.as_ref() {
         if !paths.is_empty() {
             let joined = paths

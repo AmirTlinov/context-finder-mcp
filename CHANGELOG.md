@@ -44,6 +44,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Worktree atlas: `worktree_pack` now includes deterministic activity and divergence hints
   (`last_commit_date`, `ahead`, `behind`) and uses activity in ranking (dirty → last activity → path)
   to surface “what’s active” first without relying on wall-clock time.
+- Worktree atlas: `worktree_pack` headers now include a compact `hint:` line with stable tags
+  (e.g. `sync_base`, `ahead_of_base`, `uncommitted_changes`, `detached_head`) so agents can
+  quickly choose the next move without re-parsing freeform text.
 - Worktree atlas: suppress `.worktrees/` from dirty path samples (worktree storage is workspace
   noise, not a meaningful repo change).
 - Worktree atlas: improve large-repo behavior by increasing the internal meaning budget used for

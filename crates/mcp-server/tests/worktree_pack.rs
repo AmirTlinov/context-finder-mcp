@@ -208,12 +208,18 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
     .await?;
 
     let mut w1_header: Option<String> = None;
+    let mut w1_hint_ahead = false;
+    let mut in_w1 = false;
     for line in text.lines() {
-        if line.starts_with("WT ")
-            && (line.contains(".worktrees/w1") || line.contains(".worktrees\\w1"))
-        {
-            w1_header = Some(line.to_string());
-            break;
+        if line.starts_with("WT ") {
+            in_w1 = line.contains(".worktrees/w1") || line.contains(".worktrees\\w1");
+            if in_w1 {
+                w1_header = Some(line.to_string());
+            }
+            continue;
+        }
+        if in_w1 && line.trim_start().starts_with("hint:") && line.contains("ahead_of_base") {
+            w1_hint_ahead = true;
         }
     }
     let w1_header = w1_header.context("failed to find worktree w1 header")?;
@@ -229,6 +235,10 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
     assert!(
         w1_header.contains("ahead=1") && w1_header.contains("behind=0"),
         "expected w1 to be 1 ahead and 0 behind base: {w1_header}"
+    );
+    assert!(
+        w1_hint_ahead,
+        "expected w1 to include hint tag ahead_of_base (got: {text})"
     );
 
     Ok(())
