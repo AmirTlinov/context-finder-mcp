@@ -54,6 +54,202 @@ struct GitHeadMeta {
     subject: Option<String>,
 }
 
+fn worktree_area_kind_rank(kind: &str) -> usize {
+    match kind {
+        "interfaces" => 0,
+        "core" => 1,
+        "ci" => 2,
+        "docs" => 3,
+        "tooling" => 4,
+        "infra" => 5,
+        "outputs" => 6,
+        "experiments" => 7,
+        _ => 99,
+    }
+}
+
+fn classify_worktree_changed_path(path: &str) -> Option<&'static str> {
+    let lc = path.trim().to_ascii_lowercase();
+    if lc.is_empty() {
+        return None;
+    }
+
+    // Worktree stores are workspace noise; don't let them claim a zone.
+    if lc == ".worktrees" || lc.starts_with(".worktrees/") {
+        return None;
+    }
+
+    // Contracts/protocols are the most important "what changed" signal.
+    let basename = lc.rsplit('/').next().unwrap_or(lc.as_str());
+    let is_dir_marker = lc.ends_with('/') || basename.is_empty();
+    let is_contract_like_ext = lc.ends_with(".proto")
+        || lc.ends_with(".avsc")
+        || lc.ends_with(".yaml")
+        || lc.ends_with(".yml")
+        || lc.ends_with(".json")
+        || lc.ends_with(".toml")
+        || lc.ends_with(".md")
+        || lc.ends_with(".rst")
+        || lc.ends_with(".txt");
+    let is_contract_dir = lc.starts_with("contracts/")
+        || lc.starts_with("proto/")
+        || lc.starts_with("docs/contracts/")
+        || lc.starts_with("docs/contract/")
+        || lc.starts_with("docs/spec/")
+        || lc.starts_with("docs/specs/")
+        || lc.starts_with("docs/protocol/")
+        || lc.starts_with("docs/protocols/")
+        || lc.contains("/contracts/")
+        || lc.contains("/contract/")
+        || lc.contains("/schemas/")
+        || lc.contains("/schema/")
+        || lc.contains("/specs/")
+        || lc.contains("/spec/")
+        || lc.contains("/protocols/")
+        || lc.contains("/protocol/");
+    if is_contract_dir
+        && (is_contract_like_ext || is_dir_marker)
+        && !matches!(
+            basename,
+            "readme.md" | "readme.rst" | "readme.txt" | "index.md"
+        )
+    {
+        return Some("interfaces");
+    }
+    if basename == ".gitlab-ci.yml"
+        || basename == "jenkinsfile"
+        || lc.starts_with(".github/workflows/")
+    {
+        return Some("ci");
+    }
+    if lc.starts_with("k8s/")
+        || lc.contains("/k8s/")
+        || lc.starts_with("kubernetes/")
+        || lc.contains("/kubernetes/")
+        || lc.starts_with("manifests/")
+        || lc.contains("/manifests/")
+        || lc.starts_with("gitops/")
+        || lc.contains("/gitops/")
+        || lc.starts_with("infra/")
+        || lc.contains("/infra/")
+        || lc.contains("/terraform/")
+        || lc.starts_with("terraform/")
+        || lc.contains("/charts/")
+        || lc.starts_with("charts/")
+    {
+        return Some("infra");
+    }
+
+    // Artifacts/outputs (research + ML repos).
+    let first = lc.split('/').next().unwrap_or("").trim();
+    if matches!(
+        first,
+        "artifacts"
+            | "artifact"
+            | "results"
+            | "runs"
+            | "outputs"
+            | "output"
+            | "checkpoints"
+            | "checkpoint"
+            | "data"
+            | "dataset"
+            | "datasets"
+            | "corpus"
+            | "corpora"
+            | "weights"
+    ) {
+        return Some("outputs");
+    }
+
+    if lc.starts_with("experiments/")
+        || lc.starts_with("experiment/")
+        || lc.starts_with("baselines/")
+        || lc.starts_with("baseline/")
+        || lc.starts_with("bench/")
+        || lc.starts_with("benches/")
+        || lc.contains("/eval/")
+        || lc.contains("/evaluation/")
+        || lc.contains("/analysis/")
+        || lc.contains("/notebooks/")
+    {
+        return Some("experiments");
+    }
+
+    if basename == "makefile"
+        || basename == "justfile"
+        || basename == "cargo.toml"
+        || basename == "package.json"
+        || basename == "pyproject.toml"
+        || lc.starts_with("scripts/")
+    {
+        return Some("tooling");
+    }
+
+    // Code files (best-effort, extensions only to keep it cheap).
+    if matches!(
+        lc.rsplit('.').next().unwrap_or(""),
+        "rs" | "py"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "go"
+            | "java"
+            | "kt"
+            | "c"
+            | "cc"
+            | "cpp"
+            | "cxx"
+            | "h"
+            | "hpp"
+            | "cs"
+            | "rb"
+            | "php"
+            | "swift"
+    ) {
+        return Some("core");
+    }
+
+    if lc.starts_with("docs/")
+        || matches!(lc.rsplit('.').next().unwrap_or(""), "md" | "rst" | "txt")
+    {
+        return Some("docs");
+    }
+
+    None
+}
+
+fn compute_worktree_touched_areas(
+    dirty_paths: Option<&[String]>,
+    diff_paths: &[String],
+) -> Vec<String> {
+    let mut touched: HashSet<&'static str> = HashSet::new();
+    if let Some(paths) = dirty_paths {
+        for dirty in paths {
+            if let Some(kind) = classify_worktree_changed_path(dirty) {
+                touched.insert(kind);
+            }
+        }
+    }
+    for changed in diff_paths {
+        if let Some(kind) = classify_worktree_changed_path(changed) {
+            touched.insert(kind);
+        }
+    }
+
+    let mut rendered = touched.into_iter().collect::<Vec<_>>();
+    rendered.sort_by(|a, b| {
+        worktree_area_kind_rank(a)
+            .cmp(&worktree_area_kind_rank(b))
+            .then(a.cmp(b))
+    });
+    rendered
+        .into_iter()
+        .take(5)
+        .map(|v| v.to_string())
+        .collect()
+}
+
 fn normalize_query(query: Option<&str>) -> Option<String> {
     query
         .map(str::trim)
@@ -536,21 +732,6 @@ async fn compute_worktree_purpose_summary(
         })
         .collect();
 
-    fn area_kind_rank(kind: &str) -> usize {
-        match kind {
-            "interfaces" => 0,
-            "core" => 1,
-            "ci" => 2,
-            "docs" => 3,
-            "tooling" => 4,
-            "infra" => 5,
-            "outputs" => 6,
-            "experiments" => 7,
-            _ => 99,
-        }
-    }
-
-    let mut touched_areas: Vec<String> = Vec::new();
     let diff_paths = if let Some(base_ref) = base_ref {
         git_changed_paths_against_base(worktree_root, base_ref, MAX_BRANCH_DIFF_PATHS_PER_WORKTREE)
             .await
@@ -558,182 +739,9 @@ async fn compute_worktree_purpose_summary(
     } else {
         Vec::new()
     };
-    if dirty_paths.is_some_and(|v| !v.is_empty()) || !diff_paths.is_empty() {
-        fn classify_dirty_path(path: &str) -> Option<&'static str> {
-            let lc = path.trim().to_ascii_lowercase();
-            if lc.is_empty() {
-                return None;
-            }
+    let touched_areas = compute_worktree_touched_areas(dirty_paths, &diff_paths);
 
-            // Worktree stores are workspace noise; don't let them claim a zone.
-            if lc == ".worktrees" || lc.starts_with(".worktrees/") {
-                return None;
-            }
-
-            // Contracts/protocols are the most important "what changed" signal.
-            let basename = lc.rsplit('/').next().unwrap_or(lc.as_str());
-            let is_dir_marker = lc.ends_with('/') || basename.is_empty();
-            let is_contract_like_ext = lc.ends_with(".proto")
-                || lc.ends_with(".avsc")
-                || lc.ends_with(".yaml")
-                || lc.ends_with(".yml")
-                || lc.ends_with(".json")
-                || lc.ends_with(".toml")
-                || lc.ends_with(".md")
-                || lc.ends_with(".rst")
-                || lc.ends_with(".txt");
-            let is_contract_dir = lc.starts_with("contracts/")
-                || lc.starts_with("proto/")
-                || lc.starts_with("docs/contracts/")
-                || lc.starts_with("docs/contract/")
-                || lc.starts_with("docs/spec/")
-                || lc.starts_with("docs/specs/")
-                || lc.starts_with("docs/protocol/")
-                || lc.starts_with("docs/protocols/")
-                || lc.contains("/contracts/")
-                || lc.contains("/contract/")
-                || lc.contains("/schemas/")
-                || lc.contains("/schema/")
-                || lc.contains("/specs/")
-                || lc.contains("/spec/")
-                || lc.contains("/protocols/")
-                || lc.contains("/protocol/");
-            if is_contract_dir
-                && (is_contract_like_ext || is_dir_marker)
-                && !matches!(
-                    basename,
-                    "readme.md" | "readme.rst" | "readme.txt" | "index.md"
-                )
-            {
-                return Some("interfaces");
-            }
-            if basename == ".gitlab-ci.yml"
-                || basename == "jenkinsfile"
-                || lc.starts_with(".github/workflows/")
-            {
-                return Some("ci");
-            }
-            if lc.starts_with("k8s/")
-                || lc.contains("/k8s/")
-                || lc.starts_with("kubernetes/")
-                || lc.contains("/kubernetes/")
-                || lc.starts_with("manifests/")
-                || lc.contains("/manifests/")
-                || lc.starts_with("gitops/")
-                || lc.contains("/gitops/")
-                || lc.starts_with("infra/")
-                || lc.contains("/infra/")
-                || lc.contains("/terraform/")
-                || lc.starts_with("terraform/")
-                || lc.contains("/charts/")
-                || lc.starts_with("charts/")
-            {
-                return Some("infra");
-            }
-
-            // Artifacts/outputs (research + ML repos).
-            let first = lc.split('/').next().unwrap_or("").trim();
-            if matches!(
-                first,
-                "artifacts"
-                    | "artifact"
-                    | "results"
-                    | "runs"
-                    | "outputs"
-                    | "output"
-                    | "checkpoints"
-                    | "checkpoint"
-                    | "data"
-                    | "dataset"
-                    | "datasets"
-                    | "corpus"
-                    | "corpora"
-                    | "weights"
-            ) {
-                return Some("outputs");
-            }
-
-            if lc.starts_with("experiments/")
-                || lc.starts_with("experiment/")
-                || lc.starts_with("baselines/")
-                || lc.starts_with("baseline/")
-                || lc.starts_with("bench/")
-                || lc.starts_with("benches/")
-                || lc.contains("/eval/")
-                || lc.contains("/evaluation/")
-                || lc.contains("/analysis/")
-                || lc.contains("/notebooks/")
-            {
-                return Some("experiments");
-            }
-
-            if basename == "makefile"
-                || basename == "justfile"
-                || basename == "cargo.toml"
-                || basename == "package.json"
-                || basename == "pyproject.toml"
-                || lc.starts_with("scripts/")
-            {
-                return Some("tooling");
-            }
-
-            // Code files (best-effort, extensions only to keep it cheap).
-            if matches!(
-                lc.rsplit('.').next().unwrap_or(""),
-                "rs" | "py"
-                    | "js"
-                    | "ts"
-                    | "tsx"
-                    | "go"
-                    | "java"
-                    | "kt"
-                    | "c"
-                    | "cc"
-                    | "cpp"
-                    | "cxx"
-                    | "h"
-                    | "hpp"
-                    | "cs"
-                    | "rb"
-                    | "php"
-                    | "swift"
-            ) {
-                return Some("core");
-            }
-
-            if lc.starts_with("docs/")
-                || matches!(lc.rsplit('.').next().unwrap_or(""), "md" | "rst" | "txt")
-            {
-                return Some("docs");
-            }
-
-            None
-        }
-
-        let mut touched: HashSet<&'static str> = HashSet::new();
-        if let Some(paths) = dirty_paths {
-            for dirty in paths {
-                if let Some(kind) = classify_dirty_path(dirty) {
-                    touched.insert(kind);
-                }
-            }
-        }
-        for changed in &diff_paths {
-            if let Some(kind) = classify_dirty_path(changed) {
-                touched.insert(kind);
-            }
-        }
-
-        let mut rendered = touched.into_iter().collect::<Vec<_>>();
-        rendered.sort_by(|a, b| area_kind_rank(a).cmp(&area_kind_rank(b)).then(a.cmp(b)));
-        touched_areas = rendered
-            .into_iter()
-            .take(5)
-            .map(|v| v.to_string())
-            .collect();
-    }
-
-    if canon.is_empty() && anchors.is_empty() {
+    if canon.is_empty() && anchors.is_empty() && touched_areas.is_empty() {
         return None;
     }
 
@@ -1000,6 +1008,38 @@ pub(super) async fn compute_worktree_pack_result(
             if let Some((ahead, behind)) = git_ahead_behind(Path::new(&wt.path), base_ref).await {
                 wt.ahead = Some(ahead);
                 wt.behind = Some(behind);
+            }
+        }
+
+        // In non-minimal modes, surface `touches` as a low-cost UX hint even without a full
+        // meaning summary. We only compute branch diffs when the worktree is clean so we can
+        // still detect "what changed" on committed feature branches.
+        if response_mode != ResponseMode::Minimal {
+            let dirty_empty = wt.dirty_paths.as_ref().is_none_or(|v| v.is_empty());
+            let diff_paths = if dirty_empty {
+                if let Some(base_ref) = base_ref.as_deref() {
+                    git_changed_paths_against_base(
+                        Path::new(&wt.path),
+                        base_ref,
+                        MAX_BRANCH_DIFF_PATHS_PER_WORKTREE,
+                    )
+                    .await
+                    .unwrap_or_default()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+            let touched_areas =
+                compute_worktree_touched_areas(wt.dirty_paths.as_deref(), &diff_paths);
+            if !touched_areas.is_empty() {
+                wt.purpose = Some(WorktreePurposeSummary {
+                    canon: Vec::new(),
+                    anchors: Vec::new(),
+                    touched_areas,
+                    meaning_truncated: None,
+                });
             }
         }
         let rendered_lines = render_worktree_lines(&wt);

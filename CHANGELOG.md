@@ -47,6 +47,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Worktree atlas: `worktree_pack` headers now include a compact `hint:` line with stable tags
   (e.g. `sync_base`, `ahead_of_base`, `uncommitted_changes`, `detached_head`) so agents can
   quickly choose the next move without re-parsing freeform text.
+- Worktree atlas: `worktree_pack` now surfaces `touches:` hints already in `response_mode=facts`
+  (zones derived from dirty paths and/or committed diffs), so “what this branch is about” is
+  visible without paying for full per-worktree meaning summaries.
 - Worktree atlas: suppress `.worktrees/` from dirty path samples (worktree storage is workspace
   noise, not a meaningful repo change).
 - Worktree atlas: improve large-repo behavior by increasing the internal meaning budget used for

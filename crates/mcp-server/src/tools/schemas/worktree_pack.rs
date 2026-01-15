@@ -151,7 +151,10 @@ pub struct WorktreeInfo {
     /// Sample of modified paths (best-effort, bounded).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dirty_paths: Option<Vec<String>>,
-    /// Optional evidence-backed purpose summary (only in `response_mode=full`, bounded).
+    /// Optional purpose summary (bounded).
+    ///
+    /// In `response_mode=full`, this is evidence-backed (canon loop + anchors). In `facts`, we may
+    /// still include `touched_areas` as a low-cost hint for “what this worktree is about”.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<WorktreePurposeSummary>,
 }

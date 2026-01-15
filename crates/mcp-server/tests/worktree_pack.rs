@@ -191,9 +191,10 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
     )
     .await?;
 
-    std::fs::write(w1.join("FEATURE.md"), "feature\n").context("write FEATURE.md")?;
-    git(&w1, &["add", "FEATURE.md"]).await?;
-    git(&w1, &["commit", "-m", "feat: w1"]).await?;
+    std::fs::create_dir_all(w1.join("contracts")).context("mkdir contracts")?;
+    std::fs::write(w1.join("contracts").join("WIP.md"), "wip\n").context("write WIP.md")?;
+    git(&w1, &["add", "."]).await?;
+    git(&w1, &["commit", "-m", "contracts: wip"]).await?;
 
     let service = start_mcp_server().await?;
     let text = call_tool_text(
@@ -209,6 +210,7 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
 
     let mut w1_header: Option<String> = None;
     let mut w1_hint_ahead = false;
+    let mut w1_touches_interfaces = false;
     let mut in_w1 = false;
     for line in text.lines() {
         if line.starts_with("WT ") {
@@ -220,6 +222,9 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
         }
         if in_w1 && line.trim_start().starts_with("hint:") && line.contains("ahead_of_base") {
             w1_hint_ahead = true;
+        }
+        if in_w1 && line.trim_start().starts_with("touches:") && line.contains("interfaces") {
+            w1_touches_interfaces = true;
         }
     }
     let w1_header = w1_header.context("failed to find worktree w1 header")?;
@@ -239,6 +244,10 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
     assert!(
         w1_hint_ahead,
         "expected w1 to include hint tag ahead_of_base (got: {text})"
+    );
+    assert!(
+        w1_touches_interfaces,
+        "expected w1 touches to include interfaces (got: {text})"
     );
 
     Ok(())
