@@ -47,6 +47,13 @@ struct GitWorktreeInfo {
     detached: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct GitHeadMeta {
+    unix: Option<i64>,
+    date: Option<String>,
+    subject: Option<String>,
+}
+
 fn normalize_query(query: Option<&str>) -> Option<String> {
     query
         .map(str::trim)
@@ -144,24 +151,44 @@ async fn git_worktree_list(root: &Path) -> Option<Vec<GitWorktreeInfo>> {
     }
 }
 
-async fn git_head_subject(worktree: &Path) -> Option<String> {
+async fn git_head_meta(worktree: &Path) -> GitHeadMeta {
     let output = Command::new("git")
         .arg("-C")
         .arg(worktree)
         .arg("log")
         .arg("-1")
-        .arg("--pretty=%s")
+        .arg("--pretty=%ct\t%cs\t%s")
         .output()
         .await
-        .ok()?;
+        .ok();
+    let Some(output) = output else {
+        return GitHeadMeta::default();
+    };
     if !output.status.success() {
-        return None;
+        return GitHeadMeta::default();
     }
-    let subject = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if subject.is_empty() {
-        None
-    } else {
-        Some(subject)
+    let line = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if line.is_empty() {
+        return GitHeadMeta::default();
+    }
+
+    let mut parts = line.splitn(3, '\t');
+    let unix = parts.next().and_then(|v| v.trim().parse::<i64>().ok());
+    let date = parts
+        .next()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let subject = parts
+        .next()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+
+    GitHeadMeta {
+        unix,
+        date,
+        subject,
     }
 }
 
@@ -298,6 +325,27 @@ async fn git_merge_base(worktree: &Path, a: &str, b: &str) -> Option<String> {
     } else {
         Some(value)
     }
+}
+
+async fn git_ahead_behind(worktree: &Path, base_ref: &str) -> Option<(usize, usize)> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .arg("rev-list")
+        .arg("--left-right")
+        .arg("--count")
+        .arg(format!("{base_ref}...HEAD"))
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut it = text.split_whitespace();
+    let behind = it.next()?.parse::<usize>().ok()?;
+    let ahead = it.next()?.parse::<usize>().ok()?;
+    Some((ahead, behind))
 }
 
 async fn git_changed_paths_against_base(
@@ -710,6 +758,11 @@ fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
     if let Some(head) = worktree.head.as_deref() {
         line.push_str(&format!(" head={head}"));
     }
+    if let Some(last) = worktree.last_commit_date.as_deref() {
+        if !last.trim().is_empty() {
+            line.push_str(&format!(" last={last}"));
+        }
+    }
     if let Some(subject) = worktree.head_subject.as_deref() {
         let mut subject = subject.trim().to_string();
         if subject.chars().count() > MAX_HEAD_SUBJECT_CHARS {
@@ -722,6 +775,12 @@ fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
     }
     if let Some(dirty) = worktree.dirty {
         line.push_str(if dirty { " dirty=1" } else { " dirty=0" });
+    }
+    if let Some(ahead) = worktree.ahead {
+        line.push_str(&format!(" ahead={ahead}"));
+    }
+    if let Some(behind) = worktree.behind {
+        line.push_str(&format!(" behind={behind}"));
     }
     lines.push(line);
     if let Some(paths) = worktree.dirty_paths.as_ref() {
@@ -837,9 +896,9 @@ pub(super) async fn compute_worktree_pack_result(
         };
         let name = worktree_name(&wt.path);
         let branch = if wt.detached { None } else { wt.branch.clone() };
-        // HEAD short + subject come from the worktree itself (best-effort).
+        // HEAD details come from the worktree itself (best-effort).
         let head_short = git_head_short(&wt.path).await;
-        let head_subject = git_head_subject(&wt.path).await;
+        let head_meta = git_head_meta(&wt.path).await;
         let dirty_paths = git_dirty_paths(&wt.path, MAX_DIRTY_PATHS_PER_WORKTREE).await;
         let dirty = dirty_paths.as_ref().map(|v| !v.is_empty());
         let head = head_short.or_else(|| {
@@ -858,20 +917,29 @@ pub(super) async fn compute_worktree_pack_result(
             name,
             branch,
             head,
-            head_subject,
+            head_subject: head_meta.subject,
             dirty,
+            last_commit_unix: head_meta.unix,
+            last_commit_date: head_meta.date,
+            ahead: None,
+            behind: None,
             dirty_paths,
             purpose: None,
         });
     }
 
-    // Deterministic ranking: query relevance (if present) → dirty-first → stable path.
+    // Deterministic ranking: query relevance (if present) → dirty-first → last activity → stable path.
     if let Some(q) = query.as_deref() {
         worktrees.sort_by(|a, b| {
             let sa = query_score(q, a);
             let sb = query_score(q, b);
             sb.cmp(&sa)
                 .then_with(|| b.dirty.unwrap_or(false).cmp(&a.dirty.unwrap_or(false)))
+                .then_with(|| {
+                    b.last_commit_unix
+                        .unwrap_or(0)
+                        .cmp(&a.last_commit_unix.unwrap_or(0))
+                })
                 .then_with(|| a.path.cmp(&b.path))
         });
     } else {
@@ -879,6 +947,11 @@ pub(super) async fn compute_worktree_pack_result(
             b.dirty
                 .unwrap_or(false)
                 .cmp(&a.dirty.unwrap_or(false))
+                .then_with(|| {
+                    b.last_commit_unix
+                        .unwrap_or(0)
+                        .cmp(&a.last_commit_unix.unwrap_or(0))
+                })
                 .then_with(|| a.path.cmp(&b.path))
         });
     }
@@ -888,10 +961,21 @@ pub(super) async fn compute_worktree_pack_result(
     let mut used_chars: usize = 0;
     let content_budget = worktree_pack_content_budget(max_chars);
     let mut next_offset = offset;
+    let base_ref = if response_mode == ResponseMode::Minimal {
+        None
+    } else {
+        pick_default_base_ref(root).await
+    };
 
-    for wt in worktrees.into_iter().skip(offset) {
+    for mut wt in worktrees.into_iter().skip(offset) {
         if returned.len() >= limit {
             break;
+        }
+        if let Some(base_ref) = base_ref.as_deref() {
+            if let Some((ahead, behind)) = git_ahead_behind(Path::new(&wt.path), base_ref).await {
+                wt.ahead = Some(ahead);
+                wt.behind = Some(behind);
+            }
         }
         let rendered_lines = render_worktree_lines(&wt);
         let rendered_chars = rendered_lines
@@ -924,7 +1008,6 @@ pub(super) async fn compute_worktree_pack_result(
 
     // Optional (full mode): attach a small, evidence-backed purpose summary per worktree.
     if response_mode == ResponseMode::Full {
-        let base_ref = pick_default_base_ref(root).await;
         for (idx, wt) in returned.iter_mut().enumerate() {
             if idx >= PURPOSE_MAX_WORKTREES_PER_PAGE {
                 break;

@@ -131,6 +131,23 @@ pub struct WorktreeInfo {
     /// Whether the worktree has uncommitted changes (best-effort).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dirty: Option<bool>,
+    /// Last commit time of HEAD (Unix timestamp, seconds; best-effort).
+    ///
+    /// This is a deterministic “activity” signal to rank and scan worktrees without relying on
+    /// wall-clock time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_commit_unix: Option<i64>,
+    /// Last commit date of HEAD (YYYY-MM-DD; best-effort).
+    ///
+    /// A human-friendly companion to `last_commit_unix`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_commit_date: Option<String>,
+    /// Commits this worktree is ahead of the default base ref (best-effort).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<usize>,
+    /// Commits this worktree is behind the default base ref (best-effort).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<usize>,
     /// Sample of modified paths (best-effort, bounded).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dirty_paths: Option<Vec<String>>,

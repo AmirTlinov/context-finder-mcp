@@ -165,6 +165,76 @@ async fn worktree_pack_lists_git_worktrees_and_branch_hints() -> Result<()> {
 }
 
 #[tokio::test]
+async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<()> {
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    git(root, &["init"]).await?;
+    git(root, &["config", "user.email", "test@example.com"]).await?;
+    git(root, &["config", "user.name", "Test"]).await?;
+
+    std::fs::write(root.join("README.md"), "root\n").context("write README")?;
+    git(root, &["add", "README.md"]).await?;
+    git(root, &["commit", "-m", "init"]).await?;
+    let _ = git(root, &["branch", "-M", "main"]).await;
+
+    let w1 = root.join(".worktrees").join("w1");
+    git(
+        root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature-w1",
+            w1.to_string_lossy().as_ref(),
+        ],
+    )
+    .await?;
+
+    std::fs::write(w1.join("FEATURE.md"), "feature\n").context("write FEATURE.md")?;
+    git(&w1, &["add", "FEATURE.md"]).await?;
+    git(&w1, &["commit", "-m", "feat: w1"]).await?;
+
+    let service = start_mcp_server().await?;
+    let text = call_tool_text(
+        &service,
+        "worktree_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "response_mode": "facts",
+            "max_chars": 4000
+        }),
+    )
+    .await?;
+
+    let mut w1_header: Option<String> = None;
+    for line in text.lines() {
+        if line.starts_with("WT ")
+            && (line.contains(".worktrees/w1") || line.contains(".worktrees\\w1"))
+        {
+            w1_header = Some(line.to_string());
+            break;
+        }
+    }
+    let w1_header = w1_header.context("failed to find worktree w1 header")?;
+
+    assert!(
+        w1_header.contains(" last="),
+        "expected activity hint (last=YYYY-MM-DD) in header: {w1_header}"
+    );
+    assert!(
+        w1_header.contains(" ahead=") && w1_header.contains(" behind="),
+        "expected divergence hints (ahead/behind) in header: {w1_header}"
+    );
+    assert!(
+        w1_header.contains("ahead=1") && w1_header.contains("behind=0"),
+        "expected w1 to be 1 ahead and 0 behind base: {w1_header}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn worktree_pack_full_includes_purpose_summary_when_available() -> Result<()> {
     let tmp = tempfile::tempdir().context("tempdir")?;
     let root = tmp.path();
