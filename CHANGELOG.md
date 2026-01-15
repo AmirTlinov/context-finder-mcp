@@ -58,6 +58,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   incorrectly label CI setup steps as “test” canon.
 - Capabilities: the recommended `start` route now points to `atlas_pack` (meaning CP + worktrees)
   instead of `read_pack`.
+- Onboarding atlas: in `response_mode=full`, `atlas_pack` now suggests a direct `meaning_pack`
+  follow-up for the most relevant worktree (based on worktree ranking), so agents can jump
+  straight into “what this branch/worktree is about” without extra navigation.
 - Onboarding atlas: `atlas_pack` now lets meaning-mode choose signal-driven map defaults (dataset-heavy
   vs monorepo) instead of hardcoding a fixed map limit.
 - Batch: accept legacy `items: string[]` payloads (best-effort parsing) for compatibility with

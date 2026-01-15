@@ -146,6 +146,7 @@ fn derive_next_actions(
     root_path: &str,
     query: &str,
     pack: &str,
+    best_worktree_path: Option<&str>,
     worktrees_truncated: bool,
     worktrees_next_cursor: Option<&str>,
     worktrees_len: usize,
@@ -180,6 +181,21 @@ fn derive_next_actions(
             }),
             reason: "Fetch verbatim evidence for canon/CI/contracts/entrypoints".to_string(),
         });
+    }
+
+    if let Some(worktree_path) = best_worktree_path {
+        if worktree_path != root_path {
+            actions.push(ToolNextAction {
+                tool: "meaning_pack".to_string(),
+                args: json!({
+                    "path": worktree_path,
+                    "query": query,
+                    "max_chars": 2000,
+                    "response_mode": "full",
+                }),
+                reason: "Build a meaning map for the most relevant worktree".to_string(),
+            });
+        }
     }
 
     if worktrees_truncated || worktrees_len > 1 {
@@ -265,6 +281,7 @@ pub(super) async fn compute_atlas_pack_result(
             &root_path,
             &query,
             &meaning_result.pack,
+            worktrees.first().map(|w| w.path.as_str()),
             worktrees_truncated || !include_worktrees,
             worktrees_next_cursor.as_deref(),
             worktrees.len(),

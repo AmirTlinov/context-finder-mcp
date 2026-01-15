@@ -210,6 +210,10 @@ jobs:
         full.contains("tool=worktree_pack") || full.contains("\"worktree_pack\""),
         "expected worktree_pack drill-down hint in full mode"
     );
+    assert!(
+        full.contains("tool=meaning_pack") || full.contains("\"meaning_pack\""),
+        "expected meaning_pack drill-down hint for best worktree in full mode"
+    );
 
     Ok(())
 }
