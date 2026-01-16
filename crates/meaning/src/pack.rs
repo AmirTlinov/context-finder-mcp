@@ -535,7 +535,17 @@ pub async fn meaning_pack(
         max_anchors,
     );
     let include_entrypoints = !tight_budget || hints.wants_entrypoints;
-    let include_boundaries = !tight_budget || hints.wants_infra || hints.wants_brokers;
+    // Signal-driven boundary inclusion: keep “external” boundaries (HTTP/CLI/events/DB) even when
+    // the query is a broad onboarding prompt that doesn't explicitly say “infra/boundary”.
+    // This stays low-noise for library-only repos where we only have config/env candidates.
+    let has_external_boundaries = boundaries_full.iter().any(|b| {
+        matches!(
+            b.kind,
+            BoundaryKind::Http | BoundaryKind::Cli | BoundaryKind::Event | BoundaryKind::Db
+        )
+    });
+    let include_boundaries =
+        !tight_budget || hints.wants_infra || hints.wants_brokers || has_external_boundaries;
     if !include_boundaries {
         boundaries_full.clear();
     }

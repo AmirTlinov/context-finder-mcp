@@ -30,6 +30,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Meaning trust: in `response_mode=facts|full`, `meaning_pack` / `meaning_focus` now emit a compact
   evidence-coverage hint (`coverage: anchors_ev=… steps_ev=… ev=…`) to help agents judge trust
   without expanding token budgets; `atlas_pack` emits the same signal as `meaning_coverage`.
+- Meaning onboarding: under tight budgets, `meaning_pack` now keeps external `BOUNDARY` claims
+  (HTTP/CLI/events/DB) when they are detected, even if the query doesn’t explicitly say
+  “infra/boundary” (stays low-noise for library-only repos).
 - Meaning degradation: emit the general sense map (`S MAP`) before `S OUTPUTS` so the
   repo-wide orientation survives truncation longer than artifact-heavy areas.
 - Worktree atlas: in `response_mode=full`, `worktree_pack` now includes a bounded, evidence-backed

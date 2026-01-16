@@ -24,6 +24,14 @@
       "min_token_saved": 0.8
     },
     {
+      "id": "node_http_openapi_boundary_without_keyword",
+      "fixture": "node_http_openapi",
+      "query": "project overview (meaning map)",
+      "expect_paths": ["contracts/openapi.yaml"],
+      "expect_claims": ["BOUNDARY"],
+      "min_token_saved": 0.8
+    },
+    {
       "id": "python_cli_schema",
       "fixture": "python_cli_schema",
       "query": "orient on entrypoints, config, contracts",
