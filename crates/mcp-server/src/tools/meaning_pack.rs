@@ -29,7 +29,7 @@ pub(super) async fn compute_meaning_pack_result(
         truncated: engine.budget.truncated,
         truncation: engine.budget.truncation,
     };
-    let next_actions = derive_meaning_pack_next_actions(&engine.pack, &budget, request);
+    let next_actions = derive_meaning_pack_next_actions(root, &engine.pack, &budget, request);
 
     Ok(MeaningPackResult {
         version: engine.version,
@@ -43,6 +43,7 @@ pub(super) async fn compute_meaning_pack_result(
 }
 
 fn derive_meaning_pack_next_actions(
+    root: &Path,
     pack: &str,
     budget: &MeaningPackBudget,
     request: &MeaningPackRequest,
@@ -112,6 +113,22 @@ fn derive_meaning_pack_next_actions(
             tool: "meaning_pack".to_string(),
             args: retry_args,
             reason: "Retry with a larger max_chars because the pack was truncated.".to_string(),
+        });
+    }
+
+    // Worktrees hint: if a repo keeps git worktrees under `.worktrees/`, surface a direct
+    // drill-down action. This stays low-noise for most repos and reduces navigation friction.
+    if root.join(".worktrees").is_dir() {
+        let mut args = json!({
+            "query": request.query.clone(),
+            "max_chars": 2000,
+            "response_mode": "full",
+        });
+        insert_optional_path(&mut args, &request.path);
+        out.push(ToolNextAction {
+            tool: "worktree_pack".to_string(),
+            args,
+            reason: "List worktrees/branches (repo uses .worktrees/)".to_string(),
         });
     }
 

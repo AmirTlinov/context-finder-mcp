@@ -59,6 +59,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   purpose summaries (prevents “dict-only truncation” that could suppress canon/anchor signals).
 - Meaning canon extraction: avoid false positives where `checkout` matched `check`, which could
   incorrectly label CI setup steps as “test” canon.
+- Meaning next actions: when a repo uses `.worktrees/`, `meaning_pack` in `response_mode=full` now
+  suggests `worktree_pack` as a direct drill-down (helps agents understand active branches quickly).
 - Capabilities: the recommended `start` route now points to `atlas_pack` (meaning CP + worktrees)
   instead of `read_pack`.
 - Onboarding atlas: in `response_mode=full`, `atlas_pack` now suggests a direct `meaning_pack`

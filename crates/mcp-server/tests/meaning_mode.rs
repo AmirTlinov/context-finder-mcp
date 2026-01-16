@@ -1618,6 +1618,58 @@ async fn meaning_pack_emits_next_actions_in_full_mode_only() -> Result<()> {
 }
 
 #[tokio::test]
+async fn meaning_pack_suggests_worktree_pack_when_worktrees_dir_present() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;
+    std::fs::create_dir_all(root.path().join(".worktrees")).context("mkdir .worktrees")?;
+
+    std::fs::write(
+        root.path().join("src").join("main.rs"),
+        "fn main() { println!(\"ok\"); }\n",
+    )
+    .context("write src/main.rs")?;
+    std::fs::write(
+        root.path().join("README.md"),
+        "# Demo\n\nRun: `cargo test`.\n",
+    )
+    .context("write README.md")?;
+
+    let service = start_mcp_server().await?;
+
+    let resp_full = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "project overview",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "full",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        resp_full.is_error,
+        Some(true),
+        "expected meaning_pack to succeed (response_mode=full)"
+    );
+
+    let full_text = resp_full
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack full missing text output")?;
+    assert!(
+        full_text.contains("next_action tool=worktree_pack"),
+        "expected worktree_pack next_action when .worktrees/ is present"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn meaning_focus_emits_next_actions_in_full_mode_only() -> Result<()> {
     let root = tempfile::tempdir().context("temp project dir")?;
     std::fs::create_dir_all(root.path().join("src")).context("mkdir src")?;
