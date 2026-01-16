@@ -222,6 +222,15 @@
       ],
       "expect_claims": ["ANCHOR", "STEP", "AREA"],
       "min_token_saved": 0.8
+    },
+    {
+      "id": "tight_budget_contract_query_prefers_contract_evidence",
+      "fixture": "no_docs_contracts_and_ci",
+      "query": "contracts",
+      "max_chars": 900,
+      "expect_paths": ["contracts/openapi.yaml"],
+      "expect_evidence_kinds": ["anchor.contract"],
+      "min_token_saved": 0.9
     }
   ]
 }

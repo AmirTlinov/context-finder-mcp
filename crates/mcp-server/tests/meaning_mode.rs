@@ -187,11 +187,15 @@ struct MeaningEvalCase {
     fixture: String,
     query: String,
     #[serde(default)]
+    max_chars: Option<usize>,
+    #[serde(default)]
     expect_paths: Vec<String>,
     #[serde(default)]
     expect_claims: Vec<String>,
     #[serde(default)]
     expect_anchor_kinds: Vec<String>,
+    #[serde(default)]
+    expect_evidence_kinds: Vec<String>,
     #[serde(default)]
     forbid_map_paths: Vec<String>,
     #[serde(default)]
@@ -228,6 +232,13 @@ fn validate_meaning_dataset(dataset: &MeaningEvalDataset) -> Result<()> {
             anyhow::ensure!(
                 !kind.trim().is_empty(),
                 "Meaning eval dataset case '{}' expect_anchor_kinds must not contain empty values",
+                case.id
+            );
+        }
+        for kind in &case.expect_evidence_kinds {
+            anyhow::ensure!(
+                !kind.trim().is_empty(),
+                "Meaning eval dataset case '{}' expect_evidence_kinds must not contain empty values",
                 case.id
             );
         }
@@ -2753,13 +2764,14 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
         build_fixture(root.path(), &case.fixture)
             .with_context(|| format!("build fixture '{}' (case={})", case.fixture, case.id))?;
 
+        let max_chars = case.max_chars.unwrap_or(2000);
         let resp = call_tool(
             &service,
             "meaning_pack",
             serde_json::json!({
                 "path": root.path().to_string_lossy(),
                 "query": case.query,
-                "max_chars": 2000,
+                "max_chars": max_chars,
                 "auto_index": false,
                 "response_mode": "facts",
             }),
@@ -2804,6 +2816,15 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
                 pack.lines()
                     .any(|line| line.starts_with("ANCHOR ") && line.contains(&needle)),
                 "expected CP to include ANCHOR kind={kind} (case={})",
+                case.id
+            );
+        }
+        for kind in &case.expect_evidence_kinds {
+            let needle = format!("kind={}", kind.trim());
+            assert!(
+                pack.lines()
+                    .any(|line| line.starts_with("EV ") && line.contains(&needle)),
+                "expected CP to include EV kind={kind} (case={})",
                 case.id
             );
         }
