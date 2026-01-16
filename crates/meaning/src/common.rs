@@ -1347,9 +1347,227 @@ pub(super) fn shrink_pack(pack: &mut String) -> bool {
             minimal.push(query.clone());
         }
 
+        fn parse_ev_ref(line: &str) -> Option<&str> {
+            line.split_whitespace()
+                .find_map(|tok| tok.strip_prefix("ev="))
+        }
+
+        fn parse_kind(line: &str) -> Option<&str> {
+            line.split_whitespace()
+                .find_map(|tok| tok.strip_prefix("kind="))
+        }
+
+        fn step_keep_rank(kind: Option<&str>) -> usize {
+            // Prefer preserving runnable verification steps under extreme budgets.
+            match kind.unwrap_or("") {
+                "test" => 100,
+                "eval" => 90,
+                "run" => 80,
+                "build" => 70,
+                "lint" => 60,
+                "format" => 50,
+                "setup" => 40,
+                _ => 45,
+            }
+        }
+
+        fn parse_ev_id_from_ev_line(line: &str) -> Option<&str> {
+            if !line.starts_with("EV ") {
+                return None;
+            }
+            line.split_whitespace().nth(1)
+        }
+
+        fn parse_file_id_from_ev_line(line: &str) -> Option<&str> {
+            line.split_whitespace()
+                .find_map(|token| token.strip_prefix("file="))
+        }
+
         // Prefer preserving at least one evidence pointer for “precision fetch”, even under
         // extreme budgets. This keeps the pack actionable (semantic zoom → exact read).
-        if let Some(ev_line) = lines.iter().find(|line| line.starts_with("EV ")) {
+        //
+        // Deterministic priority for the last-resort EV:
+        // 1) EV referenced by a canon STEP (prefer test/eval kinds)
+        // 2) EV referenced by a CONTRACT claim
+        // 3) EV referenced by an ENTRY claim
+        // 4) EV referenced by the highest-value ANCHOR (contract/howto/ci/canon...)
+        // 5) Fallback: first EV line
+        let mut ev_line_by_id: HashMap<&str, &String> = HashMap::new();
+        let mut dict_line_by_id: HashMap<&str, &String> = HashMap::new();
+        for line in &lines {
+            if let Some(id) = parse_ev_id_from_ev_line(line) {
+                ev_line_by_id.insert(id, line);
+                continue;
+            }
+            if line.starts_with("D ") {
+                if let Some(id) = line.split_whitespace().nth(1) {
+                    dict_line_by_id.insert(id, line);
+                }
+            }
+        }
+
+        fn parse_query_value(line: &str) -> Option<String> {
+            let raw = line.strip_prefix("QUERY ")?.trim();
+            serde_json::from_str::<String>(raw)
+                .ok()
+                .or_else(|| {
+                    raw.strip_prefix('"')
+                        .and_then(|v| v.strip_suffix('"'))
+                        .map(|v| v.to_string())
+                })
+                .or_else(|| (!raw.is_empty()).then(|| raw.to_string()))
+        }
+
+        fn contains_any(haystack_lc: &str, needles: &[&str]) -> bool {
+            needles.iter().any(|needle| haystack_lc.contains(needle))
+        }
+
+        let query_lc = lines
+            .iter()
+            .find(|line| line.starts_with("QUERY "))
+            .and_then(|line| parse_query_value(line))
+            .unwrap_or_default()
+            .to_lowercase();
+
+        let wants_contracts = contains_any(
+            &query_lc,
+            &[
+                // EN
+                "contract",
+                "contracts",
+                "schema",
+                "schemas",
+                "openapi",
+                "asyncapi",
+                "proto",
+                "grpc",
+                "api",
+                // RU
+                "контракт",
+                "контракты",
+                "схем",
+                "спек",
+                "прото",
+                "протокол",
+                "апи",
+            ],
+        );
+
+        let wants_entrypoints = contains_any(
+            &query_lc,
+            &[
+                // EN
+                "entrypoint",
+                "entrypoints",
+                "main",
+                "cli",
+                // RU
+                "точк",
+                "вход",
+                "запуск",
+                "старт",
+            ],
+        );
+
+        // STEP candidates (ranked by step kind).
+        let mut step_evs: Vec<(&str, usize)> = Vec::new();
+        for line in lines.iter().take(nba_idx) {
+            if !line.starts_with("STEP ") {
+                continue;
+            }
+            let ev = parse_ev_ref(line).unwrap_or("");
+            if ev.is_empty() {
+                continue;
+            }
+            step_evs.push((ev, step_keep_rank(parse_kind(line))));
+        }
+        step_evs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let step_evs = step_evs.into_iter().map(|(ev, _)| ev).collect::<Vec<_>>();
+
+        // CONTRACT candidates.
+        let mut contract_evs: Vec<&str> = Vec::new();
+        for line in lines.iter().take(nba_idx) {
+            if !line.starts_with("CONTRACT ") {
+                continue;
+            }
+            if let Some(ev) = parse_ev_ref(line) {
+                contract_evs.push(ev);
+            }
+        }
+
+        // ENTRY candidates.
+        let mut entry_evs: Vec<&str> = Vec::new();
+        for line in lines.iter().take(nba_idx) {
+            if !line.starts_with("ENTRY ") {
+                continue;
+            }
+            if let Some(ev) = parse_ev_ref(line) {
+                entry_evs.push(ev);
+            }
+        }
+
+        // ANCHOR candidates (split into semantic groups so the minimal EV aligns with the query).
+        let mut anchor_contract_evs: Vec<&str> = Vec::new();
+        let mut anchor_entry_evs: Vec<&str> = Vec::new();
+        let mut anchor_run_evs: Vec<&str> = Vec::new();
+        let mut anchor_other_evs: Vec<&str> = Vec::new();
+        for line in lines.iter().take(nba_idx) {
+            if !line.starts_with("ANCHOR ") {
+                continue;
+            }
+            let Some(ev) = parse_ev_ref(line) else {
+                continue;
+            };
+            match parse_kind(line).unwrap_or("") {
+                "contract" => anchor_contract_evs.push(ev),
+                "entrypoint" => anchor_entry_evs.push(ev),
+                "howto" | "ci" | "canon" => anchor_run_evs.push(ev),
+                _ => anchor_other_evs.push(ev),
+            }
+        }
+
+        // Deterministic selection order (query-dependent).
+        let mut preferred: Vec<&str> = Vec::new();
+        if wants_contracts {
+            preferred.extend(contract_evs);
+            preferred.extend(anchor_contract_evs);
+            preferred.extend(step_evs);
+            preferred.extend(anchor_run_evs);
+            preferred.extend(entry_evs);
+            preferred.extend(anchor_entry_evs);
+        } else if wants_entrypoints {
+            preferred.extend(entry_evs);
+            preferred.extend(anchor_entry_evs);
+            preferred.extend(step_evs);
+            preferred.extend(anchor_run_evs);
+            preferred.extend(contract_evs);
+            preferred.extend(anchor_contract_evs);
+        } else {
+            preferred.extend(step_evs);
+            preferred.extend(anchor_run_evs);
+            preferred.extend(contract_evs);
+            preferred.extend(anchor_contract_evs);
+            preferred.extend(entry_evs);
+            preferred.extend(anchor_entry_evs);
+        }
+        preferred.extend(anchor_other_evs);
+
+        // Dedup preserving order.
+        let mut seen: HashSet<&str> = HashSet::new();
+        preferred.retain(|ev| seen.insert(*ev));
+
+        let ev_line = preferred
+            .iter()
+            .filter_map(|ev_id| ev_line_by_id.get(ev_id).copied())
+            .find(|line| {
+                let Some(file_id) = parse_file_id_from_ev_line(line) else {
+                    return false;
+                };
+                dict_line_by_id.contains_key(file_id)
+            })
+            .or_else(|| lines.iter().find(|line| line.starts_with("EV ")));
+
+        if let Some(ev_line) = ev_line {
             let ev_id = ev_line
                 .split_whitespace()
                 .nth(1)
@@ -2187,5 +2405,69 @@ mod tests {
         assert!(pack.contains("kind=test"));
         assert!(!pack.contains("kind=setup"));
         assert!(!pack.contains("kind=format"));
+    }
+
+    #[test]
+    fn shrink_pack_minimal_prefers_step_evidence_over_first_ev() {
+        // Pack is already at min_keep for all removable prefixes (1 STEP, 1 ANCHOR),
+        // so shrink_pack must fall back to a minimal CP and choose the most actionable EV.
+        let mut pack = [
+            "CPV1",
+            "ROOT_FP 1",
+            "QUERY \"canon loop\"",
+            "S DICT",
+            "D d1 \"Makefile\"",
+            "D d2 \"README.md\"",
+            "S ANCHORS",
+            "ANCHOR kind=canon label=d2 file=d2 conf=0.9 ev=ev0",
+            "S CANON",
+            "STEP kind=test label=d1 conf=0.7 ev=ev1",
+            "S EVIDENCE",
+            "EV ev0 kind=anchor.canon file=d2 L1-L10 sha256=aaaa",
+            "EV ev1 kind=anchor.howto file=d1 L1-L10 sha256=bbbb",
+            "NBA map",
+            "",
+        ]
+        .join("\n");
+
+        assert!(shrink_pack(&mut pack));
+        // The minimal pack should keep the STEP-backed evidence (Makefile) rather than the first EV.
+        assert!(pack.contains("EV ev1"));
+        assert!(!pack.contains("EV ev0"));
+        assert!(pack.contains("D d1 \"Makefile\""));
+        assert!(!pack.contains("D d2 \"README.md\""));
+        assert!(pack.contains("NBA evidence_fetch ev=ev1 file=d1 L1-L10"));
+    }
+
+    #[test]
+    fn shrink_pack_minimal_prefers_contract_when_query_is_contract_focused() {
+        // When the query is contract-focused, prefer contract evidence even if runnable steps exist.
+        let mut pack = [
+            "CPV1",
+            "ROOT_FP 1",
+            "QUERY \"contracts\"",
+            "S DICT",
+            "D d1 \"Makefile\"",
+            "D d2 \"docs/contracts/suite_manifest_v1.md\"",
+            "S ANCHORS",
+            "ANCHOR kind=contract label=d2 file=d2 conf=0.9 ev=ev0",
+            "S CONTRACTS",
+            "CONTRACT kind=contract file=d2 ev=ev0",
+            "S CANON",
+            "STEP kind=test label=d1 conf=0.7 ev=ev1",
+            "S EVIDENCE",
+            "EV ev1 kind=anchor.howto file=d1 L1-L10 sha256=bbbb",
+            "EV ev0 kind=anchor.contract file=d2 L1-L10 sha256=aaaa",
+            "NBA map",
+            "",
+        ]
+        .join("\n");
+
+        assert!(shrink_pack(&mut pack));
+        assert!(pack.contains("EV ev0"));
+        assert!(!pack.contains("EV ev1"));
+        assert!(pack.contains("D d2 \"docs/contracts/suite_manifest_v1.md\""));
+        assert!(!pack.contains("D d1 \"Makefile\""));
+        assert!(pack.contains("NBA evidence_fetch ev=ev0 file=d2 L1-L10"));
     }
 }
