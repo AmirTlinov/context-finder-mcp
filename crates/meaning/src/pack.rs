@@ -2342,9 +2342,6 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
     {
         return Some(PipelineStepKind::Test);
     }
-    if line.contains("validate") || contains_ascii_word(line, "check") {
-        return Some(PipelineStepKind::Test);
-    }
     if line.contains("bench") || line.contains("benchmark") || line.contains("eval") {
         return Some(PipelineStepKind::Eval);
     }
@@ -2366,6 +2363,11 @@ fn pipeline_kind_for_command(line_lc: &str) -> Option<PipelineStepKind> {
         || line.contains("format")
     {
         return Some(PipelineStepKind::Format);
+    }
+    // Fallback: treat generic "validate/check" scripts as verification steps (keeps the canon loop
+    // actionable even when a repo uses custom scripts).
+    if contains_ascii_word(line, "validate") || contains_ascii_word(line, "check") {
+        return Some(PipelineStepKind::Test);
     }
     None
 }
@@ -2451,4 +2453,24 @@ fn build_areas(
 
     out.truncate(MAX_AREAS);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pipeline_kind_for_command, PipelineStepKind};
+
+    #[test]
+    fn pipeline_kind_classifies_cargo_fmt_check_as_format() {
+        let lc = "cargo fmt --all -- --check";
+        assert_eq!(
+            pipeline_kind_for_command(lc),
+            Some(PipelineStepKind::Format)
+        );
+    }
+
+    #[test]
+    fn pipeline_kind_classifies_validate_contracts_script_as_test() {
+        let lc = "scripts/validate_contracts.sh";
+        assert_eq!(pipeline_kind_for_command(lc), Some(PipelineStepKind::Test));
+    }
 }

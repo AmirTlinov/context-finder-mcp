@@ -1437,6 +1437,26 @@ fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) ->
         min_keep: usize,
     }
 
+    fn parse_step_kind(line: &str) -> Option<&str> {
+        line.split_whitespace()
+            .find_map(|token| token.strip_prefix("kind="))
+    }
+
+    fn step_drop_rank(kind: Option<&str>) -> usize {
+        // For graceful degradation, prefer keeping runnable verification steps (test/eval).
+        // Remove low-signal steps first (setup) when budgets are tight.
+        match kind.unwrap_or("") {
+            "setup" => 100,
+            "format" => 90,
+            "lint" => 80,
+            "build" => 70,
+            "run" => 60,
+            "eval" => 50,
+            "test" => 40,
+            _ => 95,
+        }
+    }
+
     // This is a “graceful degradation” policy: trim *counts* first, preserve claim diversity.
     // The most valuable navigation primitives are kept longer:
     // - `ANCHOR` (where to start), `STEP` (how to run), `AREA` (sense map).
@@ -1493,6 +1513,32 @@ fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) ->
         if count <= policy.min_keep {
             continue;
         }
+        // Special-case `STEP`: preserve the highest-value step kinds longer (test/eval) instead of
+        // dropping the last-emitted step, which can accidentally keep only `setup` under tight budgets.
+        if policy.prefix == "STEP " {
+            let mut candidate: Option<(usize, usize)> = None; // (rank, idx)
+            for (idx, line) in lines.iter().take(nba_idx).enumerate() {
+                if !line.starts_with("STEP ") {
+                    continue;
+                }
+                let rank = step_drop_rank(parse_step_kind(line));
+                candidate = match candidate {
+                    None => Some((rank, idx)),
+                    Some((best_rank, best_idx)) => {
+                        if rank > best_rank || (rank == best_rank && idx > best_idx) {
+                            Some((rank, idx))
+                        } else {
+                            Some((best_rank, best_idx))
+                        }
+                    }
+                };
+            }
+            if let Some((_, idx)) = candidate {
+                lines.remove(idx);
+                return true;
+            }
+        }
+
         if let Some(idx) = lines
             .iter()
             .take(nba_idx)
@@ -2089,4 +2135,57 @@ pub(super) fn build_ev_file_index(evidence: &[EvidenceItem]) -> HashMap<String, 
             .or_insert_with(|| format!("ev{idx}"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shrink_pack;
+
+    fn build_test_pack() -> String {
+        // CPV1 with multiple STEP kinds so shrink logic can be tested deterministically.
+        [
+            "CPV1",
+            "ROOT_FP 1",
+            "QUERY \"x\"",
+            "S DICT",
+            "D d1 \"uses actions/checkout@v4\"",
+            "D d2 \"cargo test --workspace\"",
+            "D d3 \"cargo fmt --all -- --check\"",
+            "D d4 \".github/workflows/ci.yml\"",
+            "S CANON",
+            "STEP kind=setup label=d1 conf=0.7 ev=ev0",
+            "STEP kind=test label=d2 conf=0.7 ev=ev0",
+            "STEP kind=format label=d3 conf=0.7 ev=ev0",
+            "S EVIDENCE",
+            "EV ev0 kind=anchor.ci file=d4 L1-L10 sha256=deadbeef",
+            "NBA map",
+            "",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn shrink_pack_drops_setup_step_first() {
+        let mut pack = build_test_pack();
+        assert!(pack.contains("kind=setup"));
+        assert!(pack.contains("kind=test"));
+        assert!(pack.contains("kind=format"));
+
+        assert!(shrink_pack(&mut pack));
+        assert!(!pack.contains("kind=setup"));
+        assert!(pack.contains("kind=test"));
+        assert!(pack.contains("kind=format"));
+    }
+
+    #[test]
+    fn shrink_pack_preserves_test_step_longest() {
+        let mut pack = build_test_pack();
+        // Drop `setup` first, then drop `format`, keeping `test` as the remaining runnable step.
+        assert!(shrink_pack(&mut pack));
+        assert!(shrink_pack(&mut pack));
+
+        assert!(pack.contains("kind=test"));
+        assert!(!pack.contains("kind=setup"));
+        assert!(!pack.contains("kind=format"));
+    }
 }

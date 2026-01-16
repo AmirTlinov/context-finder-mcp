@@ -15,7 +15,7 @@
     },
     "pack": {
       "type": "string",
-      "description": "Cognitive Pack (CP): ultra-compact meaning graph + evidence pointers. Intended for LLM consumption."
+      "description": "Cognitive Pack (CP): ultra-compact meaning map + evidence pointers (CPV1). Deterministic + budgeted: under truncation the engine removes low-priority lines first while preserving high-signal invariants (e.g., keep at least one CONTRACT claim and at least one runnable canon STEP (prefer test/eval) when present). Intended for LLM consumption."
     },
     "budget": {
       "type": "object",
@@ -53,4 +53,3 @@
   },
   "$comment": "Rust source of truth: crates/cli/src/command/domain.rs::MeaningPackOutput (MEANING_PACK_VERSION=1)"
 }
-
