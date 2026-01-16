@@ -2765,18 +2765,14 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             .with_context(|| format!("build fixture '{}' (case={})", case.fixture, case.id))?;
 
         let max_chars = case.max_chars.unwrap_or(2000);
-        let resp = call_tool(
-            &service,
-            "meaning_pack",
-            serde_json::json!({
-                "path": root.path().to_string_lossy(),
-                "query": case.query,
-                "max_chars": max_chars,
-                "auto_index": false,
-                "response_mode": "facts",
-            }),
-        )
-        .await?;
+        let args = serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": case.query,
+            "max_chars": max_chars,
+            "auto_index": false,
+            "response_mode": "facts",
+        });
+        let resp = call_tool(&service, "meaning_pack", args.clone()).await?;
         assert_ne!(
             resp.is_error,
             Some(true),
@@ -2792,6 +2788,27 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             .context("meaning_pack missing text output")?;
         let pack = extract_cp_pack(text)?;
         assert_meaning_invariants(&pack)?;
+
+        let second = call_tool(&service, "meaning_pack", args).await?;
+        assert_ne!(
+            second.is_error,
+            Some(true),
+            "expected meaning_pack to succeed (determinism case={})",
+            case.id
+        );
+        let second_text = second
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.as_str())
+            .context("meaning_pack missing text output (determinism)")?;
+        let second_pack = extract_cp_pack(second_text)?;
+        assert_meaning_invariants(&second_pack)?;
+        assert_eq!(
+            pack, second_pack,
+            "expected meaning_pack output to be deterministic (case={})",
+            case.id
+        );
 
         for path in &case.expect_paths {
             assert!(
