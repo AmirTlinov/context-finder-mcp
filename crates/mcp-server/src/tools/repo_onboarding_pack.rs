@@ -157,7 +157,12 @@ fn add_docs_best_effort(
 fn trim_to_budget(result: &mut RepoOnboardingPackResult) -> anyhow::Result<()> {
     let max_chars = result.budget.max_chars;
     let reserved_docs = if result.docs.is_empty() { 0 } else { 1 };
-    let enforce = |target: &mut RepoOnboardingPackResult, min_docs: usize| {
+    let reserved_dirs = if result.map.directories.is_empty() {
+        0
+    } else {
+        1
+    };
+    let enforce = |target: &mut RepoOnboardingPackResult, min_docs: usize, min_dirs: usize| {
         enforce_max_chars(
             target,
             max_chars,
@@ -167,17 +172,17 @@ fn trim_to_budget(result: &mut RepoOnboardingPackResult) -> anyhow::Result<()> {
                 inner.budget.truncation = Some(RepoOnboardingPackTruncation::MaxChars);
             },
             |inner| {
-                if !inner.map.directories.is_empty() {
-                    inner.map.directories.pop();
-                    inner.map.truncated = true;
+                if inner.docs.len() > min_docs {
+                    inner.docs.pop();
                     return true;
                 }
                 if inner.next_actions.len() > 1 {
                     inner.next_actions.pop();
                     return true;
                 }
-                if inner.docs.len() > min_docs {
-                    inner.docs.pop();
+                if inner.map.directories.len() > min_dirs {
+                    inner.map.directories.pop();
+                    inner.map.truncated = true;
                     return true;
                 }
                 false
@@ -185,13 +190,24 @@ fn trim_to_budget(result: &mut RepoOnboardingPackResult) -> anyhow::Result<()> {
         )
     };
 
-    let used = match enforce(result, reserved_docs) {
+    let used = match enforce(result, reserved_docs, reserved_dirs) {
         Ok(used) => used,
         Err(err) => {
             if !result.docs.is_empty() {
                 result.docs.clear();
                 result.docs_reason = Some(RepoOnboardingDocsReason::MaxChars);
-                enforce(result, 0)?
+                match enforce(result, 0, reserved_dirs) {
+                    Ok(used) => used,
+                    Err(err2) => {
+                        if reserved_dirs > 0 {
+                            enforce(result, 0, 0)?
+                        } else {
+                            return Err(err2);
+                        }
+                    }
+                }
+            } else if reserved_dirs > 0 {
+                enforce(result, 0, 0)?
             } else {
                 return Err(err);
             }
@@ -225,6 +241,7 @@ pub(super) async fn compute_repo_onboarding_pack_result(
         .doc_max_chars
         .unwrap_or(DEFAULT_DOC_MAX_CHARS)
         .clamp(1, MAX_DOC_MAX_CHARS);
+    let doc_max_chars = doc_max_chars.min((max_chars / 2).max(200));
 
     let map = compute_map_result(root, root_display, map_depth, map_limit, 0).await?;
 

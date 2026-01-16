@@ -286,6 +286,66 @@ async fn repo_onboarding_pack_keeps_docs_under_tight_budget() -> Result<()> {
 }
 
 #[tokio::test]
+async fn repo_onboarding_pack_keeps_map_under_tight_budget_even_with_long_docs() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("src").join("main.rs"), "fn main() {}\n").context("write main.rs")?;
+
+    // Long, noisy doc content should not starve the map section under small budgets.
+    // Keep it deterministic (no randomness, no LLM summarization).
+    let long_agents = (0..600)
+        .map(|i| format!("LINE {i:04} lorem ipsum dolor sit amet, consectetur adipiscing elit.\n"))
+        .collect::<String>();
+    std::fs::write(root.join("AGENTS.md"), long_agents).context("write AGENTS.md")?;
+
+    let text = call_tool_text(
+        &service,
+        "repo_onboarding_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "map_depth": 2,
+            "map_limit": 50,
+            "docs_limit": 2,
+            "max_chars": 2000,
+            "response_mode": "facts"
+        }),
+    )
+    .await?;
+
+    assert_is_context_doc(&text);
+    assert!(text.contains("N: map:"), "expected map section marker");
+    assert!(
+        text.lines().any(|line| line.trim() == "src"),
+        "expected src in map output even with long docs"
+    );
+    assert!(text.contains("N: docs:"), "expected docs section marker");
+    assert!(
+        text.contains("R: AGENTS.md:1 doc"),
+        "expected AGENTS.md to be surfaced as a doc candidate"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn repo_onboarding_pack_clamps_tiny_budget_and_stays_low_noise_by_default() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
