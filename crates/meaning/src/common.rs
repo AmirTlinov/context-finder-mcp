@@ -1464,7 +1464,7 @@ fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) ->
         },
         PrefixPolicy {
             prefix: "CONTRACT ",
-            min_keep: 0,
+            min_keep: 1,
         },
         PrefixPolicy {
             prefix: "BOUNDARY ",

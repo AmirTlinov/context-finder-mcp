@@ -2075,7 +2075,31 @@ fn extract_commandish_pipeline(content: &str) -> Vec<PipelineStepCandidate> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let trimmed = trimmed
+        let mut trimmed = trimmed;
+
+        // YAML/GHA patterns: capture both `run:` and `uses:` steps.
+        // We keep this purely line-based (no YAML parser) to remain deterministic and cheap.
+        let is_uses = trimmed.starts_with("- uses:") || trimmed.starts_with("uses:");
+        if is_uses {
+            let action = trimmed
+                .strip_prefix("- uses:")
+                .or_else(|| trimmed.strip_prefix("uses:"))
+                .map(str::trim)
+                .unwrap_or("");
+            let action_lc = action.to_ascii_lowercase();
+            if let Some(kind) = pipeline_kind_for_uses_action(&action_lc) {
+                if seen.insert(kind) {
+                    out.push(PipelineStepCandidate {
+                        kind,
+                        label: truncate_pipeline_label(&format!("uses {action}"), 80),
+                        confidence: 0.7,
+                    });
+                }
+            }
+            continue;
+        }
+
+        trimmed = trimmed
             .strip_prefix("- run:")
             .or_else(|| trimmed.strip_prefix("run:"))
             .map(str::trim)
@@ -2116,6 +2140,30 @@ fn truncate_pipeline_label(value: &str, max_chars: usize) -> String {
         return value.to_string();
     }
     value.chars().take(max_chars).collect()
+}
+
+fn pipeline_kind_for_uses_action(action_lc: &str) -> Option<PipelineStepKind> {
+    let action = action_lc.trim();
+    if action.is_empty() {
+        return None;
+    }
+
+    // Keep this conservative: prefer missing a setup step over emitting noisy/incorrect ones.
+    // `checkout` and `setup-*` actions are a strong signal for the “setup” phase of the canon loop.
+    if action.starts_with("actions/checkout") {
+        return Some(PipelineStepKind::Setup);
+    }
+    if action.starts_with("actions/setup-") {
+        return Some(PipelineStepKind::Setup);
+    }
+    if action.contains("rust-toolchain")
+        || action.contains("rust-cache")
+        || action.contains("cache")
+    {
+        return Some(PipelineStepKind::Setup);
+    }
+
+    None
 }
 
 fn pipeline_kind_for_target(name_lc: &str) -> Option<PipelineStepKind> {

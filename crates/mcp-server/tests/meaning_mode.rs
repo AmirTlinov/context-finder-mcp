@@ -2005,6 +2005,45 @@ async fn meaning_pack_emits_ci_anchor_and_steps_reference_ci_evidence() -> Resul
 }
 
 #[tokio::test]
+async fn meaning_pack_ci_uses_emits_setup_step() -> Result<()> {
+    let root = tempfile::tempdir().context("temp project dir")?;
+    build_fixture(root.path(), "ci_only_canon_loop")?;
+
+    let service = start_mcp_server().await?;
+    let resp = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "derive canon loop from CI config",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(resp.is_error, Some(true), "meaning_pack returned error");
+
+    let text = resp
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack missing text output")?;
+    let pack = extract_cp_pack(text)?;
+    assert_meaning_invariants(&pack)?;
+
+    assert!(
+        pack.lines()
+            .any(|line| line.starts_with("STEP ") && line.contains("kind=setup")),
+        "expected a STEP kind=setup derived from CI uses: actions/checkout"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn meaning_pack_suppresses_dataset_dirs_in_map() -> Result<()> {
     let root = tempfile::tempdir().context("temp project dir")?;
     build_fixture(root.path(), "dataset_noise_budget")?;
