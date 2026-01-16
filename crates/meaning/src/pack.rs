@@ -288,6 +288,7 @@ struct RepoSignals {
     ci_files: usize,
     dataset_like_files: usize,
     dataset_like_bytes: u64,
+    has_dataset_store: bool,
     binary_blob_files: usize,
     manifest_files: usize,
     manifest_scopes: HashSet<String>,
@@ -295,6 +296,9 @@ struct RepoSignals {
 
 impl RepoSignals {
     fn is_dataset_heavy(&self) -> bool {
+        if self.has_dataset_store {
+            return true;
+        }
         if self.total_files < 50 {
             return false;
         }
@@ -480,6 +484,14 @@ pub async fn meaning_pack(
     files.sort();
     files.dedup();
 
+    // Signal-driven: treat common dataset scopes as “noise-heavy” even if they are excluded from
+    // default scanning (indexer intentionally skips `data/` + `datasets/`).
+    signals.has_dataset_store = [
+        "data", "dataset", "datasets", "corpus", "corpora", "weights",
+    ]
+    .iter()
+    .any(|dir| root.join(dir).is_dir());
+
     // Dynamic defaults (signal-driven): allow a more useful map without requiring explicit
     // map_depth/map_limit tuning by the caller.
     let mut map_depth = request.map_depth.unwrap_or(DEFAULT_MAP_DEPTH);
@@ -521,7 +533,8 @@ pub async fn meaning_pack(
     let (entrypoints, contracts) = classify_files(&files);
     let mut boundaries_full = classify_boundaries(&files, &entrypoints, &contracts);
     augment_k8s_manifest_boundaries(root, &files, &mut boundaries_full).await;
-    let artifact_store_file = best_artifact_store_evidence_file(&files);
+    let artifact_store_file = best_artifact_store_evidence_file(&files)
+        .or_else(|| discover_artifact_store_evidence_file(root));
     // Budget-aware: keep anchors stable and actionable under tight budgets by reducing
     // lower-signal sections (boundaries/entrypoints/flows) unless the query asks for them.
     let max_anchors = if tight_budget { 5 } else { DEFAULT_MAX_ANCHORS };
@@ -1367,6 +1380,69 @@ pub(crate) fn best_artifact_store_evidence_file(files: &[String]) -> Option<Stri
             .then_with(|| a.2.cmp(b.2))
     });
     candidates.first().map(|c| (*c.2).clone())
+}
+
+fn discover_artifact_store_evidence_file(root: &Path) -> Option<String> {
+    // Cheap + deterministic: probe only the most common stores and the highest-signal filenames.
+    const STORE_DIRS: &[&str] = &[
+        "artifacts",
+        "artifact",
+        "results",
+        "runs",
+        "outputs",
+        "output",
+        "checkpoints",
+        "checkpoint",
+        // Research/dataset-heavy repos often keep data under these scopes, which are skipped by the
+        // default indexer scan; we still want a single “evidence-backed” artifact anchor.
+        "datasets",
+        "dataset",
+        "data",
+        "corpus",
+        "corpora",
+        "weights",
+    ];
+    const FILES: &[&str] = &[
+        "README.md",
+        "readme.md",
+        "README.txt",
+        "readme.txt",
+        "README",
+        "readme",
+        "index.md",
+        "overview.md",
+        "manifest.json",
+        "manifest.yaml",
+        "manifest.yml",
+        "metadata.json",
+        "results.json",
+        "summary.json",
+    ];
+    const MAX_BYTES: u64 = 1_000_000;
+
+    for dir in STORE_DIRS {
+        let dir_path = root.join(dir);
+        if !dir_path.is_dir() {
+            continue;
+        }
+        for name in FILES {
+            let abs = dir_path.join(name);
+            if !abs.is_file() {
+                continue;
+            }
+            let rel = format!("{dir}/{name}");
+            if is_potential_secret_path(&rel) {
+                continue;
+            }
+            let bytes = std::fs::metadata(&abs).map(|m| m.len()).unwrap_or(0);
+            if bytes == 0 || bytes > MAX_BYTES {
+                continue;
+            }
+            return Some(rel);
+        }
+    }
+
+    None
 }
 
 pub(crate) fn best_canon_doc(files: &[String]) -> Option<String> {

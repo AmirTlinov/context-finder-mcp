@@ -61,6 +61,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   incorrectly label CI setup steps as “test” canon.
 - Meaning canon loop: derive a `setup` STEP from CI `uses:` actions (e.g. `actions/checkout`), so the
   pipeline reflects reality even when there is no README/Makefile.
+- Meaning outputs: if a repo keeps datasets under `data/` / `datasets/` (skipped by default scans),
+  `meaning_pack` now probes for a small README/manifest so it can still emit an evidence-backed
+  `ANCHOR kind=artifact` and keep the outputs zone visible.
 - Meaning next actions: when a repo uses `.worktrees/`, `meaning_pack` in `response_mode=full` now
   suggests `worktree_pack` as a direct drill-down (helps agents understand active branches quickly).
 - Capabilities: the recommended `start` route now points to `atlas_pack` (meaning CP + worktrees)
