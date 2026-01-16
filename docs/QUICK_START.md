@@ -6,6 +6,15 @@ Context Finder MCP is a semantic code navigation tool designed for AI agents and
 
 Its core UX goal is **not** “yet another search command” — it is to feel like an agent’s **always fresh, bounded project memory**, so daily context gathering does *not* degrade into `rg/cat/grep` loops.
 
+## Product promise (where we’re objectively better)
+
+1) **Onboarding unknown repos in minutes**: a meaning-first map + “canon loop” (how to run/verify),
+   with evidence pointers for exact reads only when needed.
+2) **“Where are the entrypoints/contracts/CI gates?”**: these are treated as first-class anchors
+   (and are kept stable under tight budgets).
+3) **“What is being worked on right now?”**: `worktree_pack` gives a bounded, deterministic scan of
+   git worktrees/branches (touches/digests) so agents can coordinate without guesswork.
+
 ## Installation
 
 ### From Source (recommended)

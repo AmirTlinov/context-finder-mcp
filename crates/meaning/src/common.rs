@@ -1757,6 +1757,93 @@ fn remove_one_low_priority_body_line(lines: &mut Vec<String>, nba_idx: usize) ->
             }
         }
 
+        // Special-case `CONTRACT`: preserve high-signal contracts (OpenAPI/proto/jsonschema) longer
+        // than README-like “index” files. This prevents contract-focused packs from degrading into
+        // low-information contract docs under tight budgets.
+        if policy.prefix == "CONTRACT " {
+            fn is_readme_like(file_lc: &str) -> bool {
+                let basename = file_lc.rsplit('/').next().unwrap_or(file_lc);
+                matches!(
+                    basename,
+                    "readme.md" | "readme.rst" | "readme.txt" | "index.md"
+                )
+            }
+
+            fn contract_drop_rank(kind: Option<&str>, file_lc: Option<&str>) -> usize {
+                let mut rank = match kind.unwrap_or("") {
+                    "openapi" => 40,
+                    "asyncapi" => 45,
+                    "proto" => 55,
+                    "jsonschema" => 60,
+                    "contract" => 75,
+                    _ => 85,
+                };
+                if let Some(file_lc) = file_lc {
+                    if is_readme_like(file_lc) {
+                        rank = rank.max(110);
+                    } else if file_lc.ends_with(".md")
+                        || file_lc.ends_with(".rst")
+                        || file_lc.ends_with(".txt")
+                    {
+                        rank = rank.max(95);
+                    }
+                }
+                rank
+            }
+
+            // Build a lightweight dict id -> value mapping so CONTRACT lines can be ranked.
+            let mut dict_values: HashMap<&str, String> = HashMap::new();
+            for line in lines.iter().take(nba_idx) {
+                if !line.starts_with("D ") {
+                    continue;
+                }
+                let mut parts = line.splitn(3, ' ');
+                parts.next(); // "D"
+                let Some(id) = parts.next() else { continue };
+                let rest = parts.next().unwrap_or("").trim();
+                if id.is_empty() || rest.is_empty() {
+                    continue;
+                }
+                let value = serde_json::from_str::<String>(rest)
+                    .ok()
+                    .or_else(|| {
+                        rest.strip_prefix('\"')
+                            .and_then(|v| v.strip_suffix('\"'))
+                            .map(|v| v.to_string())
+                    })
+                    .unwrap_or_else(|| rest.to_string());
+                dict_values.insert(id, value);
+            }
+
+            let mut candidate: Option<(usize, usize)> = None; // (rank, idx)
+            for (idx, line) in lines.iter().take(nba_idx).enumerate() {
+                if !line.starts_with("CONTRACT ") {
+                    continue;
+                }
+                let file_id = line
+                    .split_whitespace()
+                    .find_map(|token| token.strip_prefix("file="));
+                let file_lc = file_id
+                    .and_then(|id| dict_values.get(id))
+                    .map(|v| v.to_ascii_lowercase());
+                let rank = contract_drop_rank(parse_step_kind(line), file_lc.as_deref());
+                candidate = match candidate {
+                    None => Some((rank, idx)),
+                    Some((best_rank, best_idx)) => {
+                        if rank > best_rank || (rank == best_rank && idx > best_idx) {
+                            Some((rank, idx))
+                        } else {
+                            Some((best_rank, best_idx))
+                        }
+                    }
+                };
+            }
+            if let Some((_, idx)) = candidate {
+                lines.remove(idx);
+                return true;
+            }
+        }
+
         if let Some(idx) = lines
             .iter()
             .take(nba_idx)
@@ -2469,5 +2556,32 @@ mod tests {
         assert!(pack.contains("D d2 \"docs/contracts/suite_manifest_v1.md\""));
         assert!(!pack.contains("D d1 \"Makefile\""));
         assert!(pack.contains("NBA evidence_fetch ev=ev0 file=d2 L1-L10"));
+    }
+
+    #[test]
+    fn shrink_pack_drops_readme_contract_before_openapi() {
+        // When multiple CONTRACT lines exist, shrink should drop README-like contracts first so the
+        // remaining contract evidence stays high-signal under tight budgets.
+        let mut pack = [
+            "CPV1",
+            "ROOT_FP 1",
+            "QUERY \"contracts\"",
+            "S DICT",
+            "D d1 \"contracts/README.md\"",
+            "D d2 \"contracts/http/v1/openapi.json\"",
+            "S CONTRACTS",
+            "CONTRACT kind=contract file=d1 ev=ev0",
+            "CONTRACT kind=openapi file=d2 ev=ev1",
+            "S EVIDENCE",
+            "EV ev0 kind=contract file=d1 L1-L10 sha256=aaaa",
+            "EV ev1 kind=anchor.contract file=d2 L1-L10 sha256=bbbb",
+            "NBA map",
+            "",
+        ]
+        .join("\n");
+
+        assert!(shrink_pack(&mut pack));
+        assert!(!pack.contains("CONTRACT kind=contract file=d1"));
+        assert!(pack.contains("CONTRACT kind=openapi file=d2"));
     }
 }

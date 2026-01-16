@@ -56,6 +56,11 @@ This is a *change in what we transmit*, not text compression.
   (e.g. monorepo vs dataset-heavy), not by hardcoded directory names.
 - **Evidence-impact ranking**: `S MAP` prioritizes directories that back higher-value evidence
   (canon/how-to/CI/contracts/entrypoints), not just the largest directories.
+- **Worktrees as first-class UX**: when a repo uses git worktrees (commonly under `.worktrees/`),
+  meaning mode treats “what is being worked on” as part of onboarding:
+  - `meaning_pack` emits next-actions that suggest `worktree_pack` when worktrees are detected
+  - `worktree_pack` provides a bounded, deterministic scan view (branch/HEAD, touched areas, and
+    in full mode: evidence-backed canon loop + anchors per worktree)
 
 ---
 

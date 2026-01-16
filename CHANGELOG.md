@@ -25,6 +25,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 
 ### Changed
 
+- Meaning degradation: under extreme budgets, contract-focused queries now preserve higher-signal
+  contract evidence (OpenAPI/Proto/JSON Schema) rather than README-like contract index docs.
 - Meaning degradation: under tight budgets, the CP shrink policy preserves multiple
   `ENTRY` points (better behavior for monorepos / workspaces).
 - Meaning map: suppress `.worktrees/` from `S MAP` (treated as a workspace worktree store; avoids
