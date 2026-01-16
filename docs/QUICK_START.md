@@ -50,7 +50,7 @@ Start with one of these:
 - `repo_onboarding_pack` — onboarding: map + a few key docs under one budget.
 - `meaning_pack` — meanings-first orientation: a compact “Cognitive Pack (CP)” with evidence pointers (high signal, low tokens).
 - `meaning_focus` — semantic zoom-in around a specific file/dir (scoped CP + evidence pointers).
-- `worktree_pack` — worktree/branch atlas: list active worktrees and what is being worked on (best when a repo uses `.worktrees/`; in `response_mode=full` includes evidence-backed canon/CI/contracts summary).
+- `worktree_pack` — worktree/branch atlas: list active worktrees with a deterministic “aboutness” digest (what it touches + what to run/verify when available; best when a repo uses `.worktrees/`).
 - `evidence_fetch` — fetch exact file text for evidence pointers only (verbatim + hash, detects staleness).
 
 Tip: `meaning_pack` and `meaning_focus` support an optional diagram output via `output_format`:

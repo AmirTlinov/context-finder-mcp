@@ -33,7 +33,7 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         name: "worktree_pack",
-        summary: "Worktree atlas: branches/worktrees + what is being worked on.",
+        summary: "Worktree atlas: branches/worktrees + deterministic purpose digest (touches/canon/contracts).",
     },
     ToolDescriptor {
         name: "read_pack",

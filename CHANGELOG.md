@@ -42,6 +42,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   `evidence_fetch` follow-up for quick verification.
 - Worktree atlas: purpose summaries now also include `touched_areas` (best-effort zones derived from
   dirty paths, like `interfaces`/`ci`/`core`) so an agent can scan “what this branch is about”.
+- Worktree atlas: `worktree_pack` now emits a deterministic per-worktree digest (`digest:` + optional
+  `next:`) for fast scanning; format marker bumped to `WTV2`.
 - Worktree atlas: `touched_areas` now correctly treats untracked directory entries (e.g. `contracts/`)
   as a zone signal (common when `status.showUntrackedFiles=normal`).
 - Worktree atlas: `touched_areas` is now also derived from committed branch diffs vs a best-effort

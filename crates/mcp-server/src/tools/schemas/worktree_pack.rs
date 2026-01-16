@@ -95,6 +95,17 @@ pub struct WorktreePurposeSummary {
     /// High-signal anchors (CI/contracts/entrypoints/artifacts...). Bounded.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub anchors: Vec<WorktreePurposeAnchor>,
+    /// Deterministic “aboutness” digest for scanning many worktrees quickly.
+    ///
+    /// Product invariants:
+    /// - Evidence-first: derived only from visible worktree signals (branch/head subject + touched areas)
+    ///   and/or evidence-backed meaning anchors/steps. If evidence is missing, the digest should be
+    ///   omitted rather than guessed.
+    /// - Fail-closed: under tight budgets or low signal, prefer fewer claims (omit digest) over noisy
+    ///   speculation.
+    /// - Deterministic: must not rely on LLM summarization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<WorktreeDigest>,
     /// Meaning zones “touched” by the worktree (best-effort, bounded).
     ///
     /// Derived from git dirty paths and/or branch diff vs a best-effort base ref (e.g. main).
@@ -107,6 +118,24 @@ pub struct WorktreePurposeSummary {
     /// Whether the underlying meaning extraction was truncated (budget).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meaning_truncated: Option<bool>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+pub struct WorktreeDigest {
+    /// One-line purpose summary (bounded, deterministic).
+    pub summary: String,
+    /// Stable scanning tags (bounded; e.g. interfaces/ci/core/docs/artifacts/tooling).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Best next step for this worktree (bounded). Evidence-backed when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_step: Option<WorktreePurposeStep>,
+    /// Evidence pointer backing this digest (when available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<EvidencePointer>,
+    /// Best-effort confidence (0..=1). Not all sources provide this signal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema, Clone)]

@@ -211,6 +211,7 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
     let mut w1_header: Option<String> = None;
     let mut w1_hint_ahead = false;
     let mut w1_touches_interfaces = false;
+    let mut w1_digest_mentions_interfaces = false;
     let mut in_w1 = false;
     for line in text.lines() {
         if line.starts_with("WT ") {
@@ -225,6 +226,13 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
         }
         if in_w1 && line.trim_start().starts_with("touches:") && line.contains("interfaces") {
             w1_touches_interfaces = true;
+        }
+        if in_w1
+            && line.trim_start().starts_with("digest:")
+            && line.contains("touches")
+            && line.contains("interfaces")
+        {
+            w1_digest_mentions_interfaces = true;
         }
     }
     let w1_header = w1_header.context("failed to find worktree w1 header")?;
@@ -248,6 +256,10 @@ async fn worktree_pack_facts_includes_activity_and_divergence_hints() -> Result<
     assert!(
         w1_touches_interfaces,
         "expected w1 touches to include interfaces (got: {text})"
+    );
+    assert!(
+        w1_digest_mentions_interfaces,
+        "expected w1 digest to mention touched interfaces (got: {text})"
     );
 
     Ok(())
@@ -361,6 +373,14 @@ jobs:
     assert!(
         text.contains("touches:") && text.contains("interfaces"),
         "expected purpose touched areas to mention interfaces (got: {text})"
+    );
+    assert!(
+        text.contains("digest:"),
+        "expected full mode to include a bounded digest line (got: {text})"
+    );
+    assert!(
+        text.contains("next:") && text.contains("cargo test"),
+        "expected full mode digest to include a best next step (got: {text})"
     );
     assert!(
         text.contains("next_actions:")

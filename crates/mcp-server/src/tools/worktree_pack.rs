@@ -15,11 +15,11 @@ use super::cursor::{cursor_fingerprint, decode_cursor, encode_cursor, CURSOR_VER
 use super::schemas::evidence_fetch::EvidencePointer;
 use super::schemas::response_mode::ResponseMode;
 use super::schemas::worktree_pack::{
-    WorktreeInfo, WorktreePackCursorV1, WorktreePackRequest, WorktreePackResult,
+    WorktreeDigest, WorktreeInfo, WorktreePackCursorV1, WorktreePackRequest, WorktreePackResult,
     WorktreePurposeAnchor, WorktreePurposeStep, WorktreePurposeSummary,
 };
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const DEFAULT_MAX_CHARS: usize = 2_000;
 const MIN_MAX_CHARS: usize = 800;
 const MAX_MAX_CHARS: usize = 500_000;
@@ -31,6 +31,7 @@ const MAX_DIRTY_PATHS_PER_WORKTREE: usize = 6;
 const MAX_BRANCH_DIFF_PATHS_PER_WORKTREE: usize = 40;
 const MAX_HEAD_SUBJECT_CHARS: usize = 96;
 const MAX_PURPOSE_LABEL_CHARS: usize = 120;
+const MAX_DIGEST_SUMMARY_CHARS: usize = 160;
 
 const PURPOSE_SUMMARY_QUERY: &str =
     "canon loop (run/test/verify), CI gates, contracts, entrypoints, artifacts";
@@ -666,6 +667,112 @@ fn truncate_label(value: &str) -> String {
     }
 }
 
+fn truncate_digest_summary(value: &str) -> String {
+    let value = value.trim();
+    if value.chars().count() <= MAX_DIGEST_SUMMARY_CHARS {
+        value.to_string()
+    } else {
+        let mut out = crate::tools::util::truncate_to_chars(value, MAX_DIGEST_SUMMARY_CHARS);
+        out.push('…');
+        out
+    }
+}
+
+fn digest_next_step_rank(kind: &str) -> usize {
+    match kind {
+        // For worktree scan UX, a "test/eval" command is usually the best next action.
+        "test" => 0,
+        "eval" => 1,
+        "run" => 2,
+        "build" => 3,
+        "setup" => 4,
+        "lint" => 5,
+        "format" => 6,
+        _ => 99,
+    }
+}
+
+fn step_label_is_runnable(label: &str) -> bool {
+    let label = label.trim();
+    if label.is_empty() {
+        return false;
+    }
+    let lc = label.to_ascii_lowercase();
+    if lc.starts_with("- uses:") {
+        return false;
+    }
+    if lc.contains("actions/checkout@") || lc.contains("actions/checkout") {
+        return false;
+    }
+    true
+}
+
+fn pick_digest_next_step(canon: &[WorktreePurposeStep]) -> Option<WorktreePurposeStep> {
+    canon
+        .iter()
+        .filter(|step| step_label_is_runnable(&step.label))
+        .min_by_key(|step| digest_next_step_rank(&step.kind))
+        .cloned()
+}
+
+fn compute_worktree_digest(
+    worktree: &WorktreeInfo,
+    purpose: &WorktreePurposeSummary,
+) -> Option<WorktreeDigest> {
+    let base = worktree
+        .head_subject
+        .as_deref()
+        .and_then(|v| {
+            let v = v.trim();
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
+        })
+        .or_else(|| {
+            worktree.branch.as_deref().and_then(|v| {
+                let v = v.trim();
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
+            })
+        });
+
+    let touches = if purpose.touched_areas.is_empty() {
+        None
+    } else {
+        Some(purpose.touched_areas.join("; "))
+    };
+
+    let summary = match (base, touches) {
+        (Some(b), Some(t)) => format!("{b} · touches: {t}"),
+        (Some(b), None) => b.to_string(),
+        (None, Some(t)) => format!("touches: {t}"),
+        (None, None) => return None,
+    };
+
+    let next_step = pick_digest_next_step(&purpose.canon);
+    let evidence = next_step
+        .as_ref()
+        .and_then(|s| s.evidence.clone())
+        .or_else(|| purpose.anchors.iter().find_map(|a| a.evidence.clone()));
+    let confidence = next_step
+        .as_ref()
+        .and_then(|s| s.confidence)
+        .or_else(|| purpose.anchors.iter().find_map(|a| a.confidence));
+
+    Some(WorktreeDigest {
+        summary: truncate_digest_summary(&summary),
+        tags: purpose.touched_areas.clone(),
+        next_step,
+        evidence,
+        confidence,
+    })
+}
+
 fn ev_to_pointer(ev: &Cpv1EvidencePointer) -> EvidencePointer {
     EvidencePointer {
         file: ev.file.clone(),
@@ -748,6 +855,7 @@ async fn compute_worktree_purpose_summary(
     Some(WorktreePurposeSummary {
         canon,
         anchors,
+        digest: None,
         touched_areas,
         meaning_truncated: Some(engine.budget.truncated),
     })
@@ -815,6 +923,24 @@ fn render_worktree_lines(worktree: &WorktreeInfo) -> Vec<String> {
     lines.push(line);
     if let Some(hint) = render_worktree_hint(worktree) {
         lines.push(format!("  {hint}"));
+    }
+    if let Some(purpose) = worktree.purpose.as_ref() {
+        if let Some(digest) = purpose.digest.as_ref() {
+            let summary = digest.summary.trim();
+            if !summary.is_empty() {
+                lines.push(format!("  digest: {}", serde_json::json!(summary)));
+            }
+            if let Some(next) = digest.next_step.as_ref() {
+                let label = next.label.trim();
+                if !label.is_empty() {
+                    lines.push(format!(
+                        "  next: {}={}",
+                        next.kind,
+                        serde_json::json!(label)
+                    ));
+                }
+            }
+        }
     }
     if let Some(paths) = worktree.dirty_paths.as_ref() {
         if !paths.is_empty() {
@@ -1034,12 +1160,15 @@ pub(super) async fn compute_worktree_pack_result(
             let touched_areas =
                 compute_worktree_touched_areas(wt.dirty_paths.as_deref(), &diff_paths);
             if !touched_areas.is_empty() {
-                wt.purpose = Some(WorktreePurposeSummary {
+                let mut purpose = WorktreePurposeSummary {
                     canon: Vec::new(),
                     anchors: Vec::new(),
+                    digest: None,
                     touched_areas,
                     meaning_truncated: None,
-                });
+                };
+                purpose.digest = compute_worktree_digest(&wt, &purpose);
+                wt.purpose = Some(purpose);
             }
         }
         let rendered_lines = render_worktree_lines(&wt);
@@ -1085,6 +1214,13 @@ pub(super) async fn compute_worktree_pack_result(
                 base_ref.as_deref(),
             )
             .await;
+            let digest = wt
+                .purpose
+                .as_ref()
+                .and_then(|purpose| compute_worktree_digest(wt, purpose));
+            if let Some(purpose) = wt.purpose.as_mut() {
+                purpose.digest = digest;
+            }
         }
 
         // Budget guard: if purpose summaries blow the `.context` budget, drop them from the tail.
