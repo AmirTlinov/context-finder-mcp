@@ -259,6 +259,7 @@ fn build_fixture(root: &std::path::Path, fixture: &str) -> Result<()> {
         "tiltfile_kafka_broker" => build_fixture_tiltfile_kafka_broker(root),
         "canon_howto_anchors" => build_fixture_canon_howto_anchors(root),
         "artifact_store_anti_noise" => build_fixture_artifact_store_anti_noise(root),
+        "dataset_store_outputs_anchor" => build_fixture_dataset_store_outputs_anchor(root),
         "pinocchio_like_sense_map" => build_fixture_pinocchio_like_sense_map(root),
         "ci_only_canon_loop" => build_fixture_ci_only_canon_loop(root),
         "dataset_noise_budget" => build_fixture_dataset_noise_budget(root),
@@ -750,6 +751,39 @@ fn build_fixture_artifact_store_anti_noise(root: &std::path::Path) -> Result<()>
         .join("\n")
         + "\n";
     std::fs::write(root.join("src").join("main.rs"), main_body).context("write src/main.rs")?;
+
+    Ok(())
+}
+
+fn build_fixture_dataset_store_outputs_anchor(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::create_dir_all(root.join("data")).context("mkdir data")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .context("write Cargo.toml")?;
+
+    let main_body = std::iter::once("fn main() { println!(\"ok\"); }".to_string())
+        .chain((0..240).map(|idx| format!("// {idx}: {filler}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(root.join("src").join("main.rs"), main_body).context("write src/main.rs")?;
+
+    let mut data_readme = vec![
+        "# Data".to_string(),
+        "".to_string(),
+        "This repo keeps datasets under data/.".to_string(),
+        "".to_string(),
+    ];
+    data_readme.extend((0..340).map(|idx| format!("{idx}: {filler}")));
+    data_readme.push(String::new());
+    std::fs::write(root.join("data").join("README.md"), data_readme.join("\n"))
+        .context("write data/README.md")?;
 
     Ok(())
 }

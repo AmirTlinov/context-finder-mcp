@@ -13,6 +13,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   in MCP `.context` output when `response_mode=full` (keeps defaults low-noise).
 - Meaning eval: expanded the stub smoke dataset with additional repo archetypes
   (monorepo/workspace, “no docs but CI+contracts”, generated/noise-heavy trees).
+- Meaning eval: added a dataset-store fixture (`data/README.md`) to keep artifact anchors reliable
+  even when datasets live under ignored scopes.
 - Meaning eval: added a polyglot monorepo fixture (Rust + Node + Python) to ensure
   CI-derived canon loop + contract anchors remain reliable across mixed ecosystems.
 - Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.

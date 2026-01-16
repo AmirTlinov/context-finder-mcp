@@ -128,6 +128,15 @@
       "min_token_saved": 0.8
     },
     {
+      "id": "dataset_store_outputs_anchor",
+      "fixture": "dataset_store_outputs_anchor",
+      "query": "orient on outputs/artifacts when datasets live under data/ without drowning the map",
+      "expect_paths": ["data/README.md", "src/main.rs"],
+      "expect_claims": ["ANCHOR"],
+      "expect_anchor_kinds": ["artifact"],
+      "min_token_saved": 0.75
+    },
+    {
       "id": "canon_howto_anchors",
       "fixture": "canon_howto_anchors",
       "query": "orient on canon + how-to-run anchors with evidence",
