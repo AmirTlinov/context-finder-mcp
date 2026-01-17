@@ -1956,6 +1956,34 @@ async fn meaning_pack_suggests_worktree_pack_when_worktrees_dir_present() -> Res
 
     let service = start_mcp_server().await?;
 
+    let resp_facts = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "path": root.path().to_string_lossy(),
+            "query": "project overview",
+            "max_chars": 2000,
+            "auto_index": false,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        resp_facts.is_error,
+        Some(true),
+        "expected meaning_pack to succeed (response_mode=facts)"
+    );
+    let facts_text = resp_facts
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("meaning_pack facts missing text output")?;
+    assert!(
+        facts_text.contains("hint: worktrees detected"),
+        "expected a compact worktree hint in response_mode=facts"
+    );
+
     let resp_full = call_tool(
         &service,
         "meaning_pack",

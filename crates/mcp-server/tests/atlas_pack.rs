@@ -191,6 +191,10 @@ jobs:
         text.contains(".worktrees/w1") || text.contains(".worktrees\\w1"),
         "expected worktree path in output"
     );
+    assert!(
+        text.contains("worktree_coverage:"),
+        "expected worktree_coverage summary line in facts mode output"
+    );
 
     let full = call_tool_text(
         &service,

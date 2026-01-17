@@ -123,6 +123,36 @@ pub(in crate::tools::dispatch) async fn atlas_pack(
             doc.push_note("worktrees_truncated=true");
         }
     }
+    if response_mode != ResponseMode::Minimal {
+        let mut digest = 0usize;
+        let mut dirty = 0usize;
+        let mut touches = 0usize;
+        let mut purpose_truncated = 0usize;
+        for wt in &result.worktrees {
+            if wt.dirty.unwrap_or(false) {
+                dirty = dirty.saturating_add(1);
+            }
+            if let Some(purpose) = wt.purpose.as_ref() {
+                if purpose.digest.is_some() {
+                    digest = digest.saturating_add(1);
+                }
+                if !purpose.touched_areas.is_empty() {
+                    touches = touches.saturating_add(1);
+                }
+                if purpose.meaning_truncated.unwrap_or(false) {
+                    purpose_truncated = purpose_truncated.saturating_add(1);
+                }
+            }
+        }
+        doc.push_note(&format!(
+            "worktree_coverage: returned={} digest={} dirty={} touches={} purpose_truncated={}",
+            result.worktrees.len(),
+            digest,
+            dirty,
+            touches,
+            purpose_truncated
+        ));
+    }
 
     if response_mode == ResponseMode::Full {
         if let Some(actions) = result.next_actions.as_ref() {
