@@ -1524,17 +1524,19 @@ fn build_fixture_research_notebooks_dataset_polyglot(root: &std::path::Path) -> 
     std::fs::create_dir_all(root.join("data").join("raw")).context("mkdir data/raw")?;
     std::fs::create_dir_all(root.join("artifacts").join("run1")).context("mkdir artifacts/run1")?;
 
-    std::fs::write(
-        root.join("pyproject.toml"),
-        r#"[project]
-name = "demo-research"
-version = "0.1.0"
-requires-python = ">=3.11"
-"#,
-    )
-    .context("write pyproject.toml")?;
-
     let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+    let mut pyproject_lines = vec![
+        "[project]".to_string(),
+        "name = \"demo-research\"".to_string(),
+        "version = \"0.1.0\"".to_string(),
+        "requires-python = \">=3.11\"".to_string(),
+        "".to_string(),
+    ];
+    pyproject_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    pyproject_lines.push(String::new());
+    std::fs::write(root.join("pyproject.toml"), pyproject_lines.join("\n"))
+        .context("write pyproject.toml")?;
+
     let mut train_lines = vec![
         "def train():".to_string(),
         "    return 42".to_string(),
@@ -3042,6 +3044,12 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
                 | "out"
                 | "target"
                 | "node_modules"
+                | "data"
+                | "dataset"
+                | "datasets"
+                | "artifacts"
+                | "results"
+                | "corpus"
                 | ".worktrees"
                 | ".cache"
                 | ".venv"
@@ -3053,6 +3061,12 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             || lc.starts_with("out/")
             || lc.starts_with("target/")
             || lc.starts_with("node_modules/")
+            || lc.starts_with("data/")
+            || lc.starts_with("dataset/")
+            || lc.starts_with("datasets/")
+            || lc.starts_with("artifacts/")
+            || lc.starts_with("results/")
+            || lc.starts_with("corpus/")
             || lc.starts_with(".worktrees/")
             || lc.starts_with(".cache/")
     }
@@ -3274,6 +3288,40 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
                     end,
                 )?);
             }
+
+            // Token efficiency is meant to prevent “quality by flooding”. We compute a baseline from
+            // evidence slices (EV ranges) and also from the top anchors themselves (first N lines).
+            // This makes the metric stable for evidence-sparse cases where EV ranges can be tiny.
+            let mut anchor_files: HashSet<String> = HashSet::new();
+            let mut in_anchors = false;
+            for line in pack.lines() {
+                if line == "S ANCHORS" {
+                    in_anchors = true;
+                    continue;
+                }
+                if !in_anchors {
+                    continue;
+                }
+                if line.starts_with("S ") {
+                    break;
+                }
+                if !line.starts_with("ANCHOR ") {
+                    continue;
+                }
+                let file_id = line
+                    .split_whitespace()
+                    .find_map(|tok| tok.strip_prefix("file="))
+                    .unwrap_or("");
+                if let Some(rel) = dict.get(file_id) {
+                    anchor_files.insert(rel.clone());
+                }
+            }
+            let mut baseline_anchor_chars = 0usize;
+            for rel in anchor_files {
+                baseline_anchor_chars = baseline_anchor_chars
+                    .saturating_add(count_file_slice_chars(root.path(), &rel, 1, 200)?);
+            }
+            baseline_chars = baseline_chars.max(baseline_anchor_chars);
 
             let used_chars = pack.chars().count();
             anyhow::ensure!(

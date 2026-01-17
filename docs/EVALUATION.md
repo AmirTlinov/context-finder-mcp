@@ -79,7 +79,8 @@ Meaning dataset fields are intentionally richer than retrieval datasets:
 - `forbid_map_paths`: paths that must not appear in the CP map (noise budget)
 - `max_noise_ratio`: optional cap on map “noise ratio” (fraction of `S MAP` entries under known noise dirs)
 - `max_latency_ms`: optional per-case wall-time budget for `meaning_pack` under stub mode
-- `min_token_saved`: minimum `token_saved` ratio (prevents “quality by flooding”)
+- `min_token_saved`: minimum `token_saved` ratio (prevents “quality by flooding”); baseline is derived
+  from evidence slices (`EV ... Lx-Ly`) and also from the top anchor files (first N lines)
 
 ### 2.3) Onboarding atlas surfaces (`atlas_pack`, `worktree_pack`)
 

@@ -238,6 +238,16 @@
       "min_token_saved": 0.75
     },
     {
+      "id": "research_notebooks_dataset_polyglot",
+      "fixture": "research_notebooks_dataset_polyglot",
+      "query": "orient on experiments, scripts, notebooks, datasets, and artifacts",
+      "expect_paths": ["pyproject.toml"],
+      "expect_claims": ["AREA"],
+      "max_latency_ms": 3000,
+      "max_noise_ratio": 0.15,
+      "min_token_saved": 0.75
+    },
+    {
       "id": "pinocchio_like_sense_map",
       "fixture": "pinocchio_like_sense_map",
       "query": "orient on canon, how-to-run, contracts, experiments, artifacts",
