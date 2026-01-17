@@ -35,6 +35,11 @@ We also recommend a **real-repo “zoo” for MCP tool UX** (meaning/atlas/workt
 Example (run on your local “projects” directory):  
 `cargo run -p context-mcp --bin context-mcp-eval-zoo -- --root "/home/amir/Документы/projects" --limit 20 --out-json /tmp/context_zoo.json --out-md /tmp/context_zoo.md`
 
+If you want a “product-ish” local loop (timestamped artifacts + optional compare), use:
+
+- `scripts/eval_zoo_local.sh`
+- `scripts/eval_zoo_compare.py`
+
 Tip: if you want the zoo to also scan repos living under a `.worktrees/` directory (common in research setups), add `--include-worktrees`.
 
 If you want the run to **fail closed** on regressions, use `--strict` (plus optional `--strict-*` thresholds for latency/noise/token_saved).

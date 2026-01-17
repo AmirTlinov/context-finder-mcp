@@ -22,6 +22,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   for evidence-sparse cases via anchor windows).
 - Eval zoo: added a machine-readable JSON contract for real-repo runs
   (`contracts/eval/v1/zoo_report.schema.json`).
+- Eval zoo: added a local runner + compare scripts (`scripts/eval_zoo_local.sh`,
+  `scripts/eval_zoo_compare.py`) for trend tracking across heterogeneous repos.
 - Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.
 - Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
   (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
