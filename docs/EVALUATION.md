@@ -33,6 +33,8 @@ We also recommend a **real-repo “zoo” for MCP tool UX** (meaning/atlas packs
 Example (run on your local “projects” directory):  
 `cargo run -p context-mcp --bin context-mcp-eval-zoo -- --root "/home/amir/Документы/projects" --limit 20 --out-json /tmp/context_zoo.json --out-md /tmp/context_zoo.md`
 
+Tip: if you want the zoo to also scan repos living under a `.worktrees/` directory (common in research setups), add `--include-worktrees`.
+
 Real-repo runs are not required for CI to keep the loop fast and offline-friendly.
 
 ## 2) Golden datasets (`datasets/*.json`)

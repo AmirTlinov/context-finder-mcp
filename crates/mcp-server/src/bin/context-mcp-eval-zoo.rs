@@ -19,6 +19,7 @@ struct Args {
     max_chars: usize,
     response_mode: String,
     tools: Vec<String>,
+    include_worktrees: bool,
     out_json: Option<PathBuf>,
     out_md: Option<PathBuf>,
     strict: bool,
@@ -31,6 +32,7 @@ fn parse_args() -> Result<Args> {
     let mut max_chars: usize = 2000;
     let mut response_mode = "facts".to_string();
     let mut tools: Vec<String> = Vec::new();
+    let mut include_worktrees = false;
     let mut out_json: Option<PathBuf> = None;
     let mut out_md: Option<PathBuf> = None;
     let mut strict = false;
@@ -61,6 +63,7 @@ fn parse_args() -> Result<Args> {
                 let val = it.next().context("--tool requires a tool name")?;
                 tools.push(val);
             }
+            "--include-worktrees" => include_worktrees = true,
             "--out-json" => {
                 let val = it.next().context("--out-json requires a path")?;
                 out_json = Some(PathBuf::from(val));
@@ -91,6 +94,7 @@ fn parse_args() -> Result<Args> {
         max_chars,
         response_mode,
         tools,
+        include_worktrees,
         out_json,
         out_md,
         strict,
@@ -107,6 +111,7 @@ Runs a real-repo quality “zoo” over many git repos (meaning_pack + atlas_pac
 Usage:
   context-mcp-eval-zoo --root <dir> [--limit N] [--max-depth N] [--max-chars N]
                       [--tool meaning_pack] [--tool atlas_pack]
+                      [--include-worktrees]
                       [--out-json <path>] [--out-md <path>] [--strict]
 
 Defaults:
@@ -116,6 +121,7 @@ Defaults:
   --max-chars 2000
   --tool meaning_pack --tool atlas_pack
   --response-mode facts
+  --include-worktrees false
 "
     );
 }
@@ -340,48 +346,82 @@ fn is_noise_map_dir(dir: &str) -> bool {
         || lc.starts_with(".cache/")
 }
 
-fn compute_map_noise_ratio(pack: &str, dict: &HashMap<String, String>) -> f64 {
-    let mut in_map = false;
-    let mut total = 0usize;
-    let mut noise = 0usize;
+#[derive(Debug, Default)]
+struct MapStats {
+    area_entries: usize,
+    map_entries: usize,
+    map_noise_entries: usize,
+    output_area_entries: usize,
+}
+
+fn compute_map_stats(pack: &str, dict: &HashMap<String, String>) -> MapStats {
+    let mut stats = MapStats::default();
+    let mut section: Option<&str> = None;
+
     for line in pack.lines() {
         if line == "S MAP" {
-            in_map = true;
+            section = Some("map");
             continue;
         }
-        if !in_map {
+        if line == "S OUTPUTS" {
+            section = Some("outputs");
             continue;
         }
         if line.starts_with("S ") {
-            break;
-        }
-        if !line.starts_with("MAP ") {
+            section = None;
             continue;
         }
-        let path_id = line
-            .split_whitespace()
-            .find_map(|tok| tok.strip_prefix("path="))
-            .unwrap_or("");
-        let path = dict.get(path_id).cloned().unwrap_or_default();
-        total = total.saturating_add(1);
-        if is_noise_map_dir(&path) {
-            noise = noise.saturating_add(1);
+
+        match section {
+            Some("map") => {
+                if line.starts_with("AREA ") {
+                    stats.area_entries = stats.area_entries.saturating_add(1);
+                    continue;
+                }
+                if !line.starts_with("MAP ") {
+                    continue;
+                }
+                stats.map_entries = stats.map_entries.saturating_add(1);
+                let path_id = line
+                    .split_whitespace()
+                    .find_map(|tok| tok.strip_prefix("path="))
+                    .unwrap_or("");
+                let path = dict.get(path_id).cloned().unwrap_or_default();
+                if is_noise_map_dir(&path) {
+                    stats.map_noise_entries = stats.map_noise_entries.saturating_add(1);
+                }
+            }
+            Some("outputs") => {
+                if line.starts_with("AREA ") {
+                    stats.output_area_entries = stats.output_area_entries.saturating_add(1);
+                }
+            }
+            _ => {}
         }
     }
-    if total == 0 {
-        0.0
-    } else {
-        noise as f64 / total as f64
-    }
+
+    stats
+}
+
+#[derive(Debug, Default)]
+struct TokenSavedCalc {
+    token_saved: Option<f64>,
+    baseline_chars: Option<usize>,
+    used_chars: usize,
+    ev_slices: usize,
+    anchor_files: usize,
 }
 
 fn compute_token_saved(
     root: &Path,
     pack: &str,
     dict: &HashMap<String, String>,
-) -> Result<Option<f64>> {
+) -> Result<TokenSavedCalc> {
+    let used_chars = pack.chars().count();
+
     let mut seen: HashSet<String> = HashSet::new();
     let mut baseline_ev_chars = 0usize;
+    let mut ev_slices = 0usize;
     for line in pack.lines() {
         let Some((file_id, start, end)) = parse_ev_file_and_range(line) else {
             continue;
@@ -393,6 +433,7 @@ fn compute_token_saved(
         if !seen.insert(key) {
             continue;
         }
+        ev_slices = ev_slices.saturating_add(1);
         baseline_ev_chars =
             baseline_ev_chars.saturating_add(count_file_slice_chars(root, rel, start, end)?);
     }
@@ -421,6 +462,8 @@ fn compute_token_saved(
             anchor_files.insert(rel.clone());
         }
     }
+    let anchor_files_count = anchor_files.len();
+
     let mut baseline_anchor_chars = 0usize;
     for rel in anchor_files {
         baseline_anchor_chars =
@@ -429,13 +472,30 @@ fn compute_token_saved(
 
     let baseline = baseline_ev_chars.max(baseline_anchor_chars);
     if baseline == 0 {
-        return Ok(None);
+        return Ok(TokenSavedCalc {
+            token_saved: None,
+            baseline_chars: None,
+            used_chars,
+            ev_slices,
+            anchor_files: anchor_files_count,
+        });
     }
-    let used_chars = pack.chars().count();
-    Ok(Some(1.0 - (used_chars as f64 / baseline as f64)))
+
+    Ok(TokenSavedCalc {
+        token_saved: Some(1.0 - (used_chars as f64 / baseline as f64)),
+        baseline_chars: Some(baseline),
+        used_chars,
+        ev_slices,
+        anchor_files: anchor_files_count,
+    })
 }
 
-fn discover_git_roots(root: &Path, max_depth: usize, limit: usize) -> Result<Vec<PathBuf>> {
+fn discover_git_roots(
+    root: &Path,
+    max_depth: usize,
+    limit: usize,
+    include_worktrees: bool,
+) -> Result<Vec<PathBuf>> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
     let mut seen: HashSet<PathBuf> = HashSet::new();
@@ -456,7 +516,6 @@ fn discover_git_roots(root: &Path, max_depth: usize, limit: usize) -> Result<Vec
                 | "dist"
                 | "build"
                 | "out"
-                | ".worktrees"
                 | ".cache"
                 | ".venv"
                 | ".fastembed_cache"
@@ -466,9 +525,18 @@ fn discover_git_roots(root: &Path, max_depth: usize, limit: usize) -> Result<Vec
         ) {
             continue;
         }
+        if !include_worktrees && name == ".worktrees" {
+            continue;
+        }
 
         if dir.join(".git").exists() {
-            out.push(dir);
+            out.push(dir.clone());
+            if include_worktrees && depth < max_depth {
+                let worktrees = dir.join(".worktrees");
+                if worktrees.is_dir() {
+                    stack.push((worktrees, depth + 1));
+                }
+            }
             continue;
         }
         if depth >= max_depth {
@@ -561,7 +629,15 @@ struct ToolMetrics {
     error: Option<String>,
     latency_ms: u128,
     stable: bool,
+    area_entries: usize,
+    map_entries: usize,
+    map_noise_entries: usize,
     noise_ratio: Option<f64>,
+    output_area_entries: usize,
+    ev_slices: usize,
+    anchor_files: usize,
+    used_chars: usize,
+    baseline_chars: Option<usize>,
     token_saved: Option<f64>,
 }
 
@@ -580,6 +656,7 @@ struct ZooReport {
     max_depth: usize,
     max_chars: usize,
     response_mode: String,
+    include_worktrees: bool,
     repos: Vec<RepoResult>,
 }
 
@@ -595,22 +672,27 @@ fn render_md(report: &ZooReport) -> String {
     let mut out = String::new();
     out.push_str("# Meaning/Atlas Zoo Report (real repos)\n\n");
     out.push_str(&format!(
-        "- root: `{}`\n- repos: `{}`\n- tools: `{}`\n\n",
+        "- root: `{}`\n- repos: `{}`\n- tools: `{}`\n- include_worktrees: `{}`\n\n",
         report.root,
         report.repos.len(),
         report
             .repos
             .first()
             .map(|r| r.tools.keys().cloned().collect::<Vec<_>>().join(", "))
-            .unwrap_or_else(|| "-".to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        report.include_worktrees
     ));
 
-    out.push_str("| repo | head | archetypes | tool | ok | stable | latency_ms | noise_ratio | token_saved |\n");
-    out.push_str("|---|---:|---|---|---:|---:|---:|---:|---:|\n");
+    out.push_str(
+        "| repo | head | archetypes | tool | ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | baseline | used | token_saved |\n",
+    );
+    out.push_str(
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+    );
     for repo in &report.repos {
         for (tool, m) in &repo.tools {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 repo.path,
                 repo.head.clone().unwrap_or_else(|| "-".to_string()),
                 if repo.archetypes.is_empty() {
@@ -622,9 +704,18 @@ fn render_md(report: &ZooReport) -> String {
                 if m.ok { "yes" } else { "no" },
                 if m.stable { "yes" } else { "no" },
                 m.latency_ms,
+                m.area_entries,
+                m.map_entries,
                 m.noise_ratio
                     .map(|v| format!("{:.4}", v))
                     .unwrap_or_else(|| "-".to_string()),
+                m.output_area_entries,
+                m.ev_slices,
+                m.anchor_files,
+                m.baseline_chars
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                m.used_chars,
                 m.token_saved
                     .map(|v| format!("{:.4}", v))
                     .unwrap_or_else(|| "-".to_string()),
@@ -643,7 +734,12 @@ async fn main() -> Result<()> {
         args.root.display()
     );
 
-    let repos = discover_git_roots(&args.root, args.max_depth, args.limit)?;
+    let repos = discover_git_roots(
+        &args.root,
+        args.max_depth,
+        args.limit,
+        args.include_worktrees,
+    )?;
     if repos.is_empty() {
         anyhow::bail!(
             "No git repos found under {} (try a different --root or higher --max-depth)",
@@ -689,7 +785,15 @@ async fn main() -> Result<()> {
                             error: Some(format!("unsupported tool: {other}")),
                             latency_ms: 0,
                             stable: false,
+                            area_entries: 0,
+                            map_entries: 0,
+                            map_noise_entries: 0,
                             noise_ratio: None,
+                            output_area_entries: 0,
+                            ev_slices: 0,
+                            anchor_files: 0,
+                            used_chars: 0,
+                            baseline_chars: None,
                             token_saved: None,
                         },
                     );
@@ -707,7 +811,15 @@ async fn main() -> Result<()> {
                 error: None,
                 latency_ms,
                 stable: false,
+                area_entries: 0,
+                map_entries: 0,
+                map_noise_entries: 0,
                 noise_ratio: None,
+                output_area_entries: 0,
+                ev_slices: 0,
+                anchor_files: 0,
+                used_chars: 0,
+                baseline_chars: None,
                 token_saved: None,
             };
 
@@ -762,11 +874,23 @@ async fn main() -> Result<()> {
             }
 
             let dict = parse_cp_dict(&first_pack)?;
-            let noise_ratio = compute_map_noise_ratio(&first_pack, &dict);
-            m.noise_ratio = Some(noise_ratio);
-            all_noise.push(noise_ratio);
+            let map_stats = compute_map_stats(&first_pack, &dict);
+            m.area_entries = map_stats.area_entries;
+            m.output_area_entries = map_stats.output_area_entries;
+            m.map_entries = map_stats.map_entries;
+            m.map_noise_entries = map_stats.map_noise_entries;
+            if map_stats.map_entries > 0 {
+                let ratio = map_stats.map_noise_entries as f64 / map_stats.map_entries as f64;
+                m.noise_ratio = Some(ratio);
+                all_noise.push(ratio);
+            }
 
-            if let Ok(Some(saved)) = compute_token_saved(&repo, &first_pack, &dict) {
+            let tok = compute_token_saved(&repo, &first_pack, &dict)?;
+            m.used_chars = tok.used_chars;
+            m.ev_slices = tok.ev_slices;
+            m.anchor_files = tok.anchor_files;
+            m.baseline_chars = tok.baseline_chars;
+            if let Some(saved) = tok.token_saved {
                 m.token_saved = Some(saved);
                 all_token_saved.push(saved);
             }
@@ -817,6 +941,7 @@ async fn main() -> Result<()> {
         max_depth: args.max_depth,
         max_chars: args.max_chars,
         response_mode: args.response_mode,
+        include_worktrees: args.include_worktrees,
         repos: results,
     };
 
