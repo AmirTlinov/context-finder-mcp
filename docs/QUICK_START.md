@@ -14,6 +14,8 @@ Its core UX goal is **not** “yet another search command” — it is to feel l
    (and are kept stable under tight budgets).
 3) **“What is being worked on right now?”**: `worktree_pack` gives a bounded, deterministic scan of
    git worktrees/branches (touches/digests) so agents can coordinate without guesswork.
+4) **Cross-session continuity without noise**: agents can persist their own anchors + runbooks
+   (a curated “lens”) and re-fetch only the parts they care about with freshness truthfulness.
 
 ## Installation
 
@@ -60,6 +62,9 @@ Start with one of these:
 - `meaning_pack` — meanings-first orientation: a compact “Cognitive Pack (CP)” with evidence pointers (high signal, low tokens).
 - `meaning_focus` — semantic zoom-in around a specific file/dir (scoped CP + evidence pointers).
 - `worktree_pack` — worktree/branch atlas: list active worktrees with a deterministic “aboutness” digest (what it touches + what to run/verify when available; best when a repo uses `.worktrees/`).
+- `notebook_pack` — agent notebook snapshot: lists saved anchors + runbooks (low-noise; can mark stale evidence).
+- `notebook_edit` — agent notebook writer: upsert/delete anchors and runbooks (explicit writes; locked + atomic).
+- `runbook_pack` — runbook runner: returns a TOC by default; expands one section on demand, with cursor-based continuation.
 - `evidence_fetch` — fetch exact file text for evidence pointers only (verbatim + hash, detects staleness).
 
 Tip: `meaning_pack` and `meaning_focus` support an optional diagram output via `output_format`:
@@ -72,6 +77,12 @@ Suggested “semantic zoom” flow:
 1) `atlas_pack` (or `meaning_pack`) to get structure, canon loop, and the next best action.
 2) (optional) `meaning_focus` when you need to zoom in on a specific area before reading.
 3) `evidence_fetch` only for the specific EV pointers you need to verify or implement changes.
+
+Suggested “notebook + runbook” flow:
+
+1) Save the few “hot spots” you keep re-opening: `notebook_edit` (anchors with evidence pointers).
+2) Create a runbook that pulls just what you need (contracts/CI/coredir/worktrees): `notebook_edit`.
+3) Refresh context later in **one call**: `runbook_pack` (summary → expand a single section).
 
 Note: to surface the actionable `next_actions` guidance in MCP `.context`, use `response_mode=full`.
 Default modes (`facts` / `minimal`) stay intentionally low-noise and omit these hints.

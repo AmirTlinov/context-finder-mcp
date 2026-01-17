@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/notebook.schema.json",
+  "title": "Agent Notebook (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "repo", "anchors", "runbooks"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id"],
+      "properties": {
+        "repo_id": {
+          "type": "string",
+          "description": "Stable repo identifier for notebook scoping (e.g., hash of git common dir path)."
+        },
+        "repo_kind": {
+          "type": "string",
+          "description": "Best-effort repo kind hint (git|fs).",
+          "default": "git"
+        },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "anchors": {
+      "type": "array",
+      "items": { "$ref": "./notebook_anchor.schema.json" },
+      "default": []
+    },
+    "runbooks": {
+      "type": "array",
+      "items": { "$ref": "./runbook.schema.json" },
+      "default": []
+    }
+  }
+}
+

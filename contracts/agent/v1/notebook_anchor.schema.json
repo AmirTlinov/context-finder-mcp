@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/notebook_anchor.schema.json",
+  "title": "Agent Notebook Anchor (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind", "label", "evidence"],
+  "properties": {
+    "id": { "type": "string" },
+    "kind": {
+      "type": "string",
+      "enum": ["canon", "ci", "contract", "entrypoint", "zone", "work", "other"]
+    },
+    "label": { "type": "string" },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "./notebook_evidence_pointer.schema.json" },
+      "minItems": 1
+    },
+    "locator": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["symbol", "path_glob", "grep", "snippet_sha256", "other"]
+        },
+        "value": { "type": "string" }
+      },
+      "default": null
+    },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" }, "default": [] }
+  }
+}
+

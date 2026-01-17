@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/runbook_pack.schema.json",
+  "title": "Runbook Pack Output (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "runbook_id", "mode", "toc", "budget"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "runbook_id": { "type": "string" },
+    "runbook_title": { "type": "string", "default": "" },
+    "mode": { "type": "string", "enum": ["summary", "section"] },
+    "toc": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/toc_item" },
+      "default": []
+    },
+    "expanded": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["section_id", "content", "truncated"],
+      "properties": {
+        "section_id": { "type": "string" },
+        "content": { "type": "string" },
+        "truncated": { "type": "boolean" },
+        "next_cursor": { "type": "string" }
+      },
+      "default": null
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_chars", "used_chars", "truncated"],
+      "properties": {
+        "max_chars": { "type": "integer", "minimum": 0 },
+        "used_chars": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "../../command/v1/next_action.schema.json" },
+      "default": []
+    }
+  },
+  "$defs": {
+    "toc_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string" },
+        "title": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["fresh", "stale", "unknown", "error"]
+        },
+        "total_items": { "type": "integer", "minimum": 0, "default": 0 },
+        "stale_items": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    }
+  }
+}

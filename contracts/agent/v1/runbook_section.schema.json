@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/runbook_section.schema.json",
+  "title": "Agent Runbook Section (v1)",
+  "oneOf": [
+    {
+      "title": "Anchors section",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "anchor_ids"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string", "const": "anchors" },
+        "title": { "type": "string" },
+        "anchor_ids": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "include_evidence": { "type": "boolean", "default": true }
+      }
+    },
+    {
+      "title": "Meaning pack section",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "query"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string", "const": "meaning_pack" },
+        "title": { "type": "string" },
+        "query": { "type": "string" },
+        "max_chars": { "type": "integer", "minimum": 800 }
+      }
+    },
+    {
+      "title": "Worktrees section",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "type": "string", "const": "worktrees" },
+        "title": { "type": "string" },
+        "max_chars": { "type": "integer", "minimum": 800 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+      }
+    }
+  ]
+}
+

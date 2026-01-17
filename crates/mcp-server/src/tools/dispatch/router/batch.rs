@@ -91,6 +91,8 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::Search => "search",
         BatchToolName::Context => "context",
         BatchToolName::ContextPack => "context_pack",
+        BatchToolName::NotebookPack => "notebook_pack",
+        BatchToolName::RunbookPack => "runbook_pack",
         BatchToolName::MeaningPack => "meaning_pack",
         BatchToolName::MeaningFocus => "meaning_focus",
         BatchToolName::WorktreePack => "worktree_pack",
@@ -203,6 +205,16 @@ async fn dispatch_tool(
             ContextPackRequest,
             super::context_pack::context_pack,
             "context_pack"
+        ),
+        BatchToolName::NotebookPack => typed_call!(
+            crate::tools::schemas::notebook_pack::NotebookPackRequest,
+            super::notebook_pack::notebook_pack,
+            "notebook_pack"
+        ),
+        BatchToolName::RunbookPack => typed_call!(
+            crate::tools::schemas::runbook_pack::RunbookPackRequest,
+            super::runbook_pack::runbook_pack,
+            "runbook_pack"
         ),
         BatchToolName::MeaningPack => typed_call!(
             MeaningPackRequest,

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/notebook_edit.schema.json",
+  "title": "Notebook Edit (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "ops"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "path": { "type": "string" },
+    "scope": { "type": "string", "enum": ["project", "user_repo"], "default": "project" },
+    "ops": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/op" }
+    }
+  },
+  "$defs": {
+    "op": {
+      "oneOf": [
+        {
+          "title": "Upsert anchor",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "anchor"],
+          "properties": {
+            "op": { "type": "string", "const": "upsert_anchor" },
+            "anchor": { "$ref": "./notebook_anchor.schema.json" }
+          }
+        },
+        {
+          "title": "Delete anchor",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id"],
+          "properties": {
+            "op": { "type": "string", "const": "delete_anchor" },
+            "id": { "type": "string" }
+          }
+        },
+        {
+          "title": "Upsert runbook",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "runbook"],
+          "properties": {
+            "op": { "type": "string", "const": "upsert_runbook" },
+            "runbook": { "$ref": "./runbook.schema.json" }
+          }
+        },
+        {
+          "title": "Delete runbook",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id"],
+          "properties": {
+            "op": { "type": "string", "const": "delete_runbook" },
+            "id": { "type": "string" }
+          }
+        }
+      ]
+    }
+  }
+}
+

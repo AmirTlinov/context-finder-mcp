@@ -21,6 +21,8 @@ pub enum BatchToolName {
     Search,
     Context,
     ContextPack,
+    NotebookPack,
+    RunbookPack,
     MeaningPack,
     MeaningFocus,
     WorktreePack,

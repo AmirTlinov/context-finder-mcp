@@ -24,6 +24,18 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "One-call onboarding atlas: meaning CP + worktrees (canon/CI/contracts).",
     },
     ToolDescriptor {
+        name: "notebook_pack",
+        summary: "Agent notebook: list durable anchors + runbooks (cross-session continuity).",
+    },
+    ToolDescriptor {
+        name: "notebook_edit",
+        summary: "Agent notebook: upsert/delete anchors + runbooks (explicit writes, fail-closed).",
+    },
+    ToolDescriptor {
+        name: "runbook_pack",
+        summary: "Runbook runner: TOC by default; expand sections on demand (cursor-based).",
+    },
+    ToolDescriptor {
         name: "meaning_pack",
         summary: "Meaning-first CP (high signal) + evidence pointers.",
     },

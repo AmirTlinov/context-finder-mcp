@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/notebook_evidence_pointer.schema.json",
+  "title": "Notebook Evidence Pointer (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["file", "start_line", "end_line"],
+  "properties": {
+    "file": { "type": "string", "description": "Repo-relative file path." },
+    "start_line": { "type": "integer", "minimum": 1 },
+    "end_line": { "type": "integer", "minimum": 1 },
+    "source_hash": {
+      "type": "string",
+      "description": "Hash of the file bytes (invalidates evidence on change)."
+    }
+  }
+}
+

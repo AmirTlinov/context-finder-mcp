@@ -21,6 +21,9 @@
 //! - `overview` - Architecture snapshot (layers, entry points)
 //! - `map` - Project structure overview (directories, files, top symbols)
 //! - `doctor` - Diagnose model/GPU/index configuration
+//! - `notebook_pack` - Agent notebook: list durable anchors + runbooks (cross-session)
+//! - `notebook_edit` - Agent notebook: upsert/delete anchors + runbooks (explicit writes)
+//! - `runbook_pack` - Runbook runner: TOC + expand sections (cursor-based)
 //!
 //! ## Usage
 //!

@@ -26,6 +26,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   `scripts/eval_zoo_compare.py`) for trend tracking across heterogeneous repos.
 - Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.
 - Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
+- Agent notebook: new `notebook_pack` / `notebook_edit` tools for durable, evidence-backed anchors
+  and repo-scoped runbooks; new `runbook_pack` tool refreshes “only what you care about” with
+  strict boundedness, staleness truthfulness, and cursor-based continuation for long sections.
   (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
 - Onboarding atlas: new `atlas_pack` tool returns a meaning-first CP (canon/CI/contracts/entrypoints)
   plus a bounded worktree overview in one call (optimized for agent onboarding).

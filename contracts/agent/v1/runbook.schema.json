@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/runbook.schema.json",
+  "title": "Agent Runbook (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "sections"],
+  "properties": {
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "purpose": { "type": "string", "default": "" },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_mode": {
+          "type": "string",
+          "enum": ["summary", "section"],
+          "default": "summary"
+        },
+        "noise_budget": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.2 },
+        "max_items_per_section": { "type": "integer", "minimum": 1, "default": 10 }
+      },
+      "default": {}
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "./runbook_section.schema.json" }
+    },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  }
+}
+

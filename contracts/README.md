@@ -34,6 +34,24 @@ here first, then implemented in code.
 - `contracts/command/v1/task_pack.schema.json` (schema for `data` when action is `task_pack`)
 - `contracts/command/v1/text_search.schema.json` (schema for `data` when action is `text_search`)
 
+### Agent Notebook (durable anchors + runbooks)
+
+**What:** a durable, agent-authored knowledge layer for cross-session continuity:
+
+- Notebook anchors (“hot spots”) with evidence pointers.
+- Runbooks that refresh specific subsystems with **fresh/stale** truthfulness.
+
+**Contracts (v1):**
+
+- `contracts/agent/v1/notebook.schema.json`
+- `contracts/agent/v1/notebook_anchor.schema.json`
+- `contracts/agent/v1/notebook_evidence_pointer.schema.json`
+- `contracts/agent/v1/notebook_edit.schema.json`
+- `contracts/agent/v1/notebook_pack.schema.json`
+- `contracts/agent/v1/runbook.schema.json`
+- `contracts/agent/v1/runbook_section.schema.json`
+- `contracts/agent/v1/runbook_pack.schema.json`
+
 ### Evaluation outputs (local, optional)
 
 **What:** machine-readable outputs produced by local evaluation runners (e.g. real-repo zoo). These

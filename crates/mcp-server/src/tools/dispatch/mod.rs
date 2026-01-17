@@ -16,8 +16,11 @@ use super::list_files::{compute_list_files_result, decode_list_files_cursor};
 use super::map::{compute_map_result, decode_map_cursor};
 use super::meaning_focus::compute_meaning_focus_result;
 use super::meaning_pack::compute_meaning_pack_result;
+use super::notebook_edit::apply_notebook_edit;
+use super::notebook_pack::compute_notebook_pack_result;
 use super::paths::normalize_relative_path;
 use super::repo_onboarding_pack::compute_repo_onboarding_pack_result;
+use super::runbook_pack::compute_runbook_pack_result;
 use super::schemas::atlas_pack::AtlasPackRequest;
 use super::schemas::batch::{
     BatchBudget, BatchItemResult, BatchItemStatus, BatchRequest, BatchResult, BatchToolName,
@@ -42,6 +45,8 @@ use super::schemas::list_files::ListFilesTruncation;
 use super::schemas::map::MapRequest;
 use super::schemas::meaning_focus::MeaningFocusRequest;
 use super::schemas::meaning_pack::MeaningPackRequest;
+use super::schemas::notebook_edit::NotebookEditRequest;
+use super::schemas::notebook_pack::NotebookPackRequest;
 use super::schemas::overview::{
     GraphStats, KeyTypeInfo, LayerInfo, OverviewRequest, OverviewResult, ProjectInfo,
 };
@@ -52,6 +57,7 @@ use super::schemas::read_pack::{
 };
 use super::schemas::repo_onboarding_pack::RepoOnboardingPackRequest;
 use super::schemas::response_mode::ResponseMode;
+use super::schemas::runbook_pack::RunbookPackRequest;
 pub(super) use super::schemas::search::{SearchRequest, SearchResponse, SearchResult};
 use super::schemas::text_search::{
     TextSearchCursorModeV1, TextSearchCursorV1, TextSearchMatch, TextSearchRequest,
@@ -3397,6 +3403,45 @@ impl ContextFinderService {
     ) -> Result<CallToolResult, McpError> {
         Ok(strip_structured_content(
             router::atlas_pack::atlas_pack(self, request).await?,
+        ))
+    }
+
+    /// Notebook pack: list saved anchors/runbooks (cross-session, low-noise).
+    #[tool(
+        description = "Agent notebook pack: list durable anchors and runbooks for a repo (cross-session continuity)."
+    )]
+    pub async fn notebook_pack(
+        &self,
+        Parameters(request): Parameters<NotebookPackRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::notebook_pack::notebook_pack(self, request).await?,
+        ))
+    }
+
+    /// Notebook edit: upsert/delete anchors and runbooks (explicit writes).
+    #[tool(
+        description = "Agent notebook edit: upsert/delete anchors and runbooks (explicit, durable writes; fail-closed)."
+    )]
+    pub async fn notebook_edit(
+        &self,
+        Parameters(request): Parameters<NotebookEditRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::notebook_edit::notebook_edit(self, request).await?,
+        ))
+    }
+
+    /// Runbook pack: TOC by default, expand a section on demand (cursor-based).
+    #[tool(
+        description = "Runbook pack: returns a low-noise TOC by default, with freshness/staleness; expand sections on demand with cursor continuation."
+    )]
+    pub async fn runbook_pack(
+        &self,
+        Parameters(request): Parameters<RunbookPackRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::runbook_pack::runbook_pack(self, request).await?,
         ))
     }
 
