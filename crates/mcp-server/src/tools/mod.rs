@@ -23,6 +23,7 @@ mod meaning_pack;
 mod notebook_edit;
 mod notebook_pack;
 mod notebook_store;
+mod notebook_suggest;
 mod notebook_types;
 mod paths;
 mod repo_onboarding_pack;

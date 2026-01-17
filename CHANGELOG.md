@@ -29,6 +29,10 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Agent notebook: new `notebook_pack` / `notebook_edit` tools for durable, evidence-backed anchors
   and repo-scoped runbooks; new `runbook_pack` tool refreshes “only what you care about” with
   strict boundedness, staleness truthfulness, and cursor-based continuation for long sections.
+- Notebook autopilot: `notebook_suggest` proposes evidence-backed anchors + runbooks (read-only),
+  with a ready-to-apply `notebook_edit` next_action in `response_mode=full`.
+- Runbook noise control: `runbook_pack` now enforces runbook `noise_budget` to keep evidence
+  snippets bounded (prevents “runbook dump” failure mode).
   (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
 - Onboarding atlas: new `atlas_pack` tool returns a meaning-first CP (canon/CI/contracts/entrypoints)
   plus a bounded worktree overview in one call (optimized for agent onboarding).

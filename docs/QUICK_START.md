@@ -64,6 +64,7 @@ Start with one of these:
 - `worktree_pack` — worktree/branch atlas: list active worktrees with a deterministic “aboutness” digest (what it touches + what to run/verify when available; best when a repo uses `.worktrees/`).
 - `notebook_pack` — agent notebook snapshot: lists saved anchors + runbooks (low-noise; can mark stale evidence).
 - `notebook_edit` — agent notebook writer: upsert/delete anchors and runbooks (explicit writes; locked + atomic).
+- `notebook_suggest` — notebook autopilot: suggests evidence-backed anchors + runbooks (read-only, ready-to-apply via `notebook_edit`).
 - `runbook_pack` — runbook runner: returns a TOC by default; expands one section on demand, with cursor-based continuation.
 - `evidence_fetch` — fetch exact file text for evidence pointers only (verbatim + hash, detects staleness).
 
@@ -80,9 +81,9 @@ Suggested “semantic zoom” flow:
 
 Suggested “notebook + runbook” flow:
 
-1) Save the few “hot spots” you keep re-opening: `notebook_edit` (anchors with evidence pointers).
-2) Create a runbook that pulls just what you need (contracts/CI/coredir/worktrees): `notebook_edit`.
-3) Refresh context later in **one call**: `runbook_pack` (summary → expand a single section).
+1) Generate a ready-to-apply starter set: `notebook_suggest` (anchors + runbooks).
+2) Persist it explicitly: `notebook_edit` (single atomic write).
+3) Refresh later in **one call**: `runbook_pack` (summary → expand a single section).
 
 Note: to surface the actionable `next_actions` guidance in MCP `.context`, use `response_mode=full`.
 Default modes (`facts` / `minimal`) stay intentionally low-noise and omit these hints.

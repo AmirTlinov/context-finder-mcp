@@ -3,6 +3,7 @@ use context_indexer::ToolMeta;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use super::cursor::{cursor_fingerprint, decode_cursor, encode_cursor, CURSOR_VERSION};
@@ -19,6 +20,7 @@ use super::schemas::runbook_pack::{
 };
 use super::schemas::worktree_pack::WorktreePackRequest;
 use super::worktree_pack::{compute_worktree_pack_result, render_worktree_pack_block};
+use super::{secrets::contains_potential_secret_assignment, util::hex_encode_lower};
 
 const VERSION: u32 = 1;
 const DEFAULT_MAX_CHARS: usize = 2_000;
@@ -120,6 +122,7 @@ pub(super) async fn compute_runbook_pack_result(
             &runbook,
             &notebook,
             section,
+            max_chars,
         )
         .await?;
         let content_hash = fingerprint_content(&full_content);
@@ -320,6 +323,7 @@ async fn render_section_content(
     runbook: &AgentRunbook,
     notebook: &super::notebook_types::AgentNotebook,
     section: &RunbookSection,
+    request_max_chars: usize,
 ) -> Result<String> {
     match section {
         RunbookSection::Anchors {
@@ -330,6 +334,13 @@ async fn render_section_content(
         } => {
             let mut out = String::new();
             out.push_str(&format!("# {title}\n"));
+            let mut hash_cache: HashMap<String, String> = HashMap::new();
+
+            let noise_budget = (runbook.policy.noise_budget.clamp(0.0, 1.0) as f64).max(0.0);
+            let mut remaining_noise_chars =
+                ((request_max_chars as f64) * noise_budget).round().max(0.0) as usize;
+            let min_snippet_chars = 120usize;
+
             let limit = runbook.policy.max_items_per_section as usize;
             for anchor_id in anchor_ids.iter().take(limit) {
                 let Some(anchor) = notebook.anchors.iter().find(|a| a.id == *anchor_id) else {
@@ -356,47 +367,75 @@ async fn render_section_content(
                     continue;
                 }
 
+                let allow_snippets = remaining_noise_chars >= min_snippet_chars;
+                if !allow_snippets {
+                    out.push_str("  (evidence content suppressed by runbook noise_budget)\n");
+                }
+
                 let max_evidence = 3usize;
                 for ev in anchor.evidence.iter().take(max_evidence) {
-                    // Render evidence windows as a bounded slice; we intentionally keep this small
-                    // to avoid turning runbooks into megadumps.
-                    let pointer = super::schemas::evidence_fetch::EvidencePointer {
-                        file: ev.file.clone(),
-                        start_line: ev.start_line as usize,
-                        end_line: ev.end_line as usize,
-                        source_hash: ev.source_hash.clone(),
+                    out.push_str(&format!(
+                        "  EV {}:{}-{}\n",
+                        ev.file, ev.start_line, ev.end_line
+                    ));
+
+                    if !allow_snippets {
+                        continue;
+                    }
+                    if remaining_noise_chars < min_snippet_chars {
+                        continue;
+                    }
+
+                    let rel = ev.file.replace('\\', "/");
+                    let expected_hash = ev.source_hash.as_deref().unwrap_or("");
+                    let current_hash = if expected_hash.is_empty() {
+                        String::new()
+                    } else if let Some(v) = hash_cache.get(&rel) {
+                        v.clone()
+                    } else {
+                        let v = compute_file_hash(root, &rel).unwrap_or_default();
+                        hash_cache.insert(rel.clone(), v.clone());
+                        v
                     };
-                    let req = super::schemas::evidence_fetch::EvidenceFetchRequest {
-                        path: None,
-                        items: vec![pointer],
-                        max_chars: Some(2_000),
-                        max_lines: Some(120),
-                        strict_hash: Some(false),
-                        response_mode: Some(ResponseMode::Facts),
-                    };
-                    match super::evidence_fetch::compute_evidence_fetch_result(root, &req).await {
-                        Ok(fetched) => {
-                            for item in fetched.items {
-                                let ev = item.evidence;
+                    let stale = !expected_hash.is_empty()
+                        && !current_hash.is_empty()
+                        && current_hash != expected_hash;
+
+                    let max_chars = remaining_noise_chars.min(2_000);
+                    let max_lines = 60usize;
+                    match read_evidence_window_bounded(
+                        root,
+                        &rel,
+                        ev.start_line,
+                        ev.end_line,
+                        max_lines,
+                        max_chars,
+                    ) {
+                        Ok((content, truncated)) => {
+                            if is_compose_file(&rel)
+                                && contains_potential_secret_assignment(&content)
+                            {
                                 out.push_str(&format!(
-                                    "  EV {}:{}-{} stale={}\n",
-                                    ev.file, ev.start_line, ev.end_line, item.stale
+                                    "    (refusing to return potential secret snippet; stale={stale})\n"
                                 ));
-                                for line in item.content.lines() {
+                            } else if content.is_empty() {
+                                out.push_str(&format!("    (no content; stale={stale})\n"));
+                            } else {
+                                out.push_str(&format!("    (stale={stale})\n"));
+                                for line in content.lines() {
                                     out.push_str(&format!("    {line}\n"));
                                 }
-                                if item.truncated {
+                                if truncated {
                                     out.push_str("    (truncated)\n");
                                 }
+                                remaining_noise_chars =
+                                    remaining_noise_chars.saturating_sub(content.chars().count());
                             }
                         }
                         Err(err) => {
-                            out.push_str(&format!(
-                                "  EV {}:{}-{} error={}\n",
-                                ev.file, ev.start_line, ev.end_line, err
-                            ));
+                            out.push_str(&format!("    (error: {err})\n"));
                         }
-                    };
+                    }
                 }
             }
             if anchor_ids.len() > limit {
@@ -451,4 +490,91 @@ async fn render_section_content(
             Ok(out)
         }
     }
+}
+
+fn is_compose_file(rel: &str) -> bool {
+    let file_lc = rel.to_ascii_lowercase();
+    file_lc.ends_with("docker-compose.yml")
+        || file_lc.ends_with("docker-compose.yaml")
+        || file_lc.ends_with("compose.yml")
+        || file_lc.ends_with("compose.yaml")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex_encode_lower(&hasher.finalize())
+}
+
+fn compute_file_hash(root: &Path, rel: &str) -> Result<String> {
+    if super::secrets::is_potential_secret_path(rel) {
+        anyhow::bail!("refusing to read potential secret path: {rel}");
+    }
+    let canonical = root
+        .join(Path::new(rel))
+        .canonicalize()
+        .with_context(|| format!("resolve evidence path '{rel}'"))?;
+    if !canonical.starts_with(root) {
+        anyhow::bail!("evidence file '{rel}' is outside project root");
+    }
+    let bytes = std::fs::read(&canonical)
+        .with_context(|| format!("read file bytes {}", canonical.display()))?;
+    Ok(sha256_hex(&bytes))
+}
+
+fn read_evidence_window_bounded(
+    root: &Path,
+    rel: &str,
+    start_line: u32,
+    end_line: u32,
+    max_lines: usize,
+    max_chars: usize,
+) -> Result<(String, bool)> {
+    if super::secrets::is_potential_secret_path(rel) {
+        anyhow::bail!("refusing to read potential secret path: {rel}");
+    }
+    let canonical = root
+        .join(Path::new(rel))
+        .canonicalize()
+        .with_context(|| format!("resolve evidence path '{rel}'"))?;
+    if !canonical.starts_with(root) {
+        anyhow::bail!("evidence file '{rel}' is outside project root");
+    }
+
+    let start_line = start_line.max(1);
+    let end_line = end_line.max(start_line);
+    let mut out = String::new();
+    let mut truncated = false;
+
+    let file = std::fs::File::open(&canonical)
+        .with_context(|| format!("open file {}", canonical.display()))?;
+    let reader = BufReader::new(file);
+    let mut line_no: u32 = 0;
+    let mut used_lines: usize = 0;
+
+    for line in reader.lines() {
+        line_no = line_no.saturating_add(1);
+        if line_no < start_line {
+            continue;
+        }
+        if line_no > end_line {
+            break;
+        }
+        let line = line.with_context(|| format!("read line {line_no}"))?;
+        used_lines = used_lines.saturating_add(1);
+        if used_lines > max_lines {
+            truncated = true;
+            break;
+        }
+        // Keep the snippet bounded by chars; we prefer to stop early rather than trimming a line.
+        let next_len = out.chars().count().saturating_add(line.chars().count() + 1);
+        if next_len > max_chars {
+            truncated = true;
+            break;
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+
+    Ok((out, truncated))
 }

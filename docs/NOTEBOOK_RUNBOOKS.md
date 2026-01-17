@@ -14,6 +14,8 @@ new sessions, and multiple agents.
 
 - `notebook_pack`: read-only snapshot of saved anchors/runbooks (can mark evidence as stale).
 - `notebook_edit`: explicit writes (upsert/delete) with locking + atomic updates.
+- `notebook_suggest`: read-only generator that proposes a ready-to-apply starter set
+  (anchors + runbooks) derived from evidence-backed `meaning_pack`.
 - `runbook_pack`: refresh runner
   - default mode is **TOC** (low-noise)
   - expand exactly one section when needed
@@ -33,4 +35,3 @@ new sessions, and multiple agents.
    - a “subsystem lens” (contracts + CI + the core directory)
    - a “worktrees lens” (active worktrees/branches when `.worktrees/` is used)
 3) In daily use: `runbook_pack` (TOC → expand a single section).
-

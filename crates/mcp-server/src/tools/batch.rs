@@ -48,6 +48,7 @@ pub(super) fn prepare_item_input(
             | BatchToolName::ListFiles
             | BatchToolName::GrepContext
             | BatchToolName::NotebookPack
+            | BatchToolName::NotebookSuggest
             | BatchToolName::RunbookPack
             | BatchToolName::MeaningPack
             | BatchToolName::MeaningFocus

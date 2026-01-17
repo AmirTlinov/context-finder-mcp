@@ -18,6 +18,7 @@ use super::meaning_focus::compute_meaning_focus_result;
 use super::meaning_pack::compute_meaning_pack_result;
 use super::notebook_edit::apply_notebook_edit;
 use super::notebook_pack::compute_notebook_pack_result;
+use super::notebook_suggest::compute_notebook_suggest_result;
 use super::paths::normalize_relative_path;
 use super::repo_onboarding_pack::compute_repo_onboarding_pack_result;
 use super::runbook_pack::compute_runbook_pack_result;
@@ -47,6 +48,7 @@ use super::schemas::meaning_focus::MeaningFocusRequest;
 use super::schemas::meaning_pack::MeaningPackRequest;
 use super::schemas::notebook_edit::NotebookEditRequest;
 use super::schemas::notebook_pack::NotebookPackRequest;
+use super::schemas::notebook_suggest::NotebookSuggestRequest;
 use super::schemas::overview::{
     GraphStats, KeyTypeInfo, LayerInfo, OverviewRequest, OverviewResult, ProjectInfo,
 };
@@ -3429,6 +3431,19 @@ impl ContextFinderService {
     ) -> Result<CallToolResult, McpError> {
         Ok(strip_structured_content(
             router::notebook_edit::notebook_edit(self, request).await?,
+        ))
+    }
+
+    /// Notebook suggest: propose anchors + runbooks (read-only; evidence-backed).
+    #[tool(
+        description = "Notebook suggest: propose evidence-backed anchors and runbooks (read-only). Designed to reduce tool-call count by generating a ready-to-apply notebook_edit patch."
+    )]
+    pub async fn notebook_suggest(
+        &self,
+        Parameters(request): Parameters<NotebookSuggestRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::notebook_suggest::notebook_suggest(self, request).await?,
         ))
     }
 

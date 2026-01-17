@@ -14,6 +14,10 @@ use super::schemas::evidence_fetch::EvidencePointer;
 use super::schemas::response_mode::ResponseMode;
 use super::schemas::worktree_pack::WorktreePackRequest;
 use super::worktree_pack::compute_worktree_pack_result;
+use super::{
+    notebook_store::{load_or_init_notebook, notebook_paths_for_scope, resolve_repo_identity},
+    notebook_types::NotebookScope,
+};
 
 const VERSION: u32 = 1;
 
@@ -142,14 +146,19 @@ fn derive_evidence_items(pack: &str) -> Vec<EvidencePointer> {
     items
 }
 
+struct NextActionHints<'a> {
+    best_worktree_path: Option<&'a str>,
+    worktrees_truncated: bool,
+    worktrees_next_cursor: Option<&'a str>,
+    worktrees_len: usize,
+    notebook_empty: bool,
+}
+
 fn derive_next_actions(
     root_path: &str,
     query: &str,
     pack: &str,
-    best_worktree_path: Option<&str>,
-    worktrees_truncated: bool,
-    worktrees_next_cursor: Option<&str>,
-    worktrees_len: usize,
+    hints: NextActionHints<'_>,
 ) -> Vec<ToolNextAction> {
     let mut actions: Vec<ToolNextAction> = Vec::new();
     let dict = parse_cpv1_dict(pack);
@@ -183,7 +192,7 @@ fn derive_next_actions(
         });
     }
 
-    if let Some(worktree_path) = best_worktree_path {
+    if let Some(worktree_path) = hints.best_worktree_path {
         if worktree_path != root_path {
             actions.push(ToolNextAction {
                 tool: "meaning_pack".to_string(),
@@ -198,13 +207,13 @@ fn derive_next_actions(
         }
     }
 
-    if worktrees_truncated || worktrees_len > 1 {
+    if hints.worktrees_truncated || hints.worktrees_len > 1 {
         let mut args = json!({
             "path": root_path,
             "response_mode": "full",
             "max_chars": 2000,
         });
-        if let Some(cursor) = worktrees_next_cursor {
+        if let Some(cursor) = hints.worktrees_next_cursor {
             if let Some(obj) = args.as_object_mut() {
                 obj.insert("cursor".to_string(), json!(cursor));
             }
@@ -215,6 +224,19 @@ fn derive_next_actions(
             reason:
                 "Drill into worktrees/branches (purpose summaries are evidence-backed in full mode)"
                     .to_string(),
+        });
+    }
+
+    if hints.notebook_empty {
+        actions.push(ToolNextAction {
+            tool: "notebook_suggest".to_string(),
+            args: json!({
+                "path": root_path,
+                "query": query,
+                "max_chars": 2000,
+                "response_mode": "full",
+            }),
+            reason: "Generate durable anchors + runbooks for cross-session continuity.".to_string(),
         });
     }
 
@@ -277,15 +299,20 @@ pub(super) async fn compute_atlas_pack_result(
     }
 
     let next_actions = if response_mode == ResponseMode::Full {
-        let actions = derive_next_actions(
-            &root_path,
-            &query,
-            &meaning_result.pack,
-            worktrees.first().map(|w| w.path.as_str()),
-            worktrees_truncated || !include_worktrees,
-            worktrees_next_cursor.as_deref(),
-            worktrees.len(),
-        );
+        let notebook_empty = {
+            let identity = resolve_repo_identity(root);
+            let paths = notebook_paths_for_scope(root, NotebookScope::Project, &identity)?;
+            let notebook = load_or_init_notebook(root, &paths)?;
+            notebook.anchors.is_empty() && notebook.runbooks.is_empty()
+        };
+        let hints = NextActionHints {
+            best_worktree_path: worktrees.first().map(|w| w.path.as_str()),
+            worktrees_truncated: worktrees_truncated || !include_worktrees,
+            worktrees_next_cursor: worktrees_next_cursor.as_deref(),
+            worktrees_len: worktrees.len(),
+            notebook_empty,
+        };
+        let actions = derive_next_actions(&root_path, &query, &meaning_result.pack, hints);
         if actions.is_empty() {
             None
         } else {

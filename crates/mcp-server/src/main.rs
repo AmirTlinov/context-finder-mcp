@@ -23,6 +23,7 @@
 //! - `doctor` - Diagnose model/GPU/index configuration
 //! - `notebook_pack` - Agent notebook: list durable anchors + runbooks (cross-session)
 //! - `notebook_edit` - Agent notebook: upsert/delete anchors + runbooks (explicit writes)
+//! - `notebook_suggest` - Notebook autopilot: suggest evidence-backed anchors + runbooks (read-only)
 //! - `runbook_pack` - Runbook runner: TOC + expand sections (cursor-based)
 //!
 //! ## Usage

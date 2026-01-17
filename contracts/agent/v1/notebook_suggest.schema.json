@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/notebook_suggest.schema.json",
+  "title": "Notebook Suggest Output (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "repo_id", "query", "anchors", "runbooks", "budget"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "repo_id": { "type": "string" },
+    "query": { "type": "string" },
+    "anchors": {
+      "type": "array",
+      "items": { "$ref": "./notebook_anchor.schema.json" },
+      "default": []
+    },
+    "runbooks": {
+      "type": "array",
+      "items": { "$ref": "./runbook.schema.json" },
+      "default": []
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_chars", "used_chars", "truncated"],
+      "properties": {
+        "max_chars": { "type": "integer", "minimum": 0 },
+        "used_chars": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "../../command/v1/next_action.schema.json" },
+      "default": []
+    }
+  }
+}
+

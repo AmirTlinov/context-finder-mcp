@@ -48,6 +48,7 @@ here first, then implemented in code.
 - `contracts/agent/v1/notebook_evidence_pointer.schema.json`
 - `contracts/agent/v1/notebook_edit.schema.json`
 - `contracts/agent/v1/notebook_pack.schema.json`
+- `contracts/agent/v1/notebook_suggest.schema.json`
 - `contracts/agent/v1/runbook.schema.json`
 - `contracts/agent/v1/runbook_section.schema.json`
 - `contracts/agent/v1/runbook_pack.schema.json`

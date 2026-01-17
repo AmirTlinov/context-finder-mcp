@@ -20,6 +20,7 @@ pub(super) mod meaning_focus;
 pub(super) mod meaning_pack;
 pub(super) mod notebook_edit;
 pub(super) mod notebook_pack;
+pub(super) mod notebook_suggest;
 pub(super) mod overview;
 pub(super) mod read_pack;
 pub(super) mod repo_onboarding_pack;

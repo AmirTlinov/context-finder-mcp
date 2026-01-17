@@ -207,3 +207,99 @@ async fn notebook_and_runbook_basic_flow() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn notebook_suggest_and_noise_budget_are_low_noise_and_safe() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    )
+    .context("write main.rs")?;
+    std::fs::write(root.join("README.md"), "# Demo\n").context("write README.md")?;
+    std::fs::create_dir_all(root.join(".github/workflows")).context("mkdir workflows")?;
+    std::fs::write(
+        root.join(".github/workflows/ci.yml"),
+        "name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: echo ok\n",
+    )
+    .context("write ci.yml")?;
+
+    // Autopilot suggestions should be bounded and always include a daily portal runbook.
+    let suggested = call_tool_text(
+        &service,
+        "notebook_suggest",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 1200
+        }),
+    )
+    .await?;
+    assert!(
+        suggested.contains("notebook_suggest"),
+        "tool output should include tool name"
+    );
+    assert!(
+        suggested.contains("suggested_runbooks="),
+        "tool output should include suggested runbooks count"
+    );
+    assert!(
+        suggested.contains("Daily portal"),
+        "tool output should include daily portal runbook"
+    );
+
+    // Enforce that runbook evidence does not overwhelm the output: when noise_budget is 0,
+    // EV pointers are shown but snippet content is suppressed (fail-closed).
+    let edit = serde_json::json!({
+        "version": 1,
+        "path": root.to_string_lossy().to_string(),
+        "ops": [
+            {
+                "op": "upsert_anchor",
+                "anchor": {
+                    "id": "a1",
+                    "kind": "entrypoint",
+                    "label": "Main entry",
+                    "evidence": [
+                        {"file": "src/main.rs", "start_line": 1, "end_line": 3}
+                    ]
+                }
+            },
+            {
+                "op": "upsert_runbook",
+                "runbook": {
+                    "id": "rb1",
+                    "title": "Noise budget test",
+                    "policy": {"noise_budget": 0.0},
+                    "sections": [
+                        {"id": "s1", "kind": "anchors", "title": "Hot spots", "anchor_ids": ["a1"], "include_evidence": true}
+                    ]
+                }
+            }
+        ]
+    });
+    let _ = call_tool_text(&service, "notebook_edit", edit).await?;
+
+    let expanded = call_tool_text(
+        &service,
+        "runbook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "runbook_id": "rb1",
+            "mode": "section",
+            "section_id": "s1",
+            "max_chars": 900
+        }),
+    )
+    .await?;
+    assert!(
+        expanded.contains("evidence content suppressed by runbook noise_budget"),
+        "runbook_pack should suppress evidence snippets when noise_budget is zero"
+    );
+
+    Ok(())
+}

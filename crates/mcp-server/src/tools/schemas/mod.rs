@@ -17,6 +17,7 @@ pub mod meaning_focus;
 pub mod meaning_pack;
 pub mod notebook_edit;
 pub mod notebook_pack;
+pub mod notebook_suggest;
 pub mod overview;
 pub mod read_pack;
 pub mod repo_onboarding_pack;

@@ -8,6 +8,10 @@ use crate::tools::{
     schemas::{atlas_pack::AtlasPackRequest, worktree_pack::WorktreePackResult},
     worktree_pack::render_worktree_pack_block,
 };
+use crate::tools::{
+    notebook_store::{load_or_init_notebook, notebook_paths_for_scope, resolve_repo_identity},
+    notebook_types::NotebookScope,
+};
 
 use super::cursor_alias::compact_cursor_alias;
 use super::error::{
@@ -79,6 +83,23 @@ pub(in crate::tools::dispatch) async fn atlas_pack(
     let mut doc = ContextDocBuilder::new();
     doc.push_answer("atlas_pack");
     doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+
+    if response_mode != ResponseMode::Minimal {
+        let identity = resolve_repo_identity(&root);
+        if let Ok(paths) = notebook_paths_for_scope(&root, NotebookScope::Project, &identity) {
+            if paths.notebook_path.exists() {
+                if let Ok(nb) = load_or_init_notebook(&root, &paths) {
+                    if !nb.anchors.is_empty() || !nb.runbooks.is_empty() {
+                        doc.push_note(&format!(
+                            "notebook: anchors={} runbooks={}",
+                            nb.anchors.len(),
+                            nb.runbooks.len()
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     doc.push_note("meaning_pack:");
     doc.push_block_smart(&result.meaning_pack);
