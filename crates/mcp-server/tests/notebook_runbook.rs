@@ -91,6 +91,13 @@ fn extract_cursor(text: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+fn extract_note_value(text: &str, key: &str) -> Option<String> {
+    let prefix = format!("N: {key}=");
+    text.lines()
+        .find_map(|line| line.strip_prefix(&prefix).map(|v| v.trim().to_string()))
+        .filter(|v| !v.is_empty())
+}
+
 #[tokio::test]
 async fn notebook_and_runbook_basic_flow() -> Result<()> {
     let service = start_mcp_server().await?;
@@ -204,6 +211,138 @@ async fn notebook_and_runbook_basic_flow() -> Result<()> {
             "continuation should return content"
         );
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn notebook_apply_suggest_preview_apply_rollback() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    )
+    .context("write main.rs")?;
+
+    let suggest = call_tool_text(
+        &service,
+        "notebook_suggest",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 800,
+            "response_mode": "minimal"
+        }),
+    )
+    .await?;
+    let repo_id = extract_note_value(&suggest, "repo_id").context("missing repo_id")?;
+
+    let suggestion = serde_json::json!({
+        "version": 1,
+        "repo_id": repo_id,
+        "query": "test",
+        "anchors": [
+            {
+                "id": "a1",
+                "kind": "entrypoint",
+                "label": "Main entry",
+                "evidence": [
+                    {"file": "src/main.rs", "start_line": 1, "end_line": 3}
+                ]
+            }
+        ],
+        "runbooks": [
+            {
+                "id": "rb_test",
+                "title": "Test runbook",
+                "sections": [
+                    {"id": "s1", "kind": "anchors", "title": "Hot spots", "anchor_ids": ["a1"], "include_evidence": true}
+                ]
+            }
+        ],
+        "budget": { "max_chars": 2000, "used_chars": 0, "truncated": false }
+    });
+
+    let preview = call_tool_text(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "preview",
+            "path": root.to_string_lossy().to_string(),
+            "scope": "project",
+            "suggestion": suggestion.clone()
+        }),
+    )
+    .await?;
+    assert!(preview.contains("mode=Preview"), "expected preview mode");
+
+    let apply = call_tool_text(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "apply",
+            "path": root.to_string_lossy().to_string(),
+            "scope": "project",
+            "suggestion": suggestion
+        }),
+    )
+    .await?;
+    let backup_id = extract_note_value(&apply, "backup_id").context("missing backup_id")?;
+
+    let pack = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        pack.contains("a1"),
+        "notebook should contain applied anchor"
+    );
+    assert!(
+        pack.contains("rb_test"),
+        "notebook should contain applied runbook"
+    );
+
+    let _ = call_tool_text(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "rollback",
+            "path": root.to_string_lossy().to_string(),
+            "scope": "project",
+            "backup_id": backup_id
+        }),
+    )
+    .await?;
+
+    let pack = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        !pack.contains("a1"),
+        "notebook should not contain anchor after rollback"
+    );
+    assert!(
+        !pack.contains("rb_test"),
+        "notebook should not contain runbook after rollback"
+    );
 
     Ok(())
 }

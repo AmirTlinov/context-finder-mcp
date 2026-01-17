@@ -20,6 +20,7 @@ mod map;
 mod meaning_diagram;
 mod meaning_focus;
 mod meaning_pack;
+mod notebook_apply_suggest;
 mod notebook_edit;
 mod notebook_pack;
 mod notebook_store;

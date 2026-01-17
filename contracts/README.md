@@ -47,6 +47,8 @@ here first, then implemented in code.
 - `contracts/agent/v1/notebook_anchor.schema.json`
 - `contracts/agent/v1/notebook_evidence_pointer.schema.json`
 - `contracts/agent/v1/notebook_edit.schema.json`
+- `contracts/agent/v1/notebook_apply_suggest.schema.json`
+- `contracts/agent/v1/notebook_apply_suggest_result.schema.json`
 - `contracts/agent/v1/notebook_pack.schema.json`
 - `contracts/agent/v1/notebook_suggest.schema.json`
 - `contracts/agent/v1/runbook.schema.json`

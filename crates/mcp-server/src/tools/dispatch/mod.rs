@@ -16,6 +16,7 @@ use super::list_files::{compute_list_files_result, decode_list_files_cursor};
 use super::map::{compute_map_result, decode_map_cursor};
 use super::meaning_focus::compute_meaning_focus_result;
 use super::meaning_pack::compute_meaning_pack_result;
+use super::notebook_apply_suggest::apply_notebook_apply_suggest;
 use super::notebook_edit::apply_notebook_edit;
 use super::notebook_pack::compute_notebook_pack_result;
 use super::notebook_suggest::compute_notebook_suggest_result;
@@ -46,6 +47,7 @@ use super::schemas::list_files::ListFilesTruncation;
 use super::schemas::map::MapRequest;
 use super::schemas::meaning_focus::MeaningFocusRequest;
 use super::schemas::meaning_pack::MeaningPackRequest;
+use super::schemas::notebook_apply_suggest::NotebookApplySuggestRequest;
 use super::schemas::notebook_edit::NotebookEditRequest;
 use super::schemas::notebook_pack::NotebookPackRequest;
 use super::schemas::notebook_suggest::NotebookSuggestRequest;
@@ -3434,9 +3436,22 @@ impl ContextFinderService {
         ))
     }
 
+    /// Notebook apply: one-click preview/apply/rollback for notebook_suggest output.
+    #[tool(
+        description = "Notebook apply: one-click preview/apply/rollback for notebook_suggest output (safe backup + rollback)."
+    )]
+    pub async fn notebook_apply_suggest(
+        &self,
+        Parameters(request): Parameters<NotebookApplySuggestRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::notebook_apply_suggest::notebook_apply_suggest(self, request).await?,
+        ))
+    }
+
     /// Notebook suggest: propose anchors + runbooks (read-only; evidence-backed).
     #[tool(
-        description = "Notebook suggest: propose evidence-backed anchors and runbooks (read-only). Designed to reduce tool-call count by generating a ready-to-apply notebook_edit patch."
+        description = "Notebook suggest: propose evidence-backed anchors and runbooks (read-only). Designed to reduce tool-call count; apply via notebook_apply_suggest."
     )]
     pub async fn notebook_suggest(
         &self,

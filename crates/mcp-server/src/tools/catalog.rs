@@ -32,6 +32,10 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Agent notebook: upsert/delete anchors + runbooks (explicit writes, fail-closed).",
     },
     ToolDescriptor {
+        name: "notebook_apply_suggest",
+        summary: "Notebook apply: one-click preview/apply/rollback for notebook_suggest output.",
+    },
+    ToolDescriptor {
         name: "notebook_suggest",
         summary:
             "Notebook autopilot: suggest evidence-backed anchors + runbooks (read-only, ready-to-apply).",

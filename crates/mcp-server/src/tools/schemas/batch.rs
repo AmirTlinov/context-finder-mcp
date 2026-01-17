@@ -23,6 +23,7 @@ pub enum BatchToolName {
     ContextPack,
     NotebookPack,
     NotebookEdit,
+    NotebookApplySuggest,
     NotebookSuggest,
     RunbookPack,
     MeaningPack,

@@ -30,14 +30,14 @@ pub struct NotebookSuggestRequest {
     pub response_mode: Option<ResponseMode>,
 }
 
-#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, Clone)]
 pub struct NotebookSuggestBudget {
     pub max_chars: usize,
     pub used_chars: usize,
     pub truncated: bool,
 }
 
-#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, Clone)]
 pub struct NotebookSuggestResult {
     pub version: u32,
     pub repo_id: String,

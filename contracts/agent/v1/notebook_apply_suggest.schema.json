@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/notebook_apply_suggest.schema.json",
+  "title": "Notebook Apply Suggest (v1)",
+  "oneOf": [
+    {
+      "title": "Preview or apply suggestions",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "mode", "suggestion"],
+      "properties": {
+        "version": { "type": "integer", "const": 1 },
+        "path": { "type": "string" },
+        "scope": {
+          "type": "string",
+          "enum": ["project", "user_repo"],
+          "default": "project"
+        },
+        "mode": { "type": "string", "enum": ["preview", "apply"] },
+        "suggestion": { "$ref": "./notebook_suggest.schema.json" },
+        "allow_truncated": {
+          "type": "boolean",
+          "default": false,
+          "description": "If false, applying a truncated suggestion fails closed."
+        },
+        "backup_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create_backup": { "type": "boolean", "default": true },
+            "max_backups": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 10,
+              "description": "Best-effort retention cap; 0 means do not delete old backups."
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "Rollback to a backup",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "mode", "backup_id"],
+      "properties": {
+        "version": { "type": "integer", "const": 1 },
+        "path": { "type": "string" },
+        "scope": {
+          "type": "string",
+          "enum": ["project", "user_repo"],
+          "default": "project"
+        },
+        "mode": { "type": "string", "const": "rollback" },
+        "backup_id": { "type": "string" }
+      }
+    }
+  ]
+}
+

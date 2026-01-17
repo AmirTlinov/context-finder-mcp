@@ -306,51 +306,61 @@ pub(super) async fn compute_notebook_suggest_result(
 
     let mut next_actions: Vec<ToolNextAction> = Vec::new();
     if response_mode == ResponseMode::Full {
-        // 1) Apply all suggested anchors + runbooks in a single explicit write.
-        let mut ops: Vec<serde_json::Value> = Vec::new();
-        for a in &anchors {
-            ops.push(json!({ "op": "upsert_anchor", "anchor": a }));
-        }
-        for rb in &runbooks {
-            ops.push(json!({ "op": "upsert_runbook", "runbook": rb }));
+        // Apply via batch v2 `$ref` (no manual ops glue), then refresh the daily portal.
+        let mut items: Vec<serde_json::Value> = Vec::new();
+        items.push(json!({
+            "id": "suggest",
+            "tool": "notebook_suggest",
+            "input": {
+                "scope": match scope { NotebookScope::Project => "project", NotebookScope::UserRepo => "user_repo" },
+                "query": query.clone(),
+                "max_chars": 800,
+                "response_mode": "minimal"
+            }
+        }));
+        items.push(json!({
+            "id": "apply",
+            "tool": "notebook_apply_suggest",
+            "input": {
+                "version": 1,
+                "mode": "apply",
+                "scope": match scope { NotebookScope::Project => "project", NotebookScope::UserRepo => "user_repo" },
+                "allow_truncated": false,
+                "suggestion": { "$ref": "#/items/suggest/data" }
+            }
+        }));
+
+        if let Some(portal) = runbooks.first() {
+            items.push(json!({
+                "id": "portal",
+                "tool": "runbook_pack",
+                "input": {
+                    "runbook_id": portal.id.clone(),
+                    "mode": "summary",
+                    "scope": match scope { NotebookScope::Project => "project", NotebookScope::UserRepo => "user_repo" },
+                    "max_chars": 2000,
+                    "response_mode": "facts"
+                }
+            }));
         }
 
-        let mut edit_args = json!({
-            "version": 1,
-            "scope": match scope { NotebookScope::Project => "project", NotebookScope::UserRepo => "user_repo" },
-            "ops": ops,
+        let mut batch_args = json!({
+            "version": 2,
+            "stop_on_error": true,
+            "max_chars": 20000,
+            "response_mode": "facts",
+            "items": items,
         });
         if let Some(path) = request.path.as_deref() {
-            if let Some(obj) = edit_args.as_object_mut() {
+            if let Some(obj) = batch_args.as_object_mut() {
                 obj.insert("path".to_string(), json!(path));
             }
         }
         next_actions.push(ToolNextAction {
-            tool: "notebook_edit".to_string(),
-            args: edit_args,
-            reason: "Persist suggested anchors + runbooks (explicit write).".to_string(),
+            tool: "batch".to_string(),
+            args: batch_args,
+            reason: "One-click apply suggested anchors+runbooks (safe backup+rollback) and refresh the daily portal.".to_string(),
         });
-
-        // 2) After applying, run the daily portal in summary mode.
-        if let Some(portal) = runbooks.first() {
-            let mut args = json!({
-                "runbook_id": portal.id,
-                "mode": "summary",
-                "scope": match scope { NotebookScope::Project => "project", NotebookScope::UserRepo => "user_repo" },
-                "max_chars": 2000,
-                "response_mode": "facts"
-            });
-            if let Some(path) = request.path.as_deref() {
-                if let Some(obj) = args.as_object_mut() {
-                    obj.insert("path".to_string(), json!(path));
-                }
-            }
-            next_actions.push(ToolNextAction {
-                tool: "runbook_pack".to_string(),
-                args,
-                reason: "Refresh the suggested daily portal (TOC-only by default).".to_string(),
-            });
-        }
     }
 
     let identity = resolve_repo_identity(root);

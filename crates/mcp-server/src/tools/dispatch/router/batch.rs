@@ -93,6 +93,7 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::ContextPack => "context_pack",
         BatchToolName::NotebookPack => "notebook_pack",
         BatchToolName::NotebookEdit => "notebook_edit",
+        BatchToolName::NotebookApplySuggest => "notebook_apply_suggest",
         BatchToolName::NotebookSuggest => "notebook_suggest",
         BatchToolName::RunbookPack => "runbook_pack",
         BatchToolName::MeaningPack => "meaning_pack",
@@ -217,6 +218,11 @@ async fn dispatch_tool(
             crate::tools::schemas::notebook_edit::NotebookEditRequest,
             super::notebook_edit::notebook_edit,
             "notebook_edit"
+        ),
+        BatchToolName::NotebookApplySuggest => typed_call!(
+            crate::tools::schemas::notebook_apply_suggest::NotebookApplySuggestRequest,
+            super::notebook_apply_suggest::notebook_apply_suggest,
+            "notebook_apply_suggest"
         ),
         BatchToolName::NotebookSuggest => typed_call!(
             crate::tools::schemas::notebook_suggest::NotebookSuggestRequest,

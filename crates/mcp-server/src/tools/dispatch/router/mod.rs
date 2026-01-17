@@ -18,6 +18,7 @@ pub(super) mod list_files;
 pub(super) mod map;
 pub(super) mod meaning_focus;
 pub(super) mod meaning_pack;
+pub(super) mod notebook_apply_suggest;
 pub(super) mod notebook_edit;
 pub(super) mod notebook_pack;
 pub(super) mod notebook_suggest;

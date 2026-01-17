@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent/v1/notebook_apply_suggest_result.schema.json",
+  "title": "Notebook Apply Suggest Result (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "mode", "repo_id", "scope", "summary"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "mode": { "type": "string", "enum": ["preview", "apply", "rollback"] },
+    "repo_id": { "type": "string" },
+    "scope": { "type": "string", "enum": ["project", "user_repo"] },
+    "backup_id": { "type": ["string", "null"], "default": null },
+    "warnings": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "anchors_before",
+        "anchors_after",
+        "runbooks_before",
+        "runbooks_after",
+        "new_anchors",
+        "updated_anchors",
+        "new_runbooks",
+        "updated_runbooks",
+        "touched_anchor_ids",
+        "touched_runbook_ids"
+      ],
+      "properties": {
+        "anchors_before": { "type": "integer", "minimum": 0 },
+        "anchors_after": { "type": "integer", "minimum": 0 },
+        "runbooks_before": { "type": "integer", "minimum": 0 },
+        "runbooks_after": { "type": "integer", "minimum": 0 },
+        "new_anchors": { "type": "integer", "minimum": 0 },
+        "updated_anchors": { "type": "integer", "minimum": 0 },
+        "new_runbooks": { "type": "integer", "minimum": 0 },
+        "updated_runbooks": { "type": "integer", "minimum": 0 },
+        "touched_anchor_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "touched_runbook_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "../../command/v1/next_action.schema.json" },
+      "default": []
+    }
+  }
+}
+

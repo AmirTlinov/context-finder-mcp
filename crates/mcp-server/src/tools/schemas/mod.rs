@@ -15,6 +15,7 @@ pub mod list_files;
 pub mod map;
 pub mod meaning_focus;
 pub mod meaning_pack;
+pub mod notebook_apply_suggest;
 pub mod notebook_edit;
 pub mod notebook_pack;
 pub mod notebook_suggest;
