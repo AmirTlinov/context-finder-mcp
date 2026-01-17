@@ -23,6 +23,10 @@ struct Args {
     out_json: Option<PathBuf>,
     out_md: Option<PathBuf>,
     strict: bool,
+    strict_max_latency_ms: u64,
+    strict_max_noise_ratio: f64,
+    strict_min_token_saved: f64,
+    strict_min_baseline_chars: usize,
 }
 
 fn parse_args() -> Result<Args> {
@@ -36,6 +40,10 @@ fn parse_args() -> Result<Args> {
     let mut out_json: Option<PathBuf> = None;
     let mut out_md: Option<PathBuf> = None;
     let mut strict = false;
+    let mut strict_max_latency_ms: u64 = 5_000;
+    let mut strict_max_noise_ratio: f64 = 0.50;
+    let mut strict_min_token_saved: f64 = 0.20;
+    let mut strict_min_baseline_chars: usize = 2_000;
 
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -64,6 +72,38 @@ fn parse_args() -> Result<Args> {
                 tools.push(val);
             }
             "--include-worktrees" => include_worktrees = true,
+            "--strict-max-latency-ms" => {
+                let val = it
+                    .next()
+                    .context("--strict-max-latency-ms requires a number")?;
+                strict_max_latency_ms = val
+                    .parse::<u64>()
+                    .context("parse --strict-max-latency-ms")?;
+            }
+            "--strict-max-noise-ratio" => {
+                let val = it
+                    .next()
+                    .context("--strict-max-noise-ratio requires a float")?;
+                strict_max_noise_ratio = val
+                    .parse::<f64>()
+                    .context("parse --strict-max-noise-ratio")?;
+            }
+            "--strict-min-token-saved" => {
+                let val = it
+                    .next()
+                    .context("--strict-min-token-saved requires a float")?;
+                strict_min_token_saved = val
+                    .parse::<f64>()
+                    .context("parse --strict-min-token-saved")?;
+            }
+            "--strict-min-baseline-chars" => {
+                let val = it
+                    .next()
+                    .context("--strict-min-baseline-chars requires a number")?;
+                strict_min_baseline_chars = val
+                    .parse::<usize>()
+                    .context("parse --strict-min-baseline-chars")?;
+            }
             "--out-json" => {
                 let val = it.next().context("--out-json requires a path")?;
                 out_json = Some(PathBuf::from(val));
@@ -98,6 +138,10 @@ fn parse_args() -> Result<Args> {
         out_json,
         out_md,
         strict,
+        strict_max_latency_ms,
+        strict_max_noise_ratio,
+        strict_min_token_saved,
+        strict_min_baseline_chars,
     })
 }
 
@@ -112,6 +156,10 @@ Usage:
   context-mcp-eval-zoo --root <dir> [--limit N] [--max-depth N] [--max-chars N]
                       [--tool meaning_pack] [--tool atlas_pack]
                       [--include-worktrees]
+                      [--strict-max-latency-ms N]
+                      [--strict-max-noise-ratio F]
+                      [--strict-min-token-saved F]
+                      [--strict-min-baseline-chars N]
                       [--out-json <path>] [--out-md <path>] [--strict]
 
 Defaults:
@@ -122,6 +170,10 @@ Defaults:
   --tool meaning_pack --tool atlas_pack
   --response-mode facts
   --include-worktrees false
+  --strict-max-latency-ms 5000
+  --strict-max-noise-ratio 0.50
+  --strict-min-token-saved 0.20
+  --strict-min-baseline-chars 2000
 "
     );
 }
@@ -629,6 +681,8 @@ struct ToolMetrics {
     error: Option<String>,
     latency_ms: u128,
     stable: bool,
+    strict_ok: bool,
+    strict_violations: Vec<String>,
     area_entries: usize,
     map_entries: usize,
     map_noise_entries: usize,
@@ -650,6 +704,14 @@ struct RepoResult {
 }
 
 #[derive(Debug, Serialize)]
+struct StrictPolicy {
+    max_latency_ms: u64,
+    max_noise_ratio: f64,
+    min_token_saved: f64,
+    min_baseline_chars: usize,
+}
+
+#[derive(Debug, Serialize)]
 struct ZooReport {
     root: String,
     limit: usize,
@@ -657,6 +719,8 @@ struct ZooReport {
     max_chars: usize,
     response_mode: String,
     include_worktrees: bool,
+    strict: bool,
+    strict_policy: StrictPolicy,
     repos: Vec<RepoResult>,
 }
 
@@ -672,7 +736,7 @@ fn render_md(report: &ZooReport) -> String {
     let mut out = String::new();
     out.push_str("# Meaning/Atlas Zoo Report (real repos)\n\n");
     out.push_str(&format!(
-        "- root: `{}`\n- repos: `{}`\n- tools: `{}`\n- include_worktrees: `{}`\n\n",
+        "- root: `{}`\n- repos: `{}`\n- tools: `{}`\n- include_worktrees: `{}`\n- strict: `{}`\n- strict_policy: latency_ms<={} noise_ratio<={:.3} token_saved>={:.3} baseline>={}\n\n",
         report.root,
         report.repos.len(),
         report
@@ -680,19 +744,24 @@ fn render_md(report: &ZooReport) -> String {
             .first()
             .map(|r| r.tools.keys().cloned().collect::<Vec<_>>().join(", "))
             .unwrap_or_else(|| "-".to_string()),
-        report.include_worktrees
+        report.include_worktrees,
+        report.strict,
+        report.strict_policy.max_latency_ms,
+        report.strict_policy.max_noise_ratio,
+        report.strict_policy.min_token_saved,
+        report.strict_policy.min_baseline_chars
     ));
 
     out.push_str(
-        "| repo | head | archetypes | tool | ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | baseline | used | token_saved |\n",
+        "| repo | head | archetypes | tool | ok | strict_ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | baseline | used | token_saved | violations |\n",
     );
     out.push_str(
-        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n",
     );
     for repo in &report.repos {
         for (tool, m) in &repo.tools {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 repo.path,
                 repo.head.clone().unwrap_or_else(|| "-".to_string()),
                 if repo.archetypes.is_empty() {
@@ -702,6 +771,7 @@ fn render_md(report: &ZooReport) -> String {
                 },
                 tool,
                 if m.ok { "yes" } else { "no" },
+                if m.strict_ok { "yes" } else { "no" },
                 if m.stable { "yes" } else { "no" },
                 m.latency_ms,
                 m.area_entries,
@@ -719,6 +789,11 @@ fn render_md(report: &ZooReport) -> String {
                 m.token_saved
                     .map(|v| format!("{:.4}", v))
                     .unwrap_or_else(|| "-".to_string()),
+                if m.strict_violations.is_empty() {
+                    "-".to_string()
+                } else {
+                    m.strict_violations.join(";")
+                }
             ));
         }
     }
@@ -785,6 +860,8 @@ async fn main() -> Result<()> {
                             error: Some(format!("unsupported tool: {other}")),
                             latency_ms: 0,
                             stable: false,
+                            strict_ok: false,
+                            strict_violations: vec!["unsupported_tool".to_string()],
                             area_entries: 0,
                             map_entries: 0,
                             map_noise_entries: 0,
@@ -811,6 +888,8 @@ async fn main() -> Result<()> {
                 error: None,
                 latency_ms,
                 stable: false,
+                strict_ok: !args.strict,
+                strict_violations: Vec::new(),
                 area_entries: 0,
                 map_entries: 0,
                 map_noise_entries: 0,
@@ -828,6 +907,10 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     m.error = Some(format!("{e:#}"));
                     if args.strict {
+                        m.strict_ok = false;
+                        m.strict_violations.push("tool_call_error".to_string());
+                    }
+                    if args.strict {
                         strict_failed = true;
                     }
                     tool_metrics.insert(tool.to_string(), m);
@@ -836,6 +919,10 @@ async fn main() -> Result<()> {
             };
             if first.is_error == Some(true) {
                 m.error = Some("tool returned error".to_string());
+                if args.strict {
+                    m.strict_ok = false;
+                    m.strict_violations.push("tool_error".to_string());
+                }
                 if args.strict {
                     strict_failed = true;
                 }
@@ -855,6 +942,11 @@ async fn main() -> Result<()> {
             if second.is_error == Some(true) {
                 m.error = Some("tool returned error (determinism call)".to_string());
                 if args.strict {
+                    m.strict_ok = false;
+                    m.strict_violations
+                        .push("tool_error_determinism".to_string());
+                }
+                if args.strict {
                     strict_failed = true;
                 }
                 tool_metrics.insert(tool.to_string(), m);
@@ -869,9 +961,6 @@ async fn main() -> Result<()> {
             let second_pack = extract_cp_pack(second_text)?;
 
             m.stable = first_pack == second_pack;
-            if args.strict && !m.stable {
-                strict_failed = true;
-            }
 
             let dict = parse_cp_dict(&first_pack)?;
             let map_stats = compute_map_stats(&first_pack, &dict);
@@ -893,6 +982,36 @@ async fn main() -> Result<()> {
             if let Some(saved) = tok.token_saved {
                 m.token_saved = Some(saved);
                 all_token_saved.push(saved);
+            }
+
+            if args.strict {
+                if !m.stable {
+                    m.strict_violations.push("unstable".to_string());
+                }
+                if m.latency_ms > args.strict_max_latency_ms as u128 {
+                    m.strict_violations
+                        .push(format!("latency_ms>{}", args.strict_max_latency_ms));
+                }
+                if let Some(ratio) = m.noise_ratio {
+                    if ratio > args.strict_max_noise_ratio {
+                        m.strict_violations
+                            .push(format!("noise_ratio>{:.3}", args.strict_max_noise_ratio));
+                    }
+                }
+                if let (Some(saved), Some(baseline)) = (m.token_saved, m.baseline_chars) {
+                    if baseline >= args.strict_min_baseline_chars
+                        && saved < args.strict_min_token_saved
+                    {
+                        m.strict_violations
+                            .push(format!("token_saved<{:.3}", args.strict_min_token_saved));
+                    }
+                }
+                m.strict_ok = m.strict_violations.is_empty();
+                if !m.strict_ok {
+                    strict_failed = true;
+                }
+            } else {
+                m.strict_ok = true;
             }
 
             m.ok = true;
@@ -924,16 +1043,35 @@ async fn main() -> Result<()> {
         all_token_saved.iter().sum::<f64>() / all_token_saved.len() as f64
     };
 
-    eprintln!(
-        "OK: repos={} tools={} latency_ms(p50={}, p95={}, max={}) noise_mean={:.4} token_saved_mean={:.4}",
-        results.len(),
-        args.tools.len(),
-        p50,
-        p95,
-        max,
-        mean_noise,
-        mean_saved
-    );
+    let strict_bad_calls = results
+        .iter()
+        .flat_map(|r| r.tools.values())
+        .filter(|m| m.ok && !m.strict_ok)
+        .count();
+    if args.strict {
+        eprintln!(
+            "OK: repos={} tools={} latency_ms(p50={}, p95={}, max={}) noise_mean={:.4} token_saved_mean={:.4} strict_bad_calls={}",
+            results.len(),
+            args.tools.len(),
+            p50,
+            p95,
+            max,
+            mean_noise,
+            mean_saved,
+            strict_bad_calls
+        );
+    } else {
+        eprintln!(
+            "OK: repos={} tools={} latency_ms(p50={}, p95={}, max={}) noise_mean={:.4} token_saved_mean={:.4}",
+            results.len(),
+            args.tools.len(),
+            p50,
+            p95,
+            max,
+            mean_noise,
+            mean_saved
+        );
+    }
 
     let report = ZooReport {
         root: args.root.to_string_lossy().to_string(),
@@ -942,6 +1080,13 @@ async fn main() -> Result<()> {
         max_chars: args.max_chars,
         response_mode: args.response_mode,
         include_worktrees: args.include_worktrees,
+        strict: args.strict,
+        strict_policy: StrictPolicy {
+            max_latency_ms: args.strict_max_latency_ms,
+            max_noise_ratio: args.strict_max_noise_ratio,
+            min_token_saved: args.strict_min_token_saved,
+            min_baseline_chars: args.strict_min_baseline_chars,
+        },
         repos: results,
     };
 

@@ -35,6 +35,8 @@ Example (run on your local “projects” directory):
 
 Tip: if you want the zoo to also scan repos living under a `.worktrees/` directory (common in research setups), add `--include-worktrees`.
 
+If you want the run to **fail closed** on regressions, use `--strict` (plus optional `--strict-*` thresholds for latency/noise/token_saved).
+
 Real-repo runs are not required for CI to keep the loop fast and offline-friendly.
 
 ## 2) Golden datasets (`datasets/*.json`)
