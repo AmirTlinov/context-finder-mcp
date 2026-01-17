@@ -752,14 +752,145 @@ fn render_md(report: &ZooReport) -> String {
         report.strict_policy.min_baseline_chars
     ));
 
+    // Keep output deterministic (critical for diffability).
+    let mut repos_sorted: Vec<&RepoResult> = report.repos.iter().collect();
+    repos_sorted.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let worktree_repos = report
+        .repos
+        .iter()
+        .filter(|r| r.path.contains("/.worktrees/"))
+        .count();
+    let mut ok_calls = 0usize;
+    let mut strict_bad_calls = 0usize;
+    let mut latencies: Vec<u128> = Vec::new();
+    let mut map_nonzero_calls = 0usize;
+    let mut noise_defined_calls = 0usize;
+    let mut noise_sum = 0.0f64;
+    let mut token_saved_defined_calls = 0usize;
+    let mut token_saved_negative_calls = 0usize;
+    let mut token_saved_sum = 0.0f64;
+    let mut slowest: Vec<(u128, String, String)> = Vec::new(); // (latency, tool, repo)
+    let mut lowest_token_saved: Vec<(f64, String, String, Option<usize>, usize)> = Vec::new(); // (token_saved, tool, repo, baseline, used)
+
+    for repo in &repos_sorted {
+        let mut tools_sorted: Vec<(&String, &ToolMetrics)> = repo.tools.iter().collect();
+        tools_sorted.sort_by(|a, b| a.0.cmp(b.0));
+        for (tool, m) in tools_sorted {
+            if m.ok {
+                ok_calls = ok_calls.saturating_add(1);
+            }
+            latencies.push(m.latency_ms);
+            slowest.push((m.latency_ms, tool.clone(), repo.path.clone()));
+            if m.ok && !m.strict_ok {
+                strict_bad_calls = strict_bad_calls.saturating_add(1);
+            }
+            if m.map_entries > 0 {
+                map_nonzero_calls = map_nonzero_calls.saturating_add(1);
+            }
+            if let Some(ratio) = m.noise_ratio {
+                noise_defined_calls = noise_defined_calls.saturating_add(1);
+                noise_sum += ratio;
+            }
+            if let Some(saved) = m.token_saved {
+                token_saved_defined_calls = token_saved_defined_calls.saturating_add(1);
+                token_saved_sum += saved;
+                if saved < 0.0 {
+                    token_saved_negative_calls = token_saved_negative_calls.saturating_add(1);
+                }
+                lowest_token_saved.push((
+                    saved,
+                    tool.clone(),
+                    repo.path.clone(),
+                    m.baseline_chars,
+                    m.used_chars,
+                ));
+            }
+        }
+    }
+
+    let tool_calls = report.repos.iter().map(|r| r.tools.len()).sum::<usize>();
+
+    latencies.sort_unstable();
+    let p50 = percentile(&latencies, 50);
+    let p95 = percentile(&latencies, 95);
+    let max = *latencies.last().unwrap_or(&0);
+    let noise_mean = if noise_defined_calls == 0 {
+        None
+    } else {
+        Some(noise_sum / noise_defined_calls as f64)
+    };
+    let token_saved_mean = if token_saved_defined_calls == 0 {
+        None
+    } else {
+        Some(token_saved_sum / token_saved_defined_calls as f64)
+    };
+
+    out.push_str("## Summary\n\n");
+    out.push_str(&format!(
+        "- tool_calls: `{}` (ok: `{}`)\n- strict_bad_calls: `{}`\n- latency_ms: p50=`{}` p95=`{}` max=`{}`\n- map_rows_nonzero_calls: `{}`\n- noise_ratio_defined_calls: `{}` (mean: `{}`)\n- token_saved_defined_calls: `{}` (mean: `{}`; negative: `{}`)\n- worktree_repos: `{}`\n\n",
+        tool_calls,
+        ok_calls,
+        strict_bad_calls,
+        p50,
+        p95,
+        max,
+        map_nonzero_calls,
+        noise_defined_calls,
+        noise_mean
+            .map(|v| format!("{:.4}", v))
+            .unwrap_or_else(|| "-".to_string()),
+        token_saved_defined_calls,
+        token_saved_mean
+            .map(|v| format!("{:.4}", v))
+            .unwrap_or_else(|| "-".to_string()),
+        token_saved_negative_calls,
+        worktree_repos
+    ));
+
+    slowest.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    out.push_str("## Slowest calls\n\n");
+    out.push_str("| latency_ms | tool | repo |\n|---:|---|---|\n");
+    for (lat, tool, repo) in slowest.into_iter().take(10) {
+        out.push_str(&format!("| {} | {} | {} |\n", lat, tool, repo));
+    }
+    out.push('\n');
+
+    lowest_token_saved.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    out.push_str("## Lowest token_saved\n\n");
+    out.push_str("| token_saved | tool | repo | baseline | used |\n|---:|---|---|---:|---:|\n");
+    for (saved, tool, repo, baseline, used) in lowest_token_saved.into_iter().take(10) {
+        out.push_str(&format!(
+            "| {:.4} | {} | {} | {} | {} |\n",
+            saved,
+            tool,
+            repo,
+            baseline
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            used
+        ));
+    }
+    out.push('\n');
+
     out.push_str(
         "| repo | head | archetypes | tool | ok | strict_ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | baseline | used | token_saved | violations |\n",
     );
     out.push_str(
         "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n",
     );
-    for repo in &report.repos {
-        for (tool, m) in &repo.tools {
+    for repo in repos_sorted {
+        let mut tools_sorted: Vec<(&String, &ToolMetrics)> = repo.tools.iter().collect();
+        tools_sorted.sort_by(|a, b| a.0.cmp(b.0));
+        for (tool, m) in tools_sorted {
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 repo.path,
