@@ -23,6 +23,16 @@ Runs on representative repos to catch “it works in prod” issues:
 - Monorepos, docs-heavy repos, huge files, generated/vendor directories.
 - Tracks retrieval quality (MRR/Recall/NDCG), not just correctness.
 
+We also recommend a **real-repo “zoo” for MCP tool UX** (meaning/atlas packs):
+
+- Runner: `context-mcp-eval-zoo` (package `context-mcp`, binary `context-mcp-eval-zoo`)
+- Measures UX regressions: **stability** (same CP twice), **latency**, **noise ratio**, and **token_saved**
+- Designed to be safe on messy repos: bounded scanning, noise suppression, and binary-safe baseline estimation
+- Outputs: JSON and Markdown summary tables (for tracking over time)
+
+Example (run on your local “projects” directory):  
+`cargo run -p context-mcp --bin context-mcp-eval-zoo -- --root "/home/amir/Документы/projects" --limit 20 --out-json /tmp/context_zoo.json --out-md /tmp/context_zoo.md`
+
 Real-repo runs are not required for CI to keep the loop fast and offline-friendly.
 
 ## 2) Golden datasets (`datasets/*.json`)

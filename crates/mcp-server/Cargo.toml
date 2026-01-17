@@ -28,7 +28,7 @@ context-meaning = { path = "../meaning" }
 petgraph = "0.6"
 
 # MCP SDK
-rmcp = { version = "0.8", features = ["client", "server", "transport-io", "macros"] }
+rmcp = { version = "0.8", features = ["client", "server", "transport-io", "transport-child-process", "macros"] }
 
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
