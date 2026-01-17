@@ -14,6 +14,15 @@ pub enum NotebookApplySuggestMode {
     Rollback,
 }
 
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotebookApplySuggestOverwritePolicy {
+    /// Default: avoid overwriting anchors that appear manually edited.
+    Safe,
+    /// Overwrite existing anchors even if they appear manually edited.
+    Force,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema, Clone)]
 pub struct NotebookApplySuggestBackupPolicy {
     /// Create a backup snapshot before applying edits (default: true).
@@ -43,6 +52,10 @@ pub enum NotebookApplySuggestRequest {
         #[schemars(description = "If false, applying a truncated suggestion fails closed.")]
         allow_truncated: Option<bool>,
 
+        /// Overwrite policy (default: safe).
+        #[schemars(description = "Overwrite policy: safe (default) or force.")]
+        overwrite_policy: Option<NotebookApplySuggestOverwritePolicy>,
+
         /// Backup policy (ignored for preview).
         backup_policy: Option<NotebookApplySuggestBackupPolicy>,
     },
@@ -64,6 +77,10 @@ pub enum NotebookApplySuggestRequest {
         #[schemars(description = "If false, applying a truncated suggestion fails closed.")]
         allow_truncated: Option<bool>,
 
+        /// Overwrite policy (default: safe).
+        #[schemars(description = "Overwrite policy: safe (default) or force.")]
+        overwrite_policy: Option<NotebookApplySuggestOverwritePolicy>,
+
         /// Backup policy.
         backup_policy: Option<NotebookApplySuggestBackupPolicy>,
     },
@@ -84,6 +101,39 @@ pub enum NotebookApplySuggestRequest {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum NotebookApplySuggestChangeKind {
+    Anchor,
+    Runbook,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum NotebookApplySuggestChangeAction {
+    Create,
+    Update,
+    Skip,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum NotebookApplySuggestSkipReason {
+    NotManaged,
+    ManualModified,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
+pub struct NotebookApplySuggestChange {
+    pub kind: NotebookApplySuggestChangeKind,
+    pub id: String,
+    pub action: NotebookApplySuggestChangeAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<NotebookApplySuggestSkipReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone)]
 pub struct NotebookApplySuggestSummary {
     pub anchors_before: usize,
     pub anchors_after: usize,
@@ -93,6 +143,16 @@ pub struct NotebookApplySuggestSummary {
     pub updated_anchors: usize,
     pub new_runbooks: usize,
     pub updated_runbooks: usize,
+    #[serde(default)]
+    pub skipped_anchors: usize,
+    #[serde(default)]
+    pub skipped_runbooks: usize,
+    #[serde(default)]
+    pub skipped_anchor_ids: Vec<String>,
+    #[serde(default)]
+    pub skipped_runbook_ids: Vec<String>,
+    #[serde(default)]
+    pub changes: Vec<NotebookApplySuggestChange>,
     #[serde(default)]
     pub touched_anchor_ids: Vec<String>,
     #[serde(default)]

@@ -32,7 +32,7 @@ pub enum NotebookAnchorKind {
     Other,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotebookLocatorKind {
     Symbol,

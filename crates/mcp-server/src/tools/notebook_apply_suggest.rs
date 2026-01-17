@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context as AnyhowContext, Result};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -12,10 +13,13 @@ use super::notebook_types::{
     AgentNotebook, NotebookAnchor, NotebookEvidencePointer, NotebookScope, RunbookSection,
 };
 use super::schemas::notebook_apply_suggest::{
-    NotebookApplySuggestBackupPolicy, NotebookApplySuggestMode, NotebookApplySuggestRequest,
-    NotebookApplySuggestSummary,
+    NotebookApplySuggestBackupPolicy, NotebookApplySuggestChange, NotebookApplySuggestChangeAction,
+    NotebookApplySuggestChangeKind, NotebookApplySuggestMode, NotebookApplySuggestOverwritePolicy,
+    NotebookApplySuggestRequest, NotebookApplySuggestSkipReason, NotebookApplySuggestSummary,
 };
 use super::util::{hex_encode_lower, unix_ms};
+
+const SUGGEST_FP_TAG_PREFIX: &str = "cf_suggest_fp=";
 
 fn default_create_backup(policy: Option<&NotebookApplySuggestBackupPolicy>) -> bool {
     policy.and_then(|p| p.create_backup).unwrap_or(true)
@@ -45,6 +49,7 @@ pub(super) async fn apply_notebook_apply_suggest(
             scope,
             suggestion,
             allow_truncated,
+            overwrite_policy,
             backup_policy,
             ..
         } => {
@@ -55,6 +60,7 @@ pub(super) async fn apply_notebook_apply_suggest(
                 scope.unwrap_or(NotebookScope::Project),
                 suggestion,
                 allow_truncated.unwrap_or(false),
+                overwrite_policy.unwrap_or(NotebookApplySuggestOverwritePolicy::Safe),
                 backup_policy.as_ref(),
             )
         }
@@ -63,6 +69,7 @@ pub(super) async fn apply_notebook_apply_suggest(
             scope,
             suggestion,
             allow_truncated,
+            overwrite_policy,
             backup_policy,
             ..
         } => {
@@ -73,6 +80,7 @@ pub(super) async fn apply_notebook_apply_suggest(
                 scope.unwrap_or(NotebookScope::Project),
                 suggestion,
                 allow_truncated.unwrap_or(false),
+                overwrite_policy.unwrap_or(NotebookApplySuggestOverwritePolicy::Safe),
                 backup_policy.as_ref(),
             )
         }
@@ -101,6 +109,7 @@ fn apply_or_preview(
     scope: NotebookScope,
     suggestion: &crate::tools::schemas::notebook_suggest::NotebookSuggestResult,
     allow_truncated: bool,
+    overwrite_policy: NotebookApplySuggestOverwritePolicy,
     backup_policy: Option<&NotebookApplySuggestBackupPolicy>,
 ) -> Result<NotebookApplySuggestOutcome> {
     if suggestion.version != 1 {
@@ -140,7 +149,11 @@ fn apply_or_preview(
 
     if mode == NotebookApplySuggestMode::Preview {
         let mut preview = notebook.clone();
-        let counts = apply_suggestion_to_notebook(root, &mut preview, suggestion, &now)?;
+        let counts =
+            apply_suggestion_to_notebook(root, &mut preview, suggestion, overwrite_policy, &now)?;
+        if counts.changes_truncated {
+            warnings.push("changes_truncated".to_string());
+        }
         let summary = NotebookApplySuggestSummary {
             anchors_before,
             anchors_after: preview.anchors.len(),
@@ -150,6 +163,11 @@ fn apply_or_preview(
             updated_anchors: counts.updated_anchors,
             new_runbooks: counts.new_runbooks,
             updated_runbooks: counts.updated_runbooks,
+            skipped_anchors: counts.skipped_anchors,
+            skipped_runbooks: counts.skipped_runbooks,
+            skipped_anchor_ids: counts.skipped_anchor_ids,
+            skipped_runbook_ids: counts.skipped_runbook_ids,
+            changes: counts.changes,
             touched_anchor_ids: counts.touched_anchor_ids,
             touched_runbook_ids: counts.touched_runbook_ids,
         };
@@ -182,7 +200,11 @@ fn apply_or_preview(
         notebook.repo.created_at = Some(now.clone());
     }
 
-    let counts = apply_suggestion_to_notebook(root, &mut notebook, suggestion, &now)?;
+    let counts =
+        apply_suggestion_to_notebook(root, &mut notebook, suggestion, overwrite_policy, &now)?;
+    if counts.changes_truncated {
+        warnings.push("changes_truncated".to_string());
+    }
     save_notebook(&paths, &notebook)?;
 
     let summary = NotebookApplySuggestSummary {
@@ -194,6 +216,11 @@ fn apply_or_preview(
         updated_anchors: counts.updated_anchors,
         new_runbooks: counts.new_runbooks,
         updated_runbooks: counts.updated_runbooks,
+        skipped_anchors: counts.skipped_anchors,
+        skipped_runbooks: counts.skipped_runbooks,
+        skipped_anchor_ids: counts.skipped_anchor_ids,
+        skipped_runbook_ids: counts.skipped_runbook_ids,
+        changes: counts.changes,
         touched_anchor_ids: counts.touched_anchor_ids,
         touched_runbook_ids: counts.touched_runbook_ids,
     };
@@ -282,6 +309,11 @@ fn rollback(
             updated_anchors: 0,
             new_runbooks: 0,
             updated_runbooks: 0,
+            skipped_anchors: 0,
+            skipped_runbooks: 0,
+            skipped_anchor_ids: Vec::new(),
+            skipped_runbook_ids: Vec::new(),
+            changes: Vec::new(),
             touched_anchor_ids,
             touched_runbook_ids,
         },
@@ -294,6 +326,12 @@ struct ApplyCounts {
     updated_anchors: usize,
     new_runbooks: usize,
     updated_runbooks: usize,
+    skipped_anchors: usize,
+    skipped_runbooks: usize,
+    skipped_anchor_ids: Vec<String>,
+    skipped_runbook_ids: Vec<String>,
+    changes: Vec<NotebookApplySuggestChange>,
+    changes_truncated: bool,
     touched_anchor_ids: Vec<String>,
     touched_runbook_ids: Vec<String>,
 }
@@ -302,6 +340,7 @@ fn apply_suggestion_to_notebook(
     root: &Path,
     notebook: &mut AgentNotebook,
     suggestion: &crate::tools::schemas::notebook_suggest::NotebookSuggestResult,
+    overwrite_policy: NotebookApplySuggestOverwritePolicy,
     now: &str,
 ) -> Result<ApplyCounts> {
     ensure_unique_ids(suggestion.anchors.iter().map(|a| a.id.as_str()), "anchors")?;
@@ -316,12 +355,32 @@ fn apply_suggestion_to_notebook(
 
     // Anchors first: runbooks may reference them.
     for incoming in &suggestion.anchors {
-        let existed = notebook.anchors.iter().any(|a| a.id == incoming.id);
         let mut anchor = incoming.clone();
         validate_anchor(root, &anchor)?;
 
-        if let Some(existing) = notebook.anchors.iter().find(|a| a.id == anchor.id) {
-            preserve_existing_source_hashes(existing, &mut anchor);
+        let existing_anchor = notebook.anchors.iter().find(|a| a.id == anchor.id);
+        let existed = existing_anchor.is_some();
+
+        if let Some(existing_anchor) = existing_anchor {
+            if overwrite_policy == NotebookApplySuggestOverwritePolicy::Safe {
+                if let Some(reason) = should_skip_anchor(existing_anchor)? {
+                    counts.skipped_anchors += 1;
+                    counts.skipped_anchor_ids.push(incoming.id.clone());
+                    if counts.changes.len() < 50 {
+                        counts.changes.push(NotebookApplySuggestChange {
+                            kind: NotebookApplySuggestChangeKind::Anchor,
+                            id: incoming.id.clone(),
+                            action: NotebookApplySuggestChangeAction::Skip,
+                            reason: Some(reason),
+                            hint: None,
+                        });
+                    } else {
+                        counts.changes_truncated = true;
+                    }
+                    continue;
+                }
+            }
+            preserve_existing_source_hashes(existing_anchor, &mut anchor);
         }
 
         if anchor.created_at.as_deref().unwrap_or("").is_empty() {
@@ -329,6 +388,23 @@ fn apply_suggestion_to_notebook(
         }
         anchor.updated_at = Some(now.to_string());
         fill_missing_source_hashes(root, &mut anchor)?;
+        set_suggest_fp_tag(&mut anchor)?;
+
+        if counts.changes.len() < 50 {
+            counts.changes.push(NotebookApplySuggestChange {
+                kind: NotebookApplySuggestChangeKind::Anchor,
+                id: incoming.id.clone(),
+                action: if existed {
+                    NotebookApplySuggestChangeAction::Update
+                } else {
+                    NotebookApplySuggestChangeAction::Create
+                },
+                reason: None,
+                hint: anchor_change_hint(existing_anchor, &anchor),
+            });
+        } else {
+            counts.changes_truncated = true;
+        }
 
         upsert_anchor(&mut notebook.anchors, anchor)?;
         touched_anchor_ids.insert(incoming.id.clone());
@@ -355,6 +431,21 @@ fn apply_suggestion_to_notebook(
         } else {
             counts.new_runbooks += 1;
         }
+        if counts.changes.len() < 50 {
+            counts.changes.push(NotebookApplySuggestChange {
+                kind: NotebookApplySuggestChangeKind::Runbook,
+                id: incoming.id.clone(),
+                action: if existed {
+                    NotebookApplySuggestChangeAction::Update
+                } else {
+                    NotebookApplySuggestChangeAction::Create
+                },
+                reason: None,
+                hint: None,
+            });
+        } else {
+            counts.changes_truncated = true;
+        }
     }
 
     counts.touched_anchor_ids = touched_anchor_ids.into_iter().collect();
@@ -362,6 +453,164 @@ fn apply_suggestion_to_notebook(
     counts.touched_anchor_ids.sort();
     counts.touched_runbook_ids.sort();
     Ok(counts)
+}
+
+fn extract_suggest_fp(tags: &[String]) -> Option<&str> {
+    tags.iter()
+        .find_map(|t| t.strip_prefix(SUGGEST_FP_TAG_PREFIX))
+}
+
+#[derive(Debug, Serialize)]
+struct AnchorFingerprintEvidence {
+    file: String,
+    start_line: u32,
+    end_line: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct AnchorFingerprintLocator {
+    kind: super::notebook_types::NotebookLocatorKind,
+    value: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AnchorFingerprint {
+    id: String,
+    kind: super::notebook_types::NotebookAnchorKind,
+    label: String,
+    evidence: Vec<AnchorFingerprintEvidence>,
+    locator: Option<AnchorFingerprintLocator>,
+    tags: Vec<String>,
+}
+
+fn compute_anchor_fingerprint(anchor: &NotebookAnchor) -> Result<String> {
+    let mut tags: Vec<String> = anchor
+        .tags
+        .iter()
+        .filter(|t| !t.starts_with(SUGGEST_FP_TAG_PREFIX))
+        .cloned()
+        .collect();
+    tags.sort();
+
+    let mut evidence: Vec<AnchorFingerprintEvidence> = anchor
+        .evidence
+        .iter()
+        .map(|ev| AnchorFingerprintEvidence {
+            file: ev.file.replace('\\', "/"),
+            start_line: ev.start_line,
+            end_line: ev.end_line,
+        })
+        .collect();
+    evidence.sort_by(|a, b| {
+        (&a.file, a.start_line, a.end_line).cmp(&(&b.file, b.start_line, b.end_line))
+    });
+
+    let locator = anchor.locator.as_ref().map(|loc| AnchorFingerprintLocator {
+        kind: loc.kind.clone(),
+        value: loc.value.clone(),
+    });
+
+    let fp = AnchorFingerprint {
+        id: anchor.id.clone(),
+        kind: anchor.kind.clone(),
+        label: anchor.label.clone(),
+        evidence,
+        locator,
+        tags,
+    };
+
+    let bytes = serde_json::to_vec(&fp).context("serialize anchor fingerprint")?;
+    let digest = Sha256::digest(&bytes);
+    Ok(hex_encode_lower(&digest))
+}
+
+fn set_suggest_fp_tag(anchor: &mut NotebookAnchor) -> Result<()> {
+    let fp = compute_anchor_fingerprint(anchor)?;
+    anchor
+        .tags
+        .retain(|t| !t.starts_with(SUGGEST_FP_TAG_PREFIX));
+    anchor.tags.push(format!("{SUGGEST_FP_TAG_PREFIX}{fp}"));
+    Ok(())
+}
+
+fn should_skip_anchor(existing: &NotebookAnchor) -> Result<Option<NotebookApplySuggestSkipReason>> {
+    let Some(stored_fp) = extract_suggest_fp(&existing.tags) else {
+        return Ok(Some(NotebookApplySuggestSkipReason::NotManaged));
+    };
+    let actual_fp = compute_anchor_fingerprint(existing)?;
+    if actual_fp != stored_fp {
+        return Ok(Some(NotebookApplySuggestSkipReason::ManualModified));
+    }
+    Ok(None)
+}
+
+fn truncate_hint(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i + 1 >= max_len {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+fn anchor_change_hint(
+    existing: Option<&NotebookAnchor>,
+    incoming: &NotebookAnchor,
+) -> Option<String> {
+    let existing = existing?;
+    let mut parts: Vec<String> = Vec::new();
+    if existing.label != incoming.label {
+        parts.push(format!(
+            "label: {} -> {}",
+            truncate_hint(&existing.label, 32),
+            truncate_hint(&incoming.label, 32)
+        ));
+    }
+    if existing.kind != incoming.kind {
+        parts.push(format!("kind: {:?} -> {:?}", existing.kind, incoming.kind));
+    }
+
+    let existing_keys: HashSet<(String, u32, u32)> = existing
+        .evidence
+        .iter()
+        .map(|ev| (ev.file.replace('\\', "/"), ev.start_line, ev.end_line))
+        .collect();
+    let incoming_keys: HashSet<(String, u32, u32)> = incoming
+        .evidence
+        .iter()
+        .map(|ev| (ev.file.replace('\\', "/"), ev.start_line, ev.end_line))
+        .collect();
+    if existing_keys != incoming_keys {
+        parts.push(format!(
+            "evidence: {} -> {}",
+            existing_keys.len(),
+            incoming_keys.len()
+        ));
+    }
+
+    let existing_loc = existing
+        .locator
+        .as_ref()
+        .map(|l| (&l.kind, l.value.as_str()));
+    let incoming_loc = incoming
+        .locator
+        .as_ref()
+        .map(|l| (&l.kind, l.value.as_str()));
+    if existing_loc != incoming_loc {
+        parts.push("locator: changed".to_string());
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("; "))
+    }
 }
 
 fn ensure_unique_ids<'a, I>(ids: I, label: &str) -> Result<()>

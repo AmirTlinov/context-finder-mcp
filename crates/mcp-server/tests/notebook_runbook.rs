@@ -289,11 +289,114 @@ async fn notebook_apply_suggest_preview_apply_rollback() -> Result<()> {
             "mode": "apply",
             "path": root.to_string_lossy().to_string(),
             "scope": "project",
-            "suggestion": suggestion
+            "suggestion": suggestion.clone()
         }),
     )
     .await?;
     let backup_id = extract_note_value(&apply, "backup_id").context("missing backup_id")?;
+
+    // Manual edit: change label (simulate a human-owned anchor).
+    let _ = call_tool_text(
+        &service,
+        "notebook_edit",
+        serde_json::json!({
+            "version": 1,
+            "path": root.to_string_lossy().to_string(),
+            "scope": "project",
+            "ops": [
+                {
+                    "op": "upsert_anchor",
+                    "anchor": {
+                        "id": "a1",
+                        "kind": "entrypoint",
+                        "label": "Manual edit",
+                        "evidence": [
+                            {"file": "src/main.rs", "start_line": 1, "end_line": 3}
+                        ]
+                    }
+                }
+            ]
+        }),
+    )
+    .await?;
+
+    let preview_safe = call_tool_text(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "preview",
+            "path": root.to_string_lossy().to_string(),
+            "scope": "project",
+            "overwrite_policy": "safe",
+            "suggestion": suggestion.clone()
+        }),
+    )
+    .await?;
+    assert!(
+        preview_safe.contains("skipped=1"),
+        "safe preview should show a skipped anchor"
+    );
+
+    let apply_safe = call_tool_text(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "apply",
+            "path": root.to_string_lossy().to_string(),
+            "scope": "project",
+            "overwrite_policy": "safe",
+            "suggestion": suggestion.clone()
+        }),
+    )
+    .await?;
+    assert!(
+        apply_safe.contains("skipped=1"),
+        "safe apply should report a skipped anchor"
+    );
+
+    let pack = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        pack.contains("Manual edit"),
+        "safe apply should not overwrite manual anchor label"
+    );
+
+    let _ = call_tool_text(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "apply",
+            "path": root.to_string_lossy().to_string(),
+            "scope": "project",
+            "overwrite_policy": "force",
+            "suggestion": suggestion.clone()
+        }),
+    )
+    .await?;
+
+    let pack = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        pack.contains("Main entry"),
+        "force apply should overwrite manual anchor label"
+    );
 
     let pack = call_tool_text(
         &service,

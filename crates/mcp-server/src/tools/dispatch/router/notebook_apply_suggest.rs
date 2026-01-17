@@ -5,7 +5,10 @@ use super::super::{
 use crate::tools::context_doc::ContextDocBuilder;
 
 use super::error::{attach_structured_content, internal_error_with_meta, meta_for_request};
-use crate::tools::schemas::notebook_apply_suggest::NotebookApplySuggestResult;
+use crate::tools::schemas::notebook_apply_suggest::{
+    NotebookApplySuggestChangeAction, NotebookApplySuggestChangeKind, NotebookApplySuggestResult,
+    NotebookApplySuggestSkipReason,
+};
 
 fn request_path(request: &NotebookApplySuggestRequest) -> Option<&str> {
     match request {
@@ -80,19 +83,62 @@ pub(in crate::tools::dispatch) async fn notebook_apply_suggest(
     }
 
     doc.push_note(&format!(
-        "anchors: {} -> {} (new={} updated={})",
+        "anchors: {} -> {} (new={} updated={} skipped={})",
         outcome.summary.anchors_before,
         outcome.summary.anchors_after,
         outcome.summary.new_anchors,
-        outcome.summary.updated_anchors
+        outcome.summary.updated_anchors,
+        outcome.summary.skipped_anchors
     ));
     doc.push_note(&format!(
-        "runbooks: {} -> {} (new={} updated={})",
+        "runbooks: {} -> {} (new={} updated={} skipped={})",
         outcome.summary.runbooks_before,
         outcome.summary.runbooks_after,
         outcome.summary.new_runbooks,
-        outcome.summary.updated_runbooks
+        outcome.summary.updated_runbooks,
+        outcome.summary.skipped_runbooks
     ));
+
+    if outcome.mode
+        == crate::tools::schemas::notebook_apply_suggest::NotebookApplySuggestMode::Preview
+        && !outcome.summary.changes.is_empty()
+    {
+        doc.push_blank();
+        doc.push_note("changes (preview):");
+        let mut shown = 0usize;
+        for ch in outcome.summary.changes.iter().take(20) {
+            shown += 1;
+            let kind = match ch.kind {
+                NotebookApplySuggestChangeKind::Anchor => "anchor",
+                NotebookApplySuggestChangeKind::Runbook => "runbook",
+            };
+            let action = match ch.action {
+                NotebookApplySuggestChangeAction::Create => "create",
+                NotebookApplySuggestChangeAction::Update => "update",
+                NotebookApplySuggestChangeAction::Skip => "skip",
+            };
+            let reason = match ch.reason {
+                Some(NotebookApplySuggestSkipReason::NotManaged) => Some("not_managed"),
+                Some(NotebookApplySuggestSkipReason::ManualModified) => Some("manual_modified"),
+                None => None,
+            };
+            let hint = ch.hint.as_deref().unwrap_or("");
+            let mut line = format!(" - {kind} {}: {action}", ch.id);
+            if let Some(reason) = reason {
+                line.push_str(&format!(" ({reason})"));
+            }
+            if !hint.is_empty() {
+                line.push_str(&format!(" — {hint}"));
+            }
+            doc.push_line(&line);
+        }
+        if outcome.summary.changes.len() > shown {
+            doc.push_line(&format!(
+                " - … (showing {shown} of {})",
+                outcome.summary.changes.len()
+            ));
+        }
+    }
 
     if !outcome.warnings.is_empty() {
         doc.push_blank();

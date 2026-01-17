@@ -23,6 +23,12 @@
           "default": false,
           "description": "If false, applying a truncated suggestion fails closed."
         },
+        "overwrite_policy": {
+          "type": "string",
+          "enum": ["safe", "force"],
+          "default": "safe",
+          "description": "safe: do not overwrite existing anchors that look manually edited; force: overwrite."
+        },
         "backup_policy": {
           "type": "object",
           "additionalProperties": false,
@@ -57,4 +63,3 @@
     }
   ]
 }
-

@@ -36,6 +36,41 @@
         "updated_anchors": { "type": "integer", "minimum": 0 },
         "new_runbooks": { "type": "integer", "minimum": 0 },
         "updated_runbooks": { "type": "integer", "minimum": 0 },
+        "skipped_anchors": { "type": "integer", "minimum": 0, "default": 0 },
+        "skipped_runbooks": { "type": "integer", "minimum": 0, "default": 0 },
+        "skipped_anchor_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "skipped_runbook_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "changes": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "id", "action"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["anchor", "runbook"] },
+              "id": { "type": "string" },
+              "action": { "type": "string", "enum": ["create", "update", "skip"] },
+              "reason": {
+                "oneOf": [
+                  { "type": "string", "enum": ["not_managed", "manual_modified"] },
+                  { "type": "null" }
+                ],
+                "default": null
+              },
+              "hint": { "type": "string" }
+            }
+          },
+          "default": []
+        },
         "touched_anchor_ids": {
           "type": "array",
           "items": { "type": "string" },
@@ -55,4 +90,3 @@
     }
   }
 }
-
