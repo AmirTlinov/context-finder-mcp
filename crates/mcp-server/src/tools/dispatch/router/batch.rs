@@ -92,6 +92,7 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::Context => "context",
         BatchToolName::ContextPack => "context_pack",
         BatchToolName::NotebookPack => "notebook_pack",
+        BatchToolName::NotebookEdit => "notebook_edit",
         BatchToolName::NotebookSuggest => "notebook_suggest",
         BatchToolName::RunbookPack => "runbook_pack",
         BatchToolName::MeaningPack => "meaning_pack",
@@ -211,6 +212,11 @@ async fn dispatch_tool(
             crate::tools::schemas::notebook_pack::NotebookPackRequest,
             super::notebook_pack::notebook_pack,
             "notebook_pack"
+        ),
+        BatchToolName::NotebookEdit => typed_call!(
+            crate::tools::schemas::notebook_edit::NotebookEditRequest,
+            super::notebook_edit::notebook_edit,
+            "notebook_edit"
         ),
         BatchToolName::NotebookSuggest => typed_call!(
             crate::tools::schemas::notebook_suggest::NotebookSuggestRequest,
@@ -644,6 +650,18 @@ pub(in crate::tools::dispatch) async fn batch(
         return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
     }
 
+    // Below ~300 chars there is effectively no room for any useful tool output (we reserve
+    // overhead for the batch envelope + status lines). Fail-closed with a deterministic retry.
+    if max_chars < 300 {
+        let suggested = suggest_max_chars(max_chars);
+        return Ok(invalid_request_with_meta(
+            format!("max_chars too small for batch execution (max_chars={max_chars})"),
+            meta,
+            Some(format!("Increase max_chars (suggested: {suggested}).")),
+            vec![retry_action(suggested, request.path.as_deref(), version)],
+        ));
+    }
+
     let min_payload = BatchResult {
         version,
         items: Vec::new(),
@@ -665,6 +683,42 @@ pub(in crate::tools::dispatch) async fn batch(
                 Some(format!("Increase max_chars (suggested: {suggested}).")),
                 vec![retry_action(suggested, request.path.as_deref(), version)],
             ));
+        }
+    }
+    // Fail-closed if the budget cannot fit even a single item record. Otherwise the batch would
+    // degrade into `items=0 truncated=true`, which is not actionable for agents.
+    if let Some(first) = request.items.first() {
+        let min_single_item = BatchResult {
+            version,
+            items: vec![BatchItemResult {
+                id: first.id.trim().to_string(),
+                tool: first.tool,
+                status: BatchItemStatus::Error,
+                message: None,
+                error: None,
+                data: serde_json::Value::Null,
+            }],
+            budget: BatchBudget {
+                max_chars,
+                used_chars: 0,
+                truncated: true,
+                truncation: None,
+            },
+            next_actions: Vec::new(),
+            meta: ToolMeta::default(),
+        };
+        if let Ok(min_chars) = compute_used_chars(&min_single_item) {
+            if min_chars > max_chars {
+                let suggested = suggest_max_chars(max_chars);
+                return Ok(invalid_request_with_meta(
+                    format!(
+                        "max_chars too small to fit even one batch item (min_chars={min_chars})"
+                    ),
+                    meta,
+                    Some(format!("Increase max_chars (suggested: {suggested}).")),
+                    vec![retry_action(suggested, request.path.as_deref(), version)],
+                ));
+            }
         }
     }
 

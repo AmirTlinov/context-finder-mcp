@@ -137,7 +137,9 @@ pub(super) fn push_item_or_truncate(
     output: &mut BatchResult,
     item: BatchItemResult,
 ) -> anyhow::Result<bool> {
+    let inserted_id = item.id.clone();
     output.items.push(item);
+
     let used = match compute_used_chars(output) {
         Ok(used) => used,
         Err(err) => {
@@ -163,46 +165,23 @@ pub(super) fn push_item_or_truncate(
         }
     };
 
-    if used > output.budget.max_chars {
-        let rejected = output.items.pop().expect("just pushed");
-        output.budget.truncated = true;
-        output.budget.truncation = Some(BudgetTruncation::MaxChars);
-
-        if output.items.is_empty() {
-            let message = format!(
-                "Batch budget exceeded (max_chars={}). Reduce payload sizes or raise max_chars.",
-                output.budget.max_chars
-            );
-            output.items.push(BatchItemResult {
-                id: rejected.id,
-                tool: rejected.tool,
-                status: BatchItemStatus::Error,
-                message: Some(message.clone()),
-                error: Some(ErrorEnvelope {
-                    code: "invalid_request".to_string(),
-                    message,
-                    details: None,
-                    hint: None,
-                    next_actions: Vec::new(),
-                }),
-                data: serde_json::Value::Null,
-            });
-            if let Ok(over) = compute_used_chars(output) {
-                if over > output.budget.max_chars {
-                    if let Some(last) = output.items.last_mut() {
-                        last.message = None;
-                        last.error = None;
-                    }
-                }
-            }
-        }
-
-        trim_output_to_budget(output)?;
-        return Ok(false);
+    if used <= output.budget.max_chars {
+        output.budget.used_chars = used;
+        return Ok(true);
     }
 
-    output.budget.used_chars = used;
-    Ok(true)
+    // Budget exceeded: prefer to keep the newest item by eliding non-text payload
+    // (meta/index_state, structured item.data, etc.) before dropping items entirely.
+    output.budget.truncated = true;
+    output.budget.truncation = Some(BudgetTruncation::MaxChars);
+    trim_output_to_budget(output)?;
+
+    // Update used_chars best-effort after truncation.
+    if let Ok(used_after) = compute_used_chars(output) {
+        output.budget.used_chars = used_after;
+    }
+
+    Ok(output.items.iter().any(|item| item.id == inserted_id))
 }
 
 pub(super) fn compute_used_chars(output: &BatchResult) -> anyhow::Result<usize> {
@@ -232,12 +211,160 @@ pub(super) fn trim_output_to_budget(output: &mut BatchResult) -> anyhow::Result<
             inner.budget.truncation = Some(BudgetTruncation::MaxChars);
         },
         |inner| {
+            // Prefer shrinking non-text fields before dropping items:
+            // - `meta.index_state` can be large and is not rendered in the batch text doc.
+            // - `item.data` is structured payload; batch text uses captured tool text instead.
+            if inner.meta.index_state.is_some() {
+                inner.meta.index_state = None;
+                return true;
+            }
+
+            if let Some(last) = inner.items.last_mut() {
+                if !last.data.is_null() {
+                    last.data = serde_json::Value::Null;
+                    return true;
+                }
+
+                let mut changed = false;
+                if last.message.is_some() {
+                    last.message = None;
+                    changed = true;
+                }
+                if last.error.is_some() {
+                    last.error = None;
+                    changed = true;
+                }
+                if changed {
+                    return true;
+                }
+            }
+
             if !inner.items.is_empty() {
                 inner.items.pop();
                 return true;
             }
+
             false
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::schemas::batch::BatchToolName;
+    use context_indexer::{IndexSnapshot, IndexState, ReindexAttempt, ToolMeta, Watermark};
+
+    fn make_meta_with_large_index_state(extra: usize) -> ToolMeta {
+        let long_error = "x".repeat(extra);
+        ToolMeta {
+            index_state: Some(IndexState {
+                schema_version: 1,
+                project_root: Some("/tmp/project".to_string()),
+                model_id: "stub".to_string(),
+                profile: "quality".to_string(),
+                project_watermark: Watermark::Filesystem {
+                    computed_at_unix_ms: None,
+                    file_count: 1,
+                    max_mtime_ms: 0,
+                    total_bytes: 0,
+                },
+                index: IndexSnapshot {
+                    exists: true,
+                    path: Some("/tmp/index".to_string()),
+                    mtime_ms: None,
+                    built_at_unix_ms: None,
+                    watermark: None,
+                },
+                stale: true,
+                stale_reasons: Vec::new(),
+                reindex: Some(ReindexAttempt {
+                    attempted: true,
+                    performed: false,
+                    budget_ms: None,
+                    duration_ms: None,
+                    result: None,
+                    error: Some(long_error),
+                }),
+            }),
+            root_fingerprint: Some(1),
+        }
+    }
+
+    #[test]
+    fn trim_output_elides_meta_and_data_before_dropping_items() {
+        let mut output = BatchResult {
+            version: 2,
+            items: vec![BatchItemResult {
+                id: "item".to_string(),
+                tool: BatchToolName::RunbookPack,
+                status: BatchItemStatus::Ok,
+                message: None,
+                error: None,
+                data: serde_json::json!({ "big": "y".repeat(10_000) }),
+            }],
+            budget: BatchBudget {
+                max_chars: 1_000,
+                used_chars: 0,
+                truncated: false,
+                truncation: None,
+            },
+            next_actions: Vec::new(),
+            meta: make_meta_with_large_index_state(5_000),
+        };
+
+        let used_before = compute_used_chars(&output).expect("compute used chars");
+        assert!(used_before > output.budget.max_chars);
+
+        trim_output_to_budget(&mut output).expect("trim output to budget");
+
+        let used_after = compute_used_chars(&output).expect("compute used chars after trim");
+        assert!(used_after <= output.budget.max_chars);
+        assert!(!output.items.is_empty(), "expected at least one item");
+        assert!(
+            output.meta.index_state.is_none(),
+            "expected index_state to be elided"
+        );
+        assert!(
+            output.items[0].data.is_null(),
+            "expected item.data to be elided"
+        );
+        assert!(output.budget.truncated, "expected truncated=true");
+    }
+
+    #[test]
+    fn push_item_or_truncate_keeps_first_item_by_eliding_payload() {
+        let mut output = BatchResult {
+            version: 2,
+            items: Vec::new(),
+            budget: BatchBudget {
+                max_chars: 1_000,
+                used_chars: 0,
+                truncated: false,
+                truncation: None,
+            },
+            next_actions: Vec::new(),
+            meta: make_meta_with_large_index_state(5_000),
+        };
+
+        let pushed = push_item_or_truncate(
+            &mut output,
+            BatchItemResult {
+                id: "item".to_string(),
+                tool: BatchToolName::RunbookPack,
+                status: BatchItemStatus::Ok,
+                message: None,
+                error: None,
+                data: serde_json::json!({ "big": "y".repeat(10_000) }),
+            },
+        )
+        .expect("push item");
+
+        assert!(pushed, "expected item to be kept via truncation");
+        assert_eq!(output.items.len(), 1);
+        assert!(output.budget.truncated);
+        assert!(output.meta.index_state.is_none());
+        assert!(output.items[0].data.is_null());
+    }
 }

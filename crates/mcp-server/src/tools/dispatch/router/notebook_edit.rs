@@ -2,7 +2,8 @@ use super::super::{apply_notebook_edit, CallToolResult, Content, ContextFinderSe
 use crate::tools::context_doc::ContextDocBuilder;
 
 use super::super::{NotebookEditRequest, ResponseMode, ToolMeta};
-use super::error::{internal_error_with_meta, meta_for_request};
+use super::error::{attach_structured_content, internal_error_with_meta, meta_for_request};
+use crate::tools::schemas::notebook_edit::NotebookEditResult;
 
 /// Agent notebook: edit anchors/runbooks (durable, explicit writes).
 pub(in crate::tools::dispatch) async fn notebook_edit(
@@ -42,6 +43,17 @@ pub(in crate::tools::dispatch) async fn notebook_edit(
         }
     };
 
+    let result = NotebookEditResult {
+        version: 1,
+        applied_ops: summary.applied_ops,
+        anchors: summary.anchors,
+        runbooks: summary.runbooks,
+        touched_anchor_ids: summary.touched_anchor_ids.clone(),
+        touched_runbook_ids: summary.touched_runbook_ids.clone(),
+        next_actions: Vec::new(),
+        meta: meta_for_output.clone(),
+    };
+
     let mut doc = ContextDocBuilder::new();
     doc.push_answer("notebook_edit");
     doc.push_root_fingerprint(meta_for_output.root_fingerprint);
@@ -66,5 +78,11 @@ pub(in crate::tools::dispatch) async fn notebook_edit(
     }
 
     let text = doc.finish();
-    Ok(CallToolResult::success(vec![Content::text(text)]))
+    let call_result = CallToolResult::success(vec![Content::text(text)]);
+    Ok(attach_structured_content(
+        call_result,
+        &result,
+        meta_for_output,
+        "notebook_edit",
+    ))
 }

@@ -719,6 +719,15 @@ fn git_head_short(repo: &Path) -> Option<String> {
 fn detect_archetypes(repo: &Path) -> Vec<String> {
     let mut tags = Vec::new();
     let has = |rel: &str| repo.join(rel).exists();
+    let has_any_docs = || {
+        has("README.md")
+            || has("README.rst")
+            || has("README")
+            || has("docs")
+            || has("docs/")
+            || has("doc")
+            || has("doc/")
+    };
 
     let mut langs = 0usize;
     if has("Cargo.toml") {
@@ -752,11 +761,16 @@ fn detect_archetypes(repo: &Path) -> Vec<String> {
     if has("crates") || has("packages") || has("apps") {
         tags.push("monorepo".to_string());
     }
+    if !has_any_docs() {
+        tags.push("no-docs".to_string());
+    }
     tags
 }
 
 fn choose_query(archetypes: &[String]) -> String {
-    if archetypes.iter().any(|t| t == "research") {
+    if archetypes.iter().any(|t| t == "no-docs") {
+        "orient without docs: entrypoints, commands, CI gates, and how-to-run".to_string()
+    } else if archetypes.iter().any(|t| t == "research") {
         "orient on canon, experiments, artifacts, datasets, and how-to-run".to_string()
     } else {
         "orient on entrypoints, contracts, CI gates, and how-to-run tests".to_string()
