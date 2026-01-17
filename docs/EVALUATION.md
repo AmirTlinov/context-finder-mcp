@@ -66,14 +66,19 @@ Each case builds a small synthetic repo fixture and validates that the meaning o
 - **high-signal** (expected anchors/zones appear),
 - **low-noise** (generated/dataset trees do not dominate the map),
 - **token-efficient** (`min_token_saved` thresholds),
+- **stable** (deterministic output for the same root + query),
+- **responsive** (latency stays within reasonable budgets),
 - and **stable under truncation** (boundedness and degradation rules).
 
 Meaning dataset fields are intentionally richer than retrieval datasets:
 
 - `expect_paths`: must appear in the CP
 - `expect_claims`: expected CP “claim” kinds (e.g. `ENTRY`, `CONTRACT`, `AREA`, `STEP`)
+- `expect_step_kinds`: expected canon step kinds (e.g. `test`, `setup`) for stronger gating than `STEP`
 - `expect_anchor_kinds`: expected anchor categories (e.g. `ci`, `contract`, `canon`)
 - `forbid_map_paths`: paths that must not appear in the CP map (noise budget)
+- `max_noise_ratio`: optional cap on map “noise ratio” (fraction of `S MAP` entries under known noise dirs)
+- `max_latency_ms`: optional per-case wall-time budget for `meaning_pack` under stub mode
 - `min_token_saved`: minimum `token_saved` ratio (prevents “quality by flooding”)
 
 ### 2.3) Onboarding atlas surfaces (`atlas_pack`, `worktree_pack`)

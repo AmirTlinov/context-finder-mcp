@@ -150,6 +150,7 @@
       "query": "derive canon loop from CI when docs are missing",
       "expect_paths": [".github/workflows/ci.yml", "Cargo.toml", "src/main.rs"],
       "expect_claims": ["ANCHOR", "STEP"],
+      "expect_step_kinds": ["test"],
       "min_token_saved": 0.75
     },
     {
@@ -170,6 +171,7 @@
         "src/main.rs"
       ],
       "expect_claims": ["ANCHOR", "CONTRACT", "STEP"],
+      "expect_step_kinds": ["test"],
       "expect_anchor_kinds": ["ci", "contract"],
       "min_token_saved": 0.75
     },
@@ -185,6 +187,7 @@
         "crates/lib/src/lib.rs"
       ],
       "expect_claims": ["ANCHOR", "STEP"],
+      "expect_step_kinds": ["test"],
       "expect_anchor_kinds": ["ci", "canon"],
       "min_token_saved": 0.75
     },
@@ -197,6 +200,7 @@
         "contracts/openapi.yaml"
       ],
       "expect_claims": ["ANCHOR", "STEP"],
+      "expect_step_kinds": ["test"],
       "expect_anchor_kinds": ["ci", "contract"],
       "min_token_saved": 0.75
     },
@@ -207,6 +211,30 @@
       "expect_paths": ["Cargo.toml", "src/main.rs"],
       "expect_claims": ["ANCHOR"],
       "forbid_map_paths": ["dist", "build", "out"],
+      "max_noise_ratio": 0.05,
+      "min_token_saved": 0.75
+    },
+    {
+      "id": "no_docs_gitlab_ci_go_openapi",
+      "fixture": "no_docs_gitlab_ci_go_openapi",
+      "query": "derive canon loop from GitLab CI and find entrypoints/contracts",
+      "expect_paths": [".gitlab-ci.yml", "cmd/api/main.go", "contracts/openapi.yaml"],
+      "expect_claims": ["ENTRY", "CONTRACT", "STEP"],
+      "expect_step_kinds": ["test"],
+      "expect_anchor_kinds": ["contract"],
+      "max_latency_ms": 3000,
+      "max_noise_ratio": 0.1,
+      "min_token_saved": 0.75
+    },
+    {
+      "id": "nix_proto_cpp",
+      "fixture": "nix_proto_cpp",
+      "query": "orient on entrypoints, proto contracts, and nix build config",
+      "expect_paths": ["proto/demo.proto", "src/main.cpp"],
+      "expect_claims": ["ENTRY", "CONTRACT"],
+      "expect_anchor_kinds": ["contract"],
+      "max_latency_ms": 3000,
+      "max_noise_ratio": 0.1,
       "min_token_saved": 0.75
     },
     {

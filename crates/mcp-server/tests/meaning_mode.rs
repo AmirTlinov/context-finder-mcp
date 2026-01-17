@@ -8,7 +8,7 @@ use rmcp::{
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 
 fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
@@ -189,9 +189,15 @@ struct MeaningEvalCase {
     #[serde(default)]
     max_chars: Option<usize>,
     #[serde(default)]
+    max_latency_ms: Option<u64>,
+    #[serde(default)]
+    max_noise_ratio: Option<f64>,
+    #[serde(default)]
     expect_paths: Vec<String>,
     #[serde(default)]
     expect_claims: Vec<String>,
+    #[serde(default)]
+    expect_step_kinds: Vec<String>,
     #[serde(default)]
     expect_anchor_kinds: Vec<String>,
     #[serde(default)]
@@ -228,6 +234,20 @@ fn validate_meaning_dataset(dataset: &MeaningEvalDataset) -> Result<()> {
             case.id
         );
 
+        for claim in &case.expect_claims {
+            anyhow::ensure!(
+                !claim.trim().is_empty(),
+                "Meaning eval dataset case '{}' expect_claims must not contain empty values",
+                case.id
+            );
+        }
+        for kind in &case.expect_step_kinds {
+            anyhow::ensure!(
+                !kind.trim().is_empty(),
+                "Meaning eval dataset case '{}' expect_step_kinds must not contain empty values",
+                case.id
+            );
+        }
         for kind in &case.expect_anchor_kinds {
             anyhow::ensure!(
                 !kind.trim().is_empty(),
@@ -246,6 +266,20 @@ fn validate_meaning_dataset(dataset: &MeaningEvalDataset) -> Result<()> {
             anyhow::ensure!(
                 !path.trim().is_empty(),
                 "Meaning eval dataset case '{}' forbid_map_paths must not contain empty values",
+                case.id
+            );
+        }
+        if let Some(max_latency_ms) = case.max_latency_ms {
+            anyhow::ensure!(
+                max_latency_ms > 0,
+                "Meaning eval dataset case '{}' max_latency_ms must be > 0",
+                case.id
+            );
+        }
+        if let Some(max_noise_ratio) = case.max_noise_ratio {
+            anyhow::ensure!(
+                (0.0..=1.0).contains(&max_noise_ratio),
+                "Meaning eval dataset case '{}' max_noise_ratio must be in [0,1]",
                 case.id
             );
         }
@@ -277,6 +311,11 @@ fn build_fixture(root: &std::path::Path, fixture: &str) -> Result<()> {
         "monorepo_rust_workspace" => build_fixture_monorepo_rust_workspace(root),
         "polyglot_monorepo_ci_contracts" => build_fixture_polyglot_monorepo_ci_contracts(root),
         "no_docs_contracts_and_ci" => build_fixture_no_docs_contracts_and_ci(root),
+        "no_docs_gitlab_ci_go_openapi" => build_fixture_no_docs_gitlab_ci_go_openapi(root),
+        "nix_proto_cpp" => build_fixture_nix_proto_cpp(root),
+        "research_notebooks_dataset_polyglot" => {
+            build_fixture_research_notebooks_dataset_polyglot(root)
+        }
         "generated_noise_budget" => build_fixture_generated_noise_budget(root),
         _ => anyhow::bail!("Unknown meaning eval fixture '{fixture}'"),
     }
@@ -1323,6 +1362,240 @@ edition = "2021"
         workflow_lines.join("\n"),
     )
     .context("write .github/workflows/ci.yml")?;
+
+    Ok(())
+}
+
+fn build_fixture_no_docs_gitlab_ci_go_openapi(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join("cmd").join("api")).context("mkdir cmd/api")?;
+    std::fs::create_dir_all(root.join("internal").join("http")).context("mkdir internal/http")?;
+    std::fs::create_dir_all(root.join("contracts")).context("mkdir contracts")?;
+
+    std::fs::write(root.join("go.mod"), "module example.com/demo\n\ngo 1.22\n")
+        .context("write go.mod")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+
+    let mut main_lines = vec![
+        "package main".to_string(),
+        "".to_string(),
+        "import (".to_string(),
+        "  \"fmt\"".to_string(),
+        "  \"net/http\"".to_string(),
+        ")".to_string(),
+        "".to_string(),
+        "func main() {".to_string(),
+        "  http.HandleFunc(\"/health\", func(w http.ResponseWriter, _ *http.Request) {".to_string(),
+        "    _, _ = fmt.Fprintf(w, \"ok\")".to_string(),
+        "  })".to_string(),
+        "  _ = http.ListenAndServe(\":8080\", nil)".to_string(),
+        "}".to_string(),
+        "".to_string(),
+    ];
+    main_lines.extend((0..220).map(|idx| format!("// {idx}: {filler}")));
+    main_lines.push(String::new());
+    std::fs::write(
+        root.join("cmd").join("api").join("main.go"),
+        main_lines.join("\n"),
+    )
+    .context("write cmd/api/main.go")?;
+
+    let mut server_lines = vec![
+        "package http".to_string(),
+        "".to_string(),
+        "func Start() error {".to_string(),
+        "  return nil".to_string(),
+        "}".to_string(),
+        "".to_string(),
+    ];
+    server_lines.extend((0..220).map(|idx| format!("// {idx}: {filler}")));
+    server_lines.push(String::new());
+    std::fs::write(
+        root.join("internal").join("http").join("server.go"),
+        server_lines.join("\n"),
+    )
+    .context("write internal/http/server.go")?;
+
+    let mut openapi_lines = vec![
+        "openapi: 3.0.0".to_string(),
+        "info:".to_string(),
+        "  title: Demo API".to_string(),
+        "  version: 0.1.0".to_string(),
+        "paths:".to_string(),
+        "  /health:".to_string(),
+        "    get:".to_string(),
+        "      responses:".to_string(),
+        "        '200':".to_string(),
+        "          description: ok".to_string(),
+        "".to_string(),
+    ];
+    openapi_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    openapi_lines.push(String::new());
+    std::fs::write(
+        root.join("contracts").join("openapi.yaml"),
+        openapi_lines.join("\n"),
+    )
+    .context("write contracts/openapi.yaml")?;
+
+    let mut ci_lines = vec![
+        "stages:".to_string(),
+        "  - test".to_string(),
+        "".to_string(),
+        "test:".to_string(),
+        "  stage: test".to_string(),
+        "  image: golang:1.22".to_string(),
+        "  script:".to_string(),
+        "    - go test ./...".to_string(),
+        "".to_string(),
+    ];
+    ci_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    ci_lines.push(String::new());
+    std::fs::write(root.join(".gitlab-ci.yml"), ci_lines.join("\n"))
+        .context("write .gitlab-ci.yml")?;
+
+    Ok(())
+}
+
+fn build_fixture_nix_proto_cpp(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join("proto")).context("mkdir proto")?;
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+
+    let mut flake_lines = vec![
+        "{".to_string(),
+        "  description = \"demo nix flake\";".to_string(),
+        "  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";".to_string(),
+        "  outputs = { self, nixpkgs }: { };".to_string(),
+        "}".to_string(),
+        "".to_string(),
+    ];
+    flake_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    flake_lines.push(String::new());
+    std::fs::write(root.join("flake.nix"), flake_lines.join("\n")).context("write flake.nix")?;
+
+    let mut proto_lines = vec![
+        "syntax = \"proto3\";".to_string(),
+        "package demo.v1;".to_string(),
+        "".to_string(),
+        "service Demo {".to_string(),
+        "  rpc Ping(PingRequest) returns (PingResponse);".to_string(),
+        "}".to_string(),
+        "".to_string(),
+        "message PingRequest { string msg = 1; }".to_string(),
+        "message PingResponse { string msg = 1; }".to_string(),
+        "".to_string(),
+    ];
+    proto_lines.extend((0..220).map(|idx| format!("// {idx}: {filler}")));
+    proto_lines.push(String::new());
+    std::fs::write(
+        root.join("proto").join("demo.proto"),
+        proto_lines.join("\n"),
+    )
+    .context("write proto/demo.proto")?;
+
+    let mut main_lines = vec![
+        "#include <iostream>".to_string(),
+        "".to_string(),
+        "int main() {".to_string(),
+        "  std::cout << \"ok\" << std::endl;".to_string(),
+        "  return 0;".to_string(),
+        "}".to_string(),
+        "".to_string(),
+    ];
+    main_lines.extend((0..220).map(|idx| format!("// {idx}: {filler}")));
+    main_lines.push(String::new());
+    std::fs::write(root.join("src").join("main.cpp"), main_lines.join("\n"))
+        .context("write src/main.cpp")?;
+
+    std::fs::write(
+        root.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.20)\nproject(demo)\nadd_executable(demo src/main.cpp)\n",
+    )
+    .context("write CMakeLists.txt")?;
+
+    Ok(())
+}
+
+fn build_fixture_research_notebooks_dataset_polyglot(root: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(root.join("notebooks")).context("mkdir notebooks")?;
+    std::fs::create_dir_all(root.join("scripts")).context("mkdir scripts")?;
+    std::fs::create_dir_all(root.join("R")).context("mkdir R")?;
+    std::fs::create_dir_all(root.join("data").join("raw")).context("mkdir data/raw")?;
+    std::fs::create_dir_all(root.join("artifacts").join("run1")).context("mkdir artifacts/run1")?;
+
+    std::fs::write(
+        root.join("pyproject.toml"),
+        r#"[project]
+name = "demo-research"
+version = "0.1.0"
+requires-python = ">=3.11"
+"#,
+    )
+    .context("write pyproject.toml")?;
+
+    let filler = "filler filler filler filler filler filler filler filler filler filler filler";
+    let mut train_lines = vec![
+        "def train():".to_string(),
+        "    return 42".to_string(),
+        "".to_string(),
+        "if __name__ == \"__main__\":".to_string(),
+        "    print(train())".to_string(),
+        "".to_string(),
+    ];
+    train_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    train_lines.push(String::new());
+    std::fs::write(
+        root.join("scripts").join("train.py"),
+        train_lines.join("\n"),
+    )
+    .context("write scripts/train.py")?;
+
+    let mut r_lines = vec![
+        "x <- 1:10".to_string(),
+        "print(mean(x))".to_string(),
+        "".to_string(),
+    ];
+    r_lines.extend((0..220).map(|idx| format!("# {idx}: {filler}")));
+    r_lines.push(String::new());
+    std::fs::write(root.join("R").join("plot.R"), r_lines.join("\n")).context("write R/plot.R")?;
+
+    std::fs::write(
+        root.join("notebooks").join("analysis.ipynb"),
+        r#"{
+  "cells": [
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "print('hello')\n"
+      ]
+    }
+  ],
+  "metadata": { "language_info": { "name": "python" } },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
+"#,
+    )
+    .context("write notebooks/analysis.ipynb")?;
+
+    let mut csv_lines = vec!["id,value".to_string()];
+    csv_lines.extend((0..400).map(|idx| format!("{idx},{}", idx % 7)));
+    csv_lines.push(String::new());
+    std::fs::write(
+        root.join("data").join("raw").join("samples.csv"),
+        csv_lines.join("\n"),
+    )
+    .context("write data/raw/samples.csv")?;
+
+    std::fs::write(
+        root.join("artifacts").join("run1").join("metrics.json"),
+        "{\"loss\": 0.123, \"accuracy\": 0.987}\n",
+    )
+    .context("write artifacts/run1/metrics.json")?;
 
     Ok(())
 }
@@ -2759,6 +3032,73 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
 
     let service = start_mcp_server().await?;
 
+    fn is_noise_map_dir(dir: &str) -> bool {
+        let lc = dir.trim().trim_start_matches("./").to_ascii_lowercase();
+        let basename = lc.rsplit('/').next().unwrap_or(&lc);
+        matches!(
+            basename,
+            "dist"
+                | "build"
+                | "out"
+                | "target"
+                | "node_modules"
+                | ".worktrees"
+                | ".cache"
+                | ".venv"
+                | ".mypy_cache"
+                | ".pytest_cache"
+                | ".ruff_cache"
+        ) || lc.starts_with("dist/")
+            || lc.starts_with("build/")
+            || lc.starts_with("out/")
+            || lc.starts_with("target/")
+            || lc.starts_with("node_modules/")
+            || lc.starts_with(".worktrees/")
+            || lc.starts_with(".cache/")
+    }
+
+    fn compute_map_noise_ratio(
+        pack: &str,
+        dict: &std::collections::HashMap<String, String>,
+    ) -> Result<f64> {
+        let mut in_map = false;
+        let mut total = 0usize;
+        let mut noise = 0usize;
+        for line in pack.lines() {
+            if line == "S MAP" {
+                in_map = true;
+                continue;
+            }
+            if !in_map {
+                continue;
+            }
+            if line.starts_with("S ") {
+                break;
+            }
+            if !line.starts_with("MAP ") {
+                continue;
+            }
+            let path_id = line
+                .split_whitespace()
+                .find_map(|tok| tok.strip_prefix("path="))
+                .unwrap_or("");
+            let path = dict.get(path_id).cloned().unwrap_or_default();
+            total = total.saturating_add(1);
+            if is_noise_map_dir(&path) {
+                noise = noise.saturating_add(1);
+            }
+        }
+        Ok(if total == 0 {
+            0.0
+        } else {
+            noise as f64 / total as f64
+        })
+    }
+
+    let mut latencies_ms: Vec<u128> = Vec::new();
+    let mut noise_ratios: Vec<f64> = Vec::new();
+    let mut token_savings: Vec<f64> = Vec::new();
+
     for case in &dataset.cases {
         let root = tempfile::tempdir().context("temp project dir")?;
         build_fixture(root.path(), &case.fixture)
@@ -2772,7 +3112,19 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             "auto_index": false,
             "response_mode": "facts",
         });
+        let started = Instant::now();
         let resp = call_tool(&service, "meaning_pack", args.clone()).await?;
+        let latency_ms = started.elapsed().as_millis();
+        latencies_ms.push(latency_ms);
+        if let Some(max_latency_ms) = case.max_latency_ms {
+            anyhow::ensure!(
+                latency_ms <= max_latency_ms as u128,
+                "latency regression (case={}, latency_ms={}, max_latency_ms={})",
+                case.id,
+                latency_ms,
+                max_latency_ms
+            );
+        }
         assert_ne!(
             resp.is_error,
             Some(true),
@@ -2810,6 +3162,19 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             case.id
         );
 
+        let dict = parse_cp_dict(&pack)?;
+        let noise_ratio = compute_map_noise_ratio(&pack, &dict)?;
+        noise_ratios.push(noise_ratio);
+        if let Some(max_noise_ratio) = case.max_noise_ratio {
+            anyhow::ensure!(
+                noise_ratio <= max_noise_ratio,
+                "noise regression (case={}, noise_ratio={:.4}, max_noise_ratio={:.2})",
+                case.id,
+                noise_ratio,
+                max_noise_ratio
+            );
+        }
+
         for path in &case.expect_paths {
             assert!(
                 pack.contains(path),
@@ -2823,6 +3188,16 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             assert!(
                 pack.lines().any(|line| line.starts_with(&prefix)),
                 "expected CP to include at least one {claim} claim (case={})",
+                case.id
+            );
+        }
+
+        for kind in &case.expect_step_kinds {
+            let needle = format!("kind={}", kind.trim());
+            assert!(
+                pack.lines()
+                    .any(|line| line.starts_with("STEP ") && line.contains(&needle)),
+                "expected CP to include STEP kind={kind} (case={})",
                 case.id
             );
         }
@@ -2846,15 +3221,7 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
             );
         }
 
-        let needs_dict = case.min_token_saved.is_some() || !case.forbid_map_paths.is_empty();
-        let dict = if needs_dict {
-            Some(parse_cp_dict(&pack)?)
-        } else {
-            None
-        };
-
         if !case.forbid_map_paths.is_empty() {
-            let dict = dict.as_ref().context("missing dict for forbid_map_paths")?;
             let mut in_map = false;
             for line in pack.lines() {
                 if line == "S MAP" {
@@ -2887,7 +3254,6 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
         }
 
         if let Some(min_saved) = case.min_token_saved {
-            let dict = dict.as_ref().context("missing dict for token_saved")?;
             let mut seen: HashSet<String> = HashSet::new();
             let mut baseline_chars = 0usize;
             for line in pack.lines() {
@@ -2916,6 +3282,7 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
                 case.id
             );
             let token_saved = 1.0 - (used_chars as f64 / baseline_chars as f64);
+            token_savings.push(token_saved);
             anyhow::ensure!(
                 token_saved >= min_saved,
                 "token_saved regression (case={}, used_chars={}, baseline_chars={}, token_saved={:.4}, min={:.2})",
@@ -2926,6 +3293,40 @@ async fn meaning_eval_stub_smoke_dataset_is_high_signal_and_token_efficient() ->
                 min_saved
             );
         }
+    }
+
+    if !latencies_ms.is_empty() {
+        latencies_ms.sort_unstable();
+        let p95_idx = (latencies_ms.len().saturating_sub(1)).saturating_mul(95) / 100;
+        let p95 = latencies_ms[p95_idx];
+        let max = *latencies_ms.last().unwrap_or(&0);
+        anyhow::ensure!(
+            p95 <= 5_000,
+            "meaning_pack p95 latency regression (p95_ms={}, max_ms={})",
+            p95,
+            max
+        );
+        anyhow::ensure!(
+            max <= 10_000,
+            "meaning_pack max latency regression (max_ms={})",
+            max
+        );
+    }
+    if !noise_ratios.is_empty() {
+        let mean_noise = noise_ratios.iter().sum::<f64>() / noise_ratios.len() as f64;
+        anyhow::ensure!(
+            mean_noise <= 0.15,
+            "meaning_pack noise regression (mean_noise_ratio={:.4})",
+            mean_noise
+        );
+    }
+    if !token_savings.is_empty() {
+        let mean_saved = token_savings.iter().sum::<f64>() / token_savings.len() as f64;
+        anyhow::ensure!(
+            mean_saved >= 0.75,
+            "meaning_pack token_saved regression (mean_token_saved={:.4})",
+            mean_saved
+        );
     }
 
     service.cancel().await.context("shutdown mcp service")?;

@@ -17,6 +17,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   even when datasets live under ignored scopes.
 - Meaning eval: added a polyglot monorepo fixture (Rust + Node + Python) to ensure
   CI-derived canon loop + contract anchors remain reliable across mixed ecosystems.
+- Meaning eval: added UX metrics gating (latency/noise/token_saved) and expanded the zoo with
+  GitLab CI, Nix+Proto+C++, and research notebook/dataset fixtures.
 - Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.
 - Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
   (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
