@@ -125,6 +125,7 @@ fn parse_args() -> Result<Args> {
     if tools.is_empty() {
         tools.push("meaning_pack".to_string());
         tools.push("atlas_pack".to_string());
+        tools.push("worktree_pack".to_string());
     }
 
     Ok(Args {
@@ -150,11 +151,11 @@ fn print_help() {
         "\
 context-mcp-eval-zoo
 
-Runs a real-repo quality “zoo” over many git repos (meaning_pack + atlas_pack by default).
+Runs a real-repo quality “zoo” over many git repos (meaning_pack + atlas_pack + worktree_pack by default).
 
 Usage:
   context-mcp-eval-zoo --root <dir> [--limit N] [--max-depth N] [--max-chars N]
-                      [--tool meaning_pack] [--tool atlas_pack]
+                      [--tool meaning_pack] [--tool atlas_pack] [--tool worktree_pack]
                       [--include-worktrees]
                       [--strict-max-latency-ms N]
                       [--strict-max-noise-ratio F]
@@ -167,7 +168,7 @@ Defaults:
   --limit 30
   --max-depth 4
   --max-chars 2000
-  --tool meaning_pack --tool atlas_pack
+  --tool meaning_pack --tool atlas_pack --tool worktree_pack
   --response-mode facts
   --include-worktrees false
   --strict-max-latency-ms 5000
@@ -274,6 +275,31 @@ fn extract_cp_pack(text: &str) -> Result<String> {
     Ok(pack)
 }
 
+fn extract_wtv_block(text: &str) -> Result<String> {
+    let mut block = String::new();
+    let mut in_block = false;
+    for line in text.lines() {
+        if !in_block {
+            if line.starts_with("WTV") {
+                in_block = true;
+                block.push_str(line);
+                block.push('\n');
+            }
+            continue;
+        }
+
+        // Keep only the worktree block lines; cursor/meta lines are out-of-band and may use aliases.
+        if line.starts_with("WT ") || line.starts_with("  ") || line.trim().is_empty() {
+            block.push_str(line);
+            block.push('\n');
+            continue;
+        }
+        break;
+    }
+    anyhow::ensure!(in_block, "missing WTV block in tool output");
+    Ok(block)
+}
+
 fn parse_cp_dict(pack: &str) -> Result<HashMap<String, String>> {
     let mut out: HashMap<String, String> = HashMap::new();
     for line in pack.lines() {
@@ -306,6 +332,68 @@ fn parse_ev_file_and_range(ev_line: &str) -> Option<(&str, usize, usize)> {
     let start = parts.next()?.parse::<usize>().ok()?;
     let end = parts.next()?.parse::<usize>().ok()?;
     Some((file, start, end))
+}
+
+#[derive(Debug, Default)]
+struct WorktreeStats {
+    worktrees_returned: usize,
+    worktrees_with_digest: usize,
+    worktrees_dirty: usize,
+    worktrees_with_touches: usize,
+    worktrees_purpose_truncated: usize,
+}
+
+fn compute_worktree_stats(wtv: &str) -> WorktreeStats {
+    let mut stats = WorktreeStats::default();
+    let mut current = WorktreeStats::default();
+    let mut in_worktree = false;
+
+    let flush = |stats: &mut WorktreeStats, cur: &WorktreeStats| {
+        if cur.worktrees_returned == 0 {
+            return;
+        }
+        stats.worktrees_returned = stats.worktrees_returned.saturating_add(1);
+        stats.worktrees_with_digest = stats
+            .worktrees_with_digest
+            .saturating_add(cur.worktrees_with_digest);
+        stats.worktrees_dirty = stats.worktrees_dirty.saturating_add(cur.worktrees_dirty);
+        stats.worktrees_with_touches = stats
+            .worktrees_with_touches
+            .saturating_add(cur.worktrees_with_touches);
+        stats.worktrees_purpose_truncated = stats
+            .worktrees_purpose_truncated
+            .saturating_add(cur.worktrees_purpose_truncated);
+    };
+
+    for line in wtv.lines() {
+        if line.starts_with("WT ") {
+            if in_worktree {
+                flush(&mut stats, &current);
+                current = WorktreeStats::default();
+            }
+            in_worktree = true;
+            current.worktrees_returned = 1;
+            if line.contains(" dirty=1") {
+                current.worktrees_dirty = 1;
+            }
+            continue;
+        }
+        if !in_worktree {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("digest:") {
+            current.worktrees_with_digest = 1;
+        } else if trimmed.starts_with("touches:") {
+            current.worktrees_with_touches = 1;
+        } else if trimmed.starts_with("purpose_truncated=1") {
+            current.worktrees_purpose_truncated = 1;
+        }
+    }
+    if in_worktree {
+        flush(&mut stats, &current);
+    }
+    stats
 }
 
 fn count_file_slice_chars(
@@ -693,6 +781,11 @@ struct ToolMetrics {
     used_chars: usize,
     baseline_chars: Option<usize>,
     token_saved: Option<f64>,
+    worktrees_returned: Option<usize>,
+    worktrees_with_digest: Option<usize>,
+    worktrees_dirty: Option<usize>,
+    worktrees_with_touches: Option<usize>,
+    worktrees_purpose_truncated: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -713,6 +806,7 @@ struct StrictPolicy {
 
 #[derive(Debug, Serialize)]
 struct ZooReport {
+    version: u32,
     root: String,
     limit: usize,
     max_depth: usize,
@@ -770,6 +864,12 @@ fn render_md(report: &ZooReport) -> String {
     let mut token_saved_defined_calls = 0usize;
     let mut token_saved_negative_calls = 0usize;
     let mut token_saved_sum = 0.0f64;
+    let mut worktree_pack_calls = 0usize;
+    let mut worktrees_returned_total = 0usize;
+    let mut worktrees_with_digest_total = 0usize;
+    let mut worktrees_dirty_total = 0usize;
+    let mut worktrees_with_touches_total = 0usize;
+    let mut worktrees_purpose_truncated_total = 0usize;
     let mut slowest: Vec<(u128, String, String)> = Vec::new(); // (latency, tool, repo)
     let mut lowest_token_saved: Vec<(f64, String, String, Option<usize>, usize)> = Vec::new(); // (token_saved, tool, repo, baseline, used)
 
@@ -806,6 +906,19 @@ fn render_md(report: &ZooReport) -> String {
                     m.used_chars,
                 ));
             }
+            if tool.as_str() == "worktree_pack" && m.ok {
+                worktree_pack_calls = worktree_pack_calls.saturating_add(1);
+                worktrees_returned_total =
+                    worktrees_returned_total.saturating_add(m.worktrees_returned.unwrap_or(0));
+                worktrees_with_digest_total = worktrees_with_digest_total
+                    .saturating_add(m.worktrees_with_digest.unwrap_or(0));
+                worktrees_dirty_total =
+                    worktrees_dirty_total.saturating_add(m.worktrees_dirty.unwrap_or(0));
+                worktrees_with_touches_total = worktrees_with_touches_total
+                    .saturating_add(m.worktrees_with_touches.unwrap_or(0));
+                worktrees_purpose_truncated_total = worktrees_purpose_truncated_total
+                    .saturating_add(m.worktrees_purpose_truncated.unwrap_or(0));
+            }
         }
     }
 
@@ -828,7 +941,7 @@ fn render_md(report: &ZooReport) -> String {
 
     out.push_str("## Summary\n\n");
     out.push_str(&format!(
-        "- tool_calls: `{}` (ok: `{}`)\n- strict_bad_calls: `{}`\n- latency_ms: p50=`{}` p95=`{}` max=`{}`\n- map_rows_nonzero_calls: `{}`\n- noise_ratio_defined_calls: `{}` (mean: `{}`)\n- token_saved_defined_calls: `{}` (mean: `{}`; negative: `{}`)\n- worktree_repos: `{}`\n\n",
+        "- tool_calls: `{}` (ok: `{}`)\n- strict_bad_calls: `{}`\n- latency_ms: p50=`{}` p95=`{}` max=`{}`\n- map_rows_nonzero_calls: `{}`\n- noise_ratio_defined_calls: `{}` (mean: `{}`)\n- token_saved_defined_calls: `{}` (mean: `{}`; negative: `{}`)\n- worktree_pack_calls: `{}` (worktrees: `{}`; digest: `{}`; dirty: `{}`; touches: `{}`; purpose_truncated: `{}`)\n- worktree_repos: `{}`\n\n",
         tool_calls,
         ok_calls,
         strict_bad_calls,
@@ -845,6 +958,12 @@ fn render_md(report: &ZooReport) -> String {
             .map(|v| format!("{:.4}", v))
             .unwrap_or_else(|| "-".to_string()),
         token_saved_negative_calls,
+        worktree_pack_calls,
+        worktrees_returned_total,
+        worktrees_with_digest_total,
+        worktrees_dirty_total,
+        worktrees_with_touches_total,
+        worktrees_purpose_truncated_total,
         worktree_repos
     ));
 
@@ -882,17 +1001,17 @@ fn render_md(report: &ZooReport) -> String {
     out.push('\n');
 
     out.push_str(
-        "| repo | head | archetypes | tool | ok | strict_ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | baseline | used | token_saved | violations |\n",
+        "| repo | head | archetypes | tool | ok | strict_ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | baseline | used | token_saved | wt_n | wt_digest_n | wt_dirty_n | violations |\n",
     );
     out.push_str(
-        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n",
     );
     for repo in repos_sorted {
         let mut tools_sorted: Vec<(&String, &ToolMetrics)> = repo.tools.iter().collect();
         tools_sorted.sort_by(|a, b| a.0.cmp(b.0));
         for (tool, m) in tools_sorted {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 repo.path,
                 repo.head.clone().unwrap_or_else(|| "-".to_string()),
                 if repo.archetypes.is_empty() {
@@ -919,6 +1038,15 @@ fn render_md(report: &ZooReport) -> String {
                 m.used_chars,
                 m.token_saved
                     .map(|v| format!("{:.4}", v))
+                    .unwrap_or_else(|| "-".to_string()),
+                m.worktrees_returned
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                m.worktrees_with_digest
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                m.worktrees_dirty
+                    .map(|v| v.to_string())
                     .unwrap_or_else(|| "-".to_string()),
                 if m.strict_violations.is_empty() {
                     "-".to_string()
@@ -983,6 +1111,12 @@ async fn main() -> Result<()> {
                     "max_chars": args.max_chars,
                     "response_mode": args.response_mode,
                 }),
+                "worktree_pack" => serde_json::json!({
+                    "path": repo.to_string_lossy(),
+                    "query": query,
+                    "max_chars": args.max_chars,
+                    "response_mode": args.response_mode,
+                }),
                 other => {
                     tool_metrics.insert(
                         other.to_string(),
@@ -1003,6 +1137,11 @@ async fn main() -> Result<()> {
                             used_chars: 0,
                             baseline_chars: None,
                             token_saved: None,
+                            worktrees_returned: None,
+                            worktrees_with_digest: None,
+                            worktrees_dirty: None,
+                            worktrees_with_touches: None,
+                            worktrees_purpose_truncated: None,
                         },
                     );
                     continue;
@@ -1031,6 +1170,11 @@ async fn main() -> Result<()> {
                 used_chars: 0,
                 baseline_chars: None,
                 token_saved: None,
+                worktrees_returned: None,
+                worktrees_with_digest: None,
+                worktrees_dirty: None,
+                worktrees_with_touches: None,
+                worktrees_purpose_truncated: None,
             };
 
             let first = match first {
@@ -1067,7 +1211,10 @@ async fn main() -> Result<()> {
                 .find_map(|c| c.as_text())
                 .map(|t| t.text.as_str())
                 .context("missing text output")?;
-            let first_pack = extract_cp_pack(first_text)?;
+            let first_block = match tool.as_str() {
+                "worktree_pack" => extract_wtv_block(first_text)?,
+                _ => extract_cp_pack(first_text)?,
+            };
 
             let second = call_tool(&service, tool, payload, Duration::from_secs(30)).await?;
             if second.is_error == Some(true) {
@@ -1089,30 +1236,43 @@ async fn main() -> Result<()> {
                 .find_map(|c| c.as_text())
                 .map(|t| t.text.as_str())
                 .context("missing text output (determinism call)")?;
-            let second_pack = extract_cp_pack(second_text)?;
+            let second_block = match tool.as_str() {
+                "worktree_pack" => extract_wtv_block(second_text)?,
+                _ => extract_cp_pack(second_text)?,
+            };
 
-            m.stable = first_pack == second_pack;
+            m.stable = first_block == second_block;
 
-            let dict = parse_cp_dict(&first_pack)?;
-            let map_stats = compute_map_stats(&first_pack, &dict);
-            m.area_entries = map_stats.area_entries;
-            m.output_area_entries = map_stats.output_area_entries;
-            m.map_entries = map_stats.map_entries;
-            m.map_noise_entries = map_stats.map_noise_entries;
-            if map_stats.map_entries > 0 {
-                let ratio = map_stats.map_noise_entries as f64 / map_stats.map_entries as f64;
-                m.noise_ratio = Some(ratio);
-                all_noise.push(ratio);
-            }
+            if tool.as_str() == "worktree_pack" {
+                let stats = compute_worktree_stats(&first_block);
+                m.used_chars = first_block.chars().count();
+                m.worktrees_returned = Some(stats.worktrees_returned);
+                m.worktrees_with_digest = Some(stats.worktrees_with_digest);
+                m.worktrees_dirty = Some(stats.worktrees_dirty);
+                m.worktrees_with_touches = Some(stats.worktrees_with_touches);
+                m.worktrees_purpose_truncated = Some(stats.worktrees_purpose_truncated);
+            } else {
+                let dict = parse_cp_dict(&first_block)?;
+                let map_stats = compute_map_stats(&first_block, &dict);
+                m.area_entries = map_stats.area_entries;
+                m.output_area_entries = map_stats.output_area_entries;
+                m.map_entries = map_stats.map_entries;
+                m.map_noise_entries = map_stats.map_noise_entries;
+                if map_stats.map_entries > 0 {
+                    let ratio = map_stats.map_noise_entries as f64 / map_stats.map_entries as f64;
+                    m.noise_ratio = Some(ratio);
+                    all_noise.push(ratio);
+                }
 
-            let tok = compute_token_saved(&repo, &first_pack, &dict)?;
-            m.used_chars = tok.used_chars;
-            m.ev_slices = tok.ev_slices;
-            m.anchor_files = tok.anchor_files;
-            m.baseline_chars = tok.baseline_chars;
-            if let Some(saved) = tok.token_saved {
-                m.token_saved = Some(saved);
-                all_token_saved.push(saved);
+                let tok = compute_token_saved(&repo, &first_block, &dict)?;
+                m.used_chars = tok.used_chars;
+                m.ev_slices = tok.ev_slices;
+                m.anchor_files = tok.anchor_files;
+                m.baseline_chars = tok.baseline_chars;
+                if let Some(saved) = tok.token_saved {
+                    m.token_saved = Some(saved);
+                    all_token_saved.push(saved);
+                }
             }
 
             if args.strict {
@@ -1205,6 +1365,7 @@ async fn main() -> Result<()> {
     }
 
     let report = ZooReport {
+        version: 1,
         root: args.root.to_string_lossy().to_string(),
         limit: args.limit,
         max_depth: args.max_depth,

@@ -33,6 +33,15 @@ here first, then implemented in code.
 - `contracts/command/v1/context_pack.schema.json` (schema for `data` when action is `context_pack`)
 - `contracts/command/v1/task_pack.schema.json` (schema for `data` when action is `task_pack`)
 - `contracts/command/v1/text_search.schema.json` (schema for `data` when action is `text_search`)
+
+### Evaluation outputs (local, optional)
+
+**What:** machine-readable outputs produced by local evaluation runners (e.g. real-repo zoo). These
+are intended for trend tracking and regression triage. CI does not require them by default.
+
+**Contracts (v1):**
+
+- `contracts/eval/v1/zoo_report.schema.json` (schema for `context-mcp-eval-zoo --out-json ...`)
 - `contracts/command/v1/request_options.schema.json` (cross-cutting options: freshness policy, filters, budgets)
 - `contracts/command/v1/index_state.schema.json` (response diagnostics: watermarks + stale reasons + auto-index metadata)
 - `contracts/command/v1/watermark.schema.json` (git/fs watermark primitive)

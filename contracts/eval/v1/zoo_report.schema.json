@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/eval/v1/zoo_report.schema.json",
+  "title": "MCP Real-Repo Zoo Report (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "root",
+    "limit",
+    "max_depth",
+    "max_chars",
+    "response_mode",
+    "include_worktrees",
+    "strict",
+    "strict_policy",
+    "repos"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "root": { "type": "string" },
+    "limit": { "type": "integer", "minimum": 0 },
+    "max_depth": { "type": "integer", "minimum": 0 },
+    "max_chars": { "type": "integer", "minimum": 0 },
+    "response_mode": { "type": "string" },
+    "include_worktrees": { "type": "boolean" },
+    "strict": { "type": "boolean" },
+    "strict_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_latency_ms",
+        "max_noise_ratio",
+        "min_token_saved",
+        "min_baseline_chars"
+      ],
+      "properties": {
+        "max_latency_ms": { "type": "integer", "minimum": 0 },
+        "max_noise_ratio": { "type": "number" },
+        "min_token_saved": { "type": "number" },
+        "min_baseline_chars": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "head", "archetypes", "tools"],
+        "properties": {
+          "path": { "type": "string" },
+          "head": { "type": ["string", "null"] },
+          "archetypes": { "type": "array", "items": { "type": "string" } },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "ok",
+                "error",
+                "latency_ms",
+                "stable",
+                "strict_ok",
+                "strict_violations",
+                "area_entries",
+                "map_entries",
+                "map_noise_entries",
+                "noise_ratio",
+                "output_area_entries",
+                "ev_slices",
+                "anchor_files",
+                "used_chars",
+                "baseline_chars",
+                "token_saved",
+                "worktrees_returned",
+                "worktrees_with_digest",
+                "worktrees_dirty",
+                "worktrees_with_touches",
+                "worktrees_purpose_truncated"
+              ],
+              "properties": {
+                "ok": { "type": "boolean" },
+                "error": { "type": ["string", "null"] },
+                "latency_ms": { "type": "integer", "minimum": 0 },
+                "stable": { "type": "boolean" },
+                "strict_ok": { "type": "boolean" },
+                "strict_violations": { "type": "array", "items": { "type": "string" } },
+                "area_entries": { "type": "integer", "minimum": 0 },
+                "map_entries": { "type": "integer", "minimum": 0 },
+                "map_noise_entries": { "type": "integer", "minimum": 0 },
+                "noise_ratio": { "type": ["number", "null"] },
+                "output_area_entries": { "type": "integer", "minimum": 0 },
+                "ev_slices": { "type": "integer", "minimum": 0 },
+                "anchor_files": { "type": "integer", "minimum": 0 },
+                "used_chars": { "type": "integer", "minimum": 0 },
+                "baseline_chars": { "type": ["integer", "null"], "minimum": 0 },
+                "token_saved": { "type": ["number", "null"] },
+                "worktrees_returned": { "type": ["integer", "null"], "minimum": 0 },
+                "worktrees_with_digest": { "type": ["integer", "null"], "minimum": 0 },
+                "worktrees_dirty": { "type": ["integer", "null"], "minimum": 0 },
+                "worktrees_with_touches": { "type": ["integer", "null"], "minimum": 0 },
+                "worktrees_purpose_truncated": { "type": ["integer", "null"], "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

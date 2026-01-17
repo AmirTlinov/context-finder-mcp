@@ -20,6 +20,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Meaning eval: added UX metrics gating (latency/noise/token_saved) and expanded the zoo with
   GitLab CI, Nix+Proto+C++, and research notebook/dataset fixtures (token_saved baseline stabilized
   for evidence-sparse cases via anchor windows).
+- Eval zoo: added a machine-readable JSON contract for real-repo runs
+  (`contracts/eval/v1/zoo_report.schema.json`).
 - Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.
 - Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
   (HEAD, branch, dirty paths), with deterministic cursor pagination and meaning drill-down actions.
@@ -34,6 +36,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   `ENTRY` points (better behavior for monorepos / workspaces).
 - Meaning map: suppress `.worktrees/` from `S MAP` (treated as a workspace worktree store; avoids
   “branch checkout mass” dominating structure maps).
+- Eval zoo: `context-mcp-eval-zoo` now runs `worktree_pack` by default and renders a deterministic,
+  self-explaining Markdown report (Summary + “slowest calls” + “lowest token_saved”, plus worktree
+  coverage columns) for regression triage.
 - Meaning trust: in `response_mode=facts|full`, `meaning_pack` / `meaning_focus` now emit a compact
   evidence-coverage hint (`coverage: anchors_ev=… steps_ev=… ev=…`) to help agents judge trust
   without expanding token budgets; `atlas_pack` emits the same signal as `meaning_coverage`.
