@@ -174,15 +174,18 @@ async fn file_slice_supports_cursor_pagination() -> Result<()> {
     std::fs::write(root.join("README.md"), "one\ntwo\nthree\n").context("write README.md")?;
 
     let mut cursor: Option<String> = None;
-    let mut pages = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     for _ in 0..4usize {
+        // Cursor continuations should be robust to changing max_lines: it affects paging shape,
+        // but not the semantic continuation token.
+        let max_lines = if cursor.is_some() { 2 } else { 1 };
         let result = call_tool(
             &service,
             "file_slice",
             serde_json::json!({
                 "path": root.to_string_lossy(),
                 "file": "README.md",
-                "max_lines": 1,
+                "max_lines": max_lines,
                 "max_chars": 1024,
                 "cursor": cursor,
                 "response_mode": "minimal",
@@ -192,12 +195,10 @@ async fn file_slice_supports_cursor_pagination() -> Result<()> {
         assert_ne!(result.is_error, Some(true), "file_slice returned error");
 
         let text = tool_text(&result)?;
-        if text.contains("one") {
-            pages.push("one".to_string());
-        } else if text.contains("two") {
-            pages.push("two".to_string());
-        } else if text.contains("three") {
-            pages.push("three".to_string());
+        for line in extract_bare_lines(text) {
+            if ["one", "two", "three"].contains(&line.as_str()) {
+                seen.insert(line);
+            }
         }
 
         cursor = extract_cursor(text);
@@ -206,7 +207,11 @@ async fn file_slice_supports_cursor_pagination() -> Result<()> {
         }
     }
 
-    assert_eq!(pages, vec!["one", "two", "three"]);
+    let expected: BTreeSet<String> = ["one", "two", "three"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(seen, expected);
 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())

@@ -96,21 +96,6 @@ fn decode_resume_cursor(
     if decoded.file != validation.display_file {
         return Err("Invalid cursor: different file".to_string());
     }
-    if decoded.max_lines != validation.max_lines {
-        return Err(format!(
-            "Invalid cursor: different max_lines (cursor={}, expected={})",
-            decoded.max_lines, validation.max_lines
-        ));
-    }
-    if decoded.format != validation.format {
-        return Err("Invalid cursor: different format".to_string());
-    }
-    if decoded.allow_secrets != validation.allow_secrets {
-        return Err(format!(
-            "Invalid cursor: different allow_secrets (cursor={}, expected={})",
-            decoded.allow_secrets, validation.allow_secrets
-        ));
-    }
     if decoded.file_size_bytes != validation.file_size_bytes
         || decoded.file_mtime_ms != validation.file_mtime_ms
     {
