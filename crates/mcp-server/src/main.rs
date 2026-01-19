@@ -9,9 +9,12 @@
 //! - `context_pack` - Bounded semantic pack (primary + related halo)
 //! - `batch` - Multiple tool calls under one max_chars budget with $ref
 //! - `help` - `.context` legend (A/R/N/M) and usage notes
-//! - `file_slice` - Bounded file window (root-locked)
-//! - `grep_context` - Regex matches with before/after context hunks
-//! - `list_files` - Bounded file enumeration (glob/substring filter)
+//! - `cat` - Bounded file window (root-locked)
+//! - `rg` - Regex matches with before/after context hunks
+//! - `file_slice` - Legacy name for `cat`
+//! - `grep_context` - Legacy name for `rg`
+//! - `ls` - Bounded file enumeration (glob/substring filter)
+//! - `list_files` - Legacy name for `ls`
 //! - `text_search` - Bounded text search (corpus or FS fallback)
 //! - `search` - Semantic search using natural language
 //! - `context` - Search with automatic graph-based context (calls, dependencies)
@@ -19,7 +22,8 @@
 //! - `trace` - Call chain between two symbols
 //! - `explain` - Symbol details, deps, dependents, docs
 //! - `overview` - Architecture snapshot (layers, entry points)
-//! - `map` - Project structure overview (directories, files, top symbols)
+//! - `tree` - Project structure overview (directories, files, top symbols)
+//! - `map` - Legacy name for `tree`
 //! - `doctor` - Diagnose model/GPU/index configuration
 //! - `notebook_pack` - Agent notebook: list durable anchors + runbooks (cross-session)
 //! - `notebook_edit` - Agent notebook: upsert/delete anchors + runbooks (explicit writes)

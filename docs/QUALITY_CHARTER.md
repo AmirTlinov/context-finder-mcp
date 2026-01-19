@@ -58,7 +58,7 @@ Meaning-mode output must not be dominated by “file count gravity” (datasets,
 
 Semantic retrieval is never “alone”:
 
-- If semantic is unavailable, fall back to bounded filesystem (`text_search` / `grep_context`).
+- If semantic is unavailable, fall back to bounded filesystem (`text_search` / `rg`).
 - If semantic returns candidates but they are **anchorless**, fall back to filesystem or ask for clarification.
 
 ### Q2 — Anchors prevent “confident nonsense”

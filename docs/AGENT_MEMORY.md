@@ -57,15 +57,15 @@ The default `response_mode` is designed to be low-noise:
 - `"minimal"`: smallest possible output (max context savings)
 - `"full"`: opt-in “rich” output (diagnostics, freshness details) when you explicitly want it
 
-For tight-loop navigation/read tools (`file_slice`, `grep_context`, `list_files`, `text_search`, `map`), the default is typically `"minimal"` so answers are mostly *project content*.
+For tight-loop navigation/read tools (`cat`, `rg`, `ls`, `text_search`, `tree`), the default is typically `"minimal"` so answers are mostly *project content*.
 
-Note: In low-noise modes, `grep_context` defaults to `format: "plain"` (higher payload density). Set `format: "numbered"` if you want per-line number prefixes in the hunk content.
+Note: In low-noise modes, `rg` defaults to `format: "plain"` (higher payload density). Set `format: "numbered"` if you want per-line number prefixes in the hunk content.
 
-Note: `grep_context` / `list_files` / `text_search` treat the filesystem as the source of truth even when a corpus exists — corpora can be partial (scoped indexing, in-progress indexing), and tight-loop read tools must never silently miss files.
+Note: `rg` / `ls` / `text_search` treat the filesystem as the source of truth even when a corpus exists — corpora can be partial (scoped indexing, in-progress indexing), and tight-loop read tools must never silently miss files.
 
 Note: `text_search` is budget-first. Use `max_chars` to bound the response size; under tight budgets it returns a small number of matches (possibly with truncated match text) plus `next_cursor` for continuation.
 
-Note: `map` is primarily an onboarding/overview helper. In `"minimal"` it returns mostly directory paths (lowest noise); in `"full"` it can include richer diagnostics (e.g. top symbols / coverage).
+Note: `tree` (legacy: `map`) is primarily an onboarding/overview helper. In `"minimal"` it returns mostly directory paths (lowest noise); in `"full"` it can include richer diagnostics (e.g. top symbols / coverage).
 
 ## Output format (MCP): `.context` text (agent-native)
 
@@ -83,8 +83,8 @@ To keep agent context windows clean, `[LEGEND]` is **not** included in regular t
 
 Agent context windows are “sticky” — once a secret is printed, it tends to spread. Context Finder therefore uses a conservative denylist by default:
 
-- `file_slice` refuses to read common secret locations (e.g. `.env`, SSH keys, `*.pem`/`*.key`)
-- `grep_context` / `text_search` skip secret paths (and refuse explicit secret file reads)
+- `cat` refuses to read common secret locations (e.g. `.env`, SSH keys, `*.pem`/`*.key`) (legacy: `file_slice`)
+- `rg` / `text_search` skip secret paths (and refuse explicit secret file reads) (legacy: `grep_context`)
 - `read_pack` refuses `intent=file` reads of secrets, and skips secrets in filesystem fallbacks
 
 If you *explicitly* need to inspect secret files (debugging local env, investigating credentials leakage, etc.), you can opt in per call:
@@ -190,7 +190,7 @@ If a cursor is present (`next_cursor` in Command API JSON, or `M:` in `.context`
 
 Cursor tokens now embed the project root (and any relevant options), so you don’t have to resend `path` for pagination — even if your first call targeted a non-default project directory.
 
-For tight-loop read tools (`file_slice`, `grep_context`, `text_search`), cursor-only continuation also works directly on those tools — options are captured in the cursor so you don’t have to retype them.
+For tight-loop read tools (`cat`, `rg`, `text_search`), cursor-only continuation also works directly on those tools — options are captured in the cursor so you don’t have to retype them.
 
 Safety note (multi-agent): if a session already has a default project root, tools refuse to switch projects based on a cursor token alone. To switch roots intentionally, pass an explicit `path`.
 
@@ -237,5 +237,5 @@ Optional:
 Treat the MCP schema as the canonical reference for exact fields:
 
 - `read_pack`: `crates/mcp-server/src/tools/schemas/read_pack.rs`
-- `file_slice`: `crates/mcp-server/src/tools/schemas/file_slice.rs`
-- `grep_context`: `crates/mcp-server/src/tools/schemas/grep_context.rs`
+- `cat` (legacy: `file_slice`): `crates/mcp-server/src/tools/schemas/file_slice.rs`
+- `rg` (legacy: `grep_context`): `crates/mcp-server/src/tools/schemas/grep_context.rs`

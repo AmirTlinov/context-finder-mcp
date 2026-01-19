@@ -151,7 +151,7 @@ async fn notebook_and_runbook_basic_flow() -> Result<()> {
     )
     .await?;
     assert!(
-        pack.contains("a1"),
+        pack.contains("id=a1"),
         "notebook_pack should mention anchor id"
     );
     assert!(
@@ -408,11 +408,11 @@ async fn notebook_apply_suggest_preview_apply_rollback() -> Result<()> {
     )
     .await?;
     assert!(
-        pack.contains("a1"),
+        pack.contains("id=a1"),
         "notebook should contain applied anchor"
     );
     assert!(
-        pack.contains("rb_test"),
+        pack.contains("id=rb_test"),
         "notebook should contain applied runbook"
     );
 
@@ -439,11 +439,11 @@ async fn notebook_apply_suggest_preview_apply_rollback() -> Result<()> {
     )
     .await?;
     assert!(
-        !pack.contains("a1"),
+        !pack.contains("id=a1"),
         "notebook should not contain anchor after rollback"
     );
     assert!(
-        !pack.contains("rb_test"),
+        !pack.contains("id=rb_test"),
         "notebook should not contain runbook after rollback"
     );
 

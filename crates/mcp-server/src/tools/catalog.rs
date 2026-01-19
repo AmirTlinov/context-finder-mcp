@@ -69,24 +69,40 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Multiple tools under one max_chars budget with $ref.",
     },
     ToolDescriptor {
+        name: "tree",
+        summary: "Project structure overview (tree-like directories + symbols).",
+    },
+    ToolDescriptor {
         name: "map",
-        summary: "Project structure overview (directories + symbols).",
+        summary: "Legacy name for `tree` (project structure overview).",
+    },
+    ToolDescriptor {
+        name: "ls",
+        summary: "Bounded file enumeration (ls-like, glob/substring filter).",
     },
     ToolDescriptor {
         name: "list_files",
-        summary: "Bounded file enumeration (glob/substring filter).",
+        summary: "Legacy name for `ls` (bounded file enumeration).",
+    },
+    ToolDescriptor {
+        name: "cat",
+        summary: "Bounded file window (cat-like, root-locked, hashed).",
     },
     ToolDescriptor {
         name: "file_slice",
-        summary: "Bounded file window (root-locked, hashed).",
+        summary: "Legacy name for `cat` (bounded file window, root-locked, hashed).",
     },
     ToolDescriptor {
         name: "evidence_fetch",
         summary: "Verbatim fetch for one or more evidence pointers (meaning → territory).",
     },
     ToolDescriptor {
+        name: "rg",
+        summary: "Regex matches with before/after context hunks (rg-like).",
+    },
+    ToolDescriptor {
         name: "grep_context",
-        summary: "Regex matches with before/after context hunks.",
+        summary: "Legacy name for `rg` (regex matches with before/after context hunks).",
     },
     ToolDescriptor {
         name: "text_search",

@@ -483,7 +483,7 @@ pub(in crate::tools::dispatch) async fn grep_context(
                     ),
                     vec![
                         ToolNextAction {
-                            tool: "grep_context".to_string(),
+                            tool: "rg".to_string(),
                             args: json!({
                                 "path": root_display.clone(),
                                 "pattern": pattern.clone(),
@@ -495,7 +495,7 @@ pub(in crate::tools::dispatch) async fn grep_context(
                                 "format": "numbered",
                                 "response_mode": "facts"
                             }),
-                            reason: "Retry grep_context with literal=true (no regex parsing)."
+                            reason: "Retry rg with literal=true (no regex parsing)."
                                 .to_string(),
                         },
                         ToolNextAction {
@@ -786,12 +786,12 @@ pub(in crate::tools::dispatch) async fn grep_context(
     if response_mode == ResponseMode::Full {
         if let Some(cursor) = result.next_cursor.clone() {
             result.next_actions = Some(vec![ToolNextAction {
-                tool: "grep_context".to_string(),
+                tool: "rg".to_string(),
                 args: json!({
                     "path": root_display,
                     "cursor": cursor,
                 }),
-                reason: "Continue grep_context pagination with the next cursor.".to_string(),
+                reason: "Continue rg pagination with the next cursor.".to_string(),
             }]);
         }
     }

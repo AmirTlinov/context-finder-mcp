@@ -160,12 +160,12 @@ pub(in crate::tools::dispatch) async fn file_slice(
     if response_mode == ResponseMode::Full {
         if let Some(cursor) = result.next_cursor.clone() {
             result.next_actions = Some(vec![ToolNextAction {
-                tool: "file_slice".to_string(),
+                tool: "cat".to_string(),
                 args: json!({
                     "path": root_display,
                     "cursor": cursor,
                 }),
-                reason: "Continue file_slice pagination with the next cursor.".to_string(),
+                reason: "Continue cat pagination with the next cursor.".to_string(),
             }]);
         }
     }

@@ -221,14 +221,14 @@ pub(in crate::tools::dispatch) async fn map(
     if response_mode == ResponseMode::Full {
         if let Some(cursor) = result.next_cursor.clone() {
             result.next_actions = Some(vec![ToolNextAction {
-                tool: "map".to_string(),
+                tool: "tree".to_string(),
                 args: json!({
                     "path": root_display,
                     "depth": depth,
                     "limit": limit,
                     "cursor": cursor,
                 }),
-                reason: "Continue map pagination with the next cursor.".to_string(),
+                reason: "Continue tree pagination with the next cursor.".to_string(),
             }]);
         }
     }

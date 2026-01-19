@@ -44,9 +44,12 @@ pub(super) fn prepare_item_input(
     if matches!(
         tool,
         BatchToolName::ContextPack
+            | BatchToolName::Cat
             | BatchToolName::FileSlice
+            | BatchToolName::Ls
             | BatchToolName::ListFiles
             | BatchToolName::GrepContext
+            | BatchToolName::Rg
             | BatchToolName::NotebookPack
             | BatchToolName::NotebookSuggest
             | BatchToolName::RunbookPack

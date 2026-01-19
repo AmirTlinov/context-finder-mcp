@@ -258,7 +258,7 @@ pub(in crate::tools::dispatch) async fn list_files(
     if response_mode == ResponseMode::Full {
         if let Some(cursor) = result.next_cursor.clone() {
             result.next_actions = Some(vec![ToolNextAction {
-                tool: "list_files".to_string(),
+                tool: "ls".to_string(),
                 args: json!({
                     "path": root_display,
                     "file_pattern": normalized_file_pattern,
@@ -267,7 +267,7 @@ pub(in crate::tools::dispatch) async fn list_files(
                     "allow_secrets": allow_secrets,
                     "cursor": cursor,
                 }),
-                reason: "Continue list_files pagination with the next cursor.".to_string(),
+                reason: "Continue ls pagination with the next cursor.".to_string(),
             }]);
         }
     }

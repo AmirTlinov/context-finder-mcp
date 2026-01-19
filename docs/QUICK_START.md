@@ -403,7 +403,7 @@ Safety note (multi-agent): once a session has an established default root, `read
   "max_chars": 6000
 }
 
-// Read a file window (internally calls file_slice)
+// Read a file window (internally calls cat; legacy: file_slice)
 {
   "path": "/path/to/project",
   "intent": "file",
@@ -439,7 +439,7 @@ Semantic context pack tool (`context_pack`; bounded output; supports path filter
 }
 ```
 
-Regex context reads tool (`grep_context`; grep `-B/-A/-C` style, merged hunks, bounded output):
+Regex context reads tool (`rg`; grep `-B/-A/-C` style, merged hunks, bounded output; legacy: `grep_context`):
 
 ```jsonc
 {
@@ -463,12 +463,12 @@ Pagination (cursor): when the `.context` output includes an `M: <cursor>` line n
 In `response_mode: "full"`, tools include extra diagnostics; error responses may also include compact `next:` hints.
 
 Cursor tokens are opaque and bound to the original query/options (changing them will be rejected).
-For some tight-loop tools (notably `file_slice` and `grep_context`), the cursor contains enough info for cursor-only continuation — you do not need to resend the original options.
+For some tight-loop tools (notably `cat` and `rg`), the cursor contains enough info for cursor-only continuation — you do not need to resend the original options.
 
 Most *semantic* MCP tools default to `response_mode: "facts"` and include `meta.index_state` (best-effort) on both success and error responses to expose index freshness.
-Some tight-loop read tools (`file_slice`, `grep_context`, `list_files`, `text_search`, `map`) default to `response_mode: "minimal"` to keep output almost entirely project content.
+Some tight-loop read tools (`cat`, `rg`, `ls`, `text_search`, `tree`) default to `response_mode: "minimal"` to keep output almost entirely project content.
 For these tools, `response_mode: "facts"` stays low-noise by design (it strips helper guidance but still avoids heavy diagnostics). Use `response_mode: "full"` when you explicitly want diagnostics / freshness details (including `meta.index_state`).
-For example, `map` in `"minimal"` returns mostly directory paths (low noise), while `"full"` can include richer diagnostics.
+For example, `tree` (legacy: `map`) in `"minimal"` returns mostly directory paths (low noise), while `"full"` can include richer diagnostics.
 Use `response_mode: "minimal"` for the smallest possible response. Use `response_mode: "full"` when debugging tool behavior or investigating index freshness.
 For semantic tools (`context_pack`, `context`, `impact`, `trace`, `explain`, `overview`),
 `auto_index` defaults to true; use `auto_index=false` or `auto_index_budget_ms` to control the
@@ -486,7 +486,7 @@ In `version: 2`, item inputs can depend on earlier outputs via `$ref` (JSON Poin
     { "id": "hits", "tool": "text_search", "input": { "pattern": "stale_policy", "max_results": 1 } },
     {
       "id": "ctx",
-      "tool": "grep_context",
+      "tool": "rg",
       "input": {
         "pattern": "stale_policy",
         "file": { "$ref": "#/items/hits/data/matches/0/file" },
@@ -528,7 +528,7 @@ If the response is truncated, continue with `cursor` (cursor-only continuation):
 }
 ```
 
-List files tool (bounded file enumeration; designed to replace `ls/find/rg --files` in agent loops):
+List files tool (`ls`; legacy: `list_files`) (bounded file enumeration; designed to replace `ls/find/rg --files` in agent loops):
 
 ```jsonc
 {
@@ -539,7 +539,7 @@ List files tool (bounded file enumeration; designed to replace `ls/find/rg --fil
 }
 ```
 
-Note: by default, `list_files` omits common secret paths (e.g. `.env`). To include them, set:
+Note: by default, `ls` omits common secret paths (e.g. `.env`). To include them, set:
 
 ```jsonc
 { "allow_secrets": true }
@@ -781,7 +781,7 @@ context-finder index . --force
 
 ### MCP: "tool not found" / missing tools
 
-If your MCP client reports `tool not found` or does not show tools like `read_pack` / `grep_context`, you are almost always running the wrong binary or an old install.
+If your MCP client reports `tool not found` or does not show tools like `read_pack` / `rg` / `cat`, you are almost always running the wrong binary or an old install.
 
 Checklist:
 
@@ -799,13 +799,15 @@ cargo install --path crates/mcp-server --locked --force
 CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test -p context-finder-mcp --test mcp_smoke
 ```
 
-Expected MCP tool names (18):
+Expected MCP tool names (primary):
 
 - `capabilities`, `help`
-- `map`, `repo_onboarding_pack`, `read_pack`
-- `file_slice`, `list_files`, `grep_context`, `batch`
+- `tree`, `repo_onboarding_pack`, `read_pack`
+- `cat`, `ls`, `rg`, `batch`
 - `doctor`, `search`, `context`, `context_pack`
 - `text_search`, `explain`, `impact`, `trace`, `overview`
+
+Legacy MCP tool names (still supported): `map`, `list_files`, `file_slice`, `grep_context`.
 
 ## Development checks
 

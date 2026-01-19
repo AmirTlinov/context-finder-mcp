@@ -56,9 +56,9 @@ Suggested recovery steps:
 - Use `text_search` to validate the anchor token exists in the repo.
 - Use `repo_onboarding_pack` to confirm the effective root and key docs.
 
-## Regex hygiene (`grep_context`)
+## Regex hygiene (`rg`)
 
-`grep_context` uses **Rust regex** by default.
+`rg` uses **Rust regex** by default. (Legacy name: `grep_context`.)
 
 Common pitfalls:
 
@@ -66,7 +66,7 @@ Common pitfalls:
 - If you are calling via JSON, remember to escape backslashes:
   - to match a literal `(`, the regex is `\(`, and the JSON string is `\\(`.
 
-If a regex is invalid, `grep_context` returns an `invalid_request` error with a hint (and may include compact `next:` suggestions).
+If a regex is invalid, `rg` returns an `invalid_request` error with a hint (and may include compact `next:` suggestions).
 
 ## Freshness model (what to expect)
 

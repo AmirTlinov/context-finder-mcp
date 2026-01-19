@@ -339,7 +339,7 @@ For any path read (including EV):
 - normalize + `realpath`
 - enforce `realpath(target)` is within `realpath(root)`
 - deny symlink escapes
-- secrets safety: `evidence_fetch` must refuse obvious secret assignments even in non-secret files (e.g., compose YAML), with an explicit escape hatch via `file_slice allow_secrets=true`.
+- secrets safety: `evidence_fetch` must refuse obvious secret assignments even in non-secret files (e.g., compose YAML), with an explicit escape hatch via `cat allow_secrets=true` (legacy: `file_slice`).
 
 ### 7.3) Shared cache vs per-session state
 

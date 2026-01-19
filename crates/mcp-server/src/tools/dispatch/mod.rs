@@ -3332,9 +3332,22 @@ impl ContextFinderService {
         ))
     }
 
+    /// Project structure overview (tree-like).
+    #[tool(
+        description = "Project structure overview with directories, files, and top symbols. Shell-friendly name for `map` (like `tree`)."
+    )]
+    pub async fn tree(
+        &self,
+        Parameters(request): Parameters<MapRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::map::map(self, request).await?,
+        ))
+    }
+
     /// Get project structure overview
     #[tool(
-        description = "Get project structure overview with directories, files, and top symbols. Use this first to understand a new codebase."
+        description = "Legacy name for `tree`. Get project structure overview with directories, files, and top symbols. Use this first to understand a new codebase."
     )]
     pub async fn map(
         &self,
@@ -3475,9 +3488,9 @@ impl ContextFinderService {
         ))
     }
 
-    /// Bounded exact text search (literal substring), as a safe `rg` replacement.
+    /// Bounded exact text search (literal substring), like `rg -F`.
     #[tool(
-        description = "Search for an exact text pattern in project files with bounded output (rg-like, but safe for agent context). Uses corpus if available, otherwise scans files without side effects."
+        description = "Search for an exact text pattern in project files with bounded output (like `rg -F`, but safe for agent context). Uses corpus if available, otherwise scans files without side effects."
     )]
     pub async fn text_search(
         &self,
@@ -3488,9 +3501,22 @@ impl ContextFinderService {
         ))
     }
 
+    /// Read a bounded slice of a file within the project root (cat-like, safe for agents).
+    #[tool(
+        description = "Read a bounded slice of a file (by line) within the project root. Safe replacement for `cat`/`sed -n`; enforces max_lines/max_chars and prevents path traversal."
+    )]
+    pub async fn cat(
+        &self,
+        Parameters(request): Parameters<FileSliceRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::file_slice::file_slice(self, &request).await?,
+        ))
+    }
+
     /// Read a bounded slice of a file within the project root (safe file access for agents).
     #[tool(
-        description = "Read a bounded slice of a file (by line) within the project root. Safe replacement for ad-hoc `cat/sed` reads; enforces max_lines/max_chars and prevents path traversal."
+        description = "Legacy name for `cat`. Read a bounded slice of a file (by line) within the project root. Safe replacement for ad-hoc `cat/sed` reads; enforces max_lines/max_chars and prevents path traversal."
     )]
     pub async fn file_slice(
         &self,
@@ -3514,9 +3540,9 @@ impl ContextFinderService {
         ))
     }
 
-    /// Build a one-call semantic reading pack (file slice / grep context / context pack / onboarding / memory).
+    /// Build a one-call semantic reading pack (cat / rg / context pack / onboarding / memory).
     #[tool(
-        description = "One-call semantic reading pack. A cognitive facade over file_slice/grep_context/context_pack/repo_onboarding_pack (+ intent=memory for long-memory overview + key config/doc slices): returns the most relevant bounded slice(s) plus continuation cursors and next actions."
+        description = "One-call semantic reading pack. A cognitive facade over cat/rg/context_pack/repo_onboarding_pack (+ intent=memory for long-memory overview + key config/doc slices): returns the most relevant bounded slice(s) plus continuation cursors and next actions."
     )]
     pub async fn read_pack(
         &self,
@@ -3527,9 +3553,22 @@ impl ContextFinderService {
         ))
     }
 
-    /// List project files within the project root (safe file enumeration for agents).
+    /// List project file paths (ls-like).
     #[tool(
         description = "List project file paths (relative to project root). Safe replacement for `ls/find/rg --files`; supports glob/substring filtering and bounded output."
+    )]
+    pub async fn ls(
+        &self,
+        Parameters(request): Parameters<ListFilesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::list_files::list_files(self, request).await?,
+        ))
+    }
+
+    /// List project files within the project root (safe file enumeration for agents).
+    #[tool(
+        description = "Legacy name for `ls`. List project file paths (relative to project root). Safe replacement for `ls/find/rg --files`; supports glob/substring filtering and bounded output."
     )]
     pub async fn list_files(
         &self,
@@ -3540,9 +3579,22 @@ impl ContextFinderService {
         ))
     }
 
+    /// Regex search with merged context hunks (rg-like).
+    #[tool(
+        description = "Search project files with a regex and return merged context hunks (N lines before/after). Designed to replace `rg -C/-A/-B` plus multiple cat calls with a single bounded response."
+    )]
+    pub async fn rg(
+        &self,
+        Parameters(request): Parameters<GrepContextRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::grep_context::grep_context(self, request).await?,
+        ))
+    }
+
     /// Regex search with merged context hunks (grep-like).
     #[tool(
-        description = "Search project files with a regex and return merged context hunks (N lines before/after). Designed to replace `rg -C/-A/-B` plus multiple file_slice calls with a single bounded response."
+        description = "Legacy name for `rg`. Search project files with a regex and return merged context hunks (N lines before/after). Designed to replace `rg -C/-A/-B` plus multiple cat calls with a single bounded response."
     )]
     pub async fn grep_context(
         &self,

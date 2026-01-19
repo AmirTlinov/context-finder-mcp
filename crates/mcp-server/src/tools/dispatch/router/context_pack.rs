@@ -952,7 +952,7 @@ pub(in crate::tools::dispatch) async fn context_pack(
                     .cloned()
                     .unwrap_or_else(|| query.trim().to_string());
                 output.next_actions.push(ToolNextAction {
-                    tool: "grep_context".to_string(),
+                    tool: "rg".to_string(),
                     args: serde_json::json!({
                         "path": root_display.clone(),
                         "pattern": pattern,
@@ -964,7 +964,7 @@ pub(in crate::tools::dispatch) async fn context_pack(
                         "format": "numbered",
                         "response_mode": "facts"
                     }),
-                    reason: "Semantic search is disabled; fall back to grep_context on the most relevant query token.".to_string(),
+                    reason: "Semantic search is disabled; fall back to rg on the most relevant query token.".to_string(),
                 });
             }
 

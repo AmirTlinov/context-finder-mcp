@@ -255,7 +255,7 @@ stable `project_facts` first, then relevant snippets — and pagination via `cur
 For the exact request/response fields, treat the MCP schema as the source of truth:
 `crates/mcp-server/src/tools/schemas/read_pack.rs`.
 
-Read a file window (internally calls `file_slice`):
+Read a file window (internally calls `cat`; legacy: `file_slice`):
 
 ```jsonc
 {
@@ -305,7 +305,7 @@ Recall supports a tiny per-question directive syntax inside `questions[]` string
 - `ctx:<N>` — grep context lines per snippet (bounded)
 - `index:5s` / `deep:8000ms` — per-question auto-index budget (deep mode)
 
-Read all regex matches with N lines of context (internally calls `grep_context`):
+Read all regex matches with N lines of context (internally calls `rg`; legacy: `grep_context`):
 
 ```jsonc
 {
@@ -332,7 +332,7 @@ Build a bounded semantic context pack (internally calls `context_pack`):
 }
 ```
 
-### 3) Read all regex matches with context: `grep_context`
+### 3) Read all regex matches with context: `rg` (legacy: `grep_context`)
 
 This is the “grep -B/-A/-C, but bounded and merge-aware” tool for agents:
 
@@ -357,7 +357,7 @@ This is the “grep -B/-A/-C, but bounded and merge-aware” tool for agents:
 When a tool response includes `truncated: true` and `next_cursor`, continue with a cursor call.
 
 - Most tools require the original options (cursor is bound to them).
-- `file_slice` and `grep_context` support cursor-only continuation (cursor carries the needed options), so the follow-up call can be just `{ "path": "...", "cursor": "<next_cursor>" }`.
+- `cat` and `rg` support cursor-only continuation (cursor carries the needed options), so the follow-up call can be just `{ "path": "...", "cursor": "<next_cursor>" }`.
 
 For `read_pack`, take `next_cursor` (top-level) and continue with a cursor-only call (defaults keep output low-noise; `response_mode: "full"` can include per-section cursors when applicable):
 
@@ -381,7 +381,7 @@ Batch `version: 2` lets item inputs reference previous item outputs via JSON Poi
     { "id": "hits", "tool": "text_search", "input": { "pattern": "stale_policy", "max_results": 1 } },
     {
       "id": "ctx",
-      "tool": "grep_context",
+      "tool": "rg",
       "input": {
         "pattern": "stale_policy",
         "file": { "$ref": "#/items/hits/data/matches/0/file" },

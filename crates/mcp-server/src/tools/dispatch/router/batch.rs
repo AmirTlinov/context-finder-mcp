@@ -82,10 +82,14 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
     match tool {
         BatchToolName::Capabilities => "capabilities",
         BatchToolName::Help => "help",
+        BatchToolName::Tree => "tree",
         BatchToolName::Map => "map",
+        BatchToolName::Cat => "cat",
         BatchToolName::FileSlice => "file_slice",
+        BatchToolName::Ls => "ls",
         BatchToolName::ListFiles => "list_files",
         BatchToolName::TextSearch => "text_search",
+        BatchToolName::Rg => "rg",
         BatchToolName::GrepContext => "grep_context",
         BatchToolName::Doctor => "doctor",
         BatchToolName::Search => "search",
@@ -175,13 +179,19 @@ async fn dispatch_tool(
             "capabilities"
         ),
         BatchToolName::Help => typed_call!(HelpRequest, super::help::help, "help"),
+        BatchToolName::Tree => typed_call!(MapRequest, super::map::map, "tree"),
         BatchToolName::Map => typed_call!(MapRequest, super::map::map, "map"),
+        BatchToolName::Cat => match serde_json::from_value::<FileSliceRequest>(input) {
+            Ok(req) => super::file_slice::file_slice(service, &req).await,
+            Err(err) => Ok(invalid_request(format!("Invalid input for cat: {err}"))),
+        },
         BatchToolName::FileSlice => match serde_json::from_value::<FileSliceRequest>(input) {
             Ok(req) => super::file_slice::file_slice(service, &req).await,
             Err(err) => Ok(invalid_request(format!(
                 "Invalid input for file_slice: {err}"
             ))),
         },
+        BatchToolName::Ls => typed_call!(ListFilesRequest, super::list_files::list_files, "ls"),
         BatchToolName::ListFiles => {
             typed_call!(
                 ListFilesRequest,
@@ -195,6 +205,9 @@ async fn dispatch_tool(
                 super::text_search::text_search,
                 "text_search"
             )
+        }
+        BatchToolName::Rg => {
+            typed_call!(GrepContextRequest, super::grep_context::grep_context, "rg")
         }
         BatchToolName::GrepContext => typed_call!(
             GrepContextRequest,
