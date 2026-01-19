@@ -1026,9 +1026,6 @@ pub(super) async fn compute_worktree_pack_result(
                 anyhow::bail!("Invalid cursor: different root");
             }
         }
-        if decoded.limit != 0 && decoded.limit != limit {
-            anyhow::bail!("Invalid cursor: different limit");
-        }
         if decoded.query != query {
             anyhow::bail!("Invalid cursor: different query");
         }

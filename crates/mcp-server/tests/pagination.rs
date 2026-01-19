@@ -130,14 +130,21 @@ async fn list_files_supports_cursor_pagination() -> Result<()> {
     let mut cursor: Option<String> = None;
     let mut seen = BTreeSet::new();
     for _ in 0..8usize {
+        // Cursor continuations should be robust to changing limit/max_chars: they affect paging
+        // shape and budget, but not the semantic continuation token.
+        let (limit, max_chars) = if cursor.is_some() {
+            (2, 1_500)
+        } else {
+            (1, 2_000)
+        };
         let result = call_tool(
             &service,
             "list_files",
             serde_json::json!({
                 "path": root.to_string_lossy(),
                 "file_pattern": "src/*",
-                "limit": 1,
-                "max_chars": 2_000,
+                "limit": limit,
+                "max_chars": max_chars,
                 "cursor": cursor,
                 "response_mode": "minimal",
             }),
@@ -356,6 +363,7 @@ async fn read_pack_supports_cursor_continuation() -> Result<()> {
         serde_json::json!({
             "path": root.to_string_lossy(),
             "cursor": cursor,
+            "max_lines": 60,
             "max_chars": 300,
             "response_mode": "facts",
         }),
@@ -368,6 +376,54 @@ async fn read_pack_supports_cursor_continuation() -> Result<()> {
     );
     let second_text = tool_text(&second)?;
     assert!(second_text.contains("[CONTENT]"));
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn map_supports_cursor_continuation_with_limit_change() -> Result<()> {
+    let (tmp, service) = start_service().await?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::create_dir_all(root.join("docs")).context("mkdir docs")?;
+    std::fs::write(root.join("src").join("a.rs"), "a\n").context("write a.rs")?;
+    std::fs::write(root.join("src").join("b.rs"), "b\n").context("write b.rs")?;
+    std::fs::write(root.join("docs").join("c.md"), "c\n").context("write c.md")?;
+
+    let first = call_tool(
+        &service,
+        "map",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "depth": 2,
+            "limit": 1,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(first.is_error, Some(true), "map returned error");
+    let first_text = tool_text(&first)?;
+    let cursor = extract_cursor(first_text).context("missing cursor (M:) in map")?;
+
+    let second = call_tool(
+        &service,
+        "map",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "cursor": cursor,
+            "depth": 2,
+            "limit": 2,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        second.is_error,
+        Some(true),
+        "map returned error (cursor with changed limit)"
+    );
 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())

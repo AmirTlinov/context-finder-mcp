@@ -85,6 +85,13 @@ async fn call_tool_text(
     Ok(text.to_string())
 }
 
+fn extract_cursor(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.strip_prefix("M:").map(str::trim))
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
 async fn git(root: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -159,6 +166,69 @@ async fn worktree_pack_lists_git_worktrees_and_branch_hints() -> Result<()> {
     assert!(
         text.contains("branch=feature-w1"),
         "expected branch hint in output"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn worktree_pack_cursor_allows_limit_change() -> Result<()> {
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    git(root, &["init"]).await?;
+    git(root, &["config", "user.email", "test@example.com"]).await?;
+    git(root, &["config", "user.name", "Test"]).await?;
+    git(root, &["config", "status.showUntrackedFiles", "normal"]).await?;
+
+    std::fs::write(root.join("README.md"), "root\n").context("write README")?;
+    git(root, &["add", "README.md"]).await?;
+    git(root, &["commit", "-m", "init"]).await?;
+    let _ = git(root, &["branch", "-M", "main"]).await;
+
+    let w1 = root.join(".worktrees").join("w1");
+    git(
+        root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature-w1",
+            w1.to_string_lossy().as_ref(),
+        ],
+    )
+    .await?;
+
+    let service = start_mcp_server().await?;
+    let first = call_tool_text(
+        &service,
+        "worktree_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "limit": 1,
+            "response_mode": "facts",
+            "max_chars": 1200
+        }),
+    )
+    .await?;
+    let cursor = extract_cursor(&first).context("missing cursor (M:) in worktree_pack")?;
+
+    let second = call_tool_text(
+        &service,
+        "worktree_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "cursor": cursor,
+            "limit": 2,
+            "response_mode": "facts",
+            "max_chars": 1200
+        }),
+    )
+    .await?;
+
+    assert!(
+        second.contains("worktree_pack") || second.contains("A: worktree_pack"),
+        "expected .context output to include the tool name"
     );
 
     Ok(())

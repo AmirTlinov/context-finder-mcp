@@ -1331,17 +1331,6 @@ async fn handle_file_intent(
     let max_lines = request
         .max_lines
         .or_else(|| cursor_payload.as_ref().map(|c| c.max_lines));
-    if let (Some(decoded), Some(requested)) = (cursor_payload.as_ref(), request.max_lines) {
-        if requested != decoded.max_lines {
-            return Err(call_error(
-                "invalid_cursor",
-                format!(
-                    "Invalid cursor: different max_lines (cursor={}, request={})",
-                    decoded.max_lines, requested
-                ),
-            ));
-        }
-    }
 
     let file_slice_max_chars = if let Some(decoded) = cursor_payload.as_ref() {
         if request.max_chars.is_some() {

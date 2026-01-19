@@ -181,22 +181,6 @@ pub(in crate::tools::dispatch) async fn list_files(
                     ));
                 }
             }
-            if let Some(limit) = request.limit {
-                if decoded.limit > 0 && decoded.limit != limit {
-                    return Ok(invalid_cursor_with_meta(
-                        "Invalid cursor: different limit",
-                        meta_for_output.clone(),
-                    ));
-                }
-            }
-            if let Some(max_chars) = request.max_chars {
-                if decoded.max_chars > 0 && decoded.max_chars != max_chars {
-                    return Ok(invalid_cursor_with_meta(
-                        "Invalid cursor: different max_chars",
-                        meta_for_output.clone(),
-                    ));
-                }
-            }
             (
                 Some(decoded.last_file),
                 Some(decoded.allow_secrets),

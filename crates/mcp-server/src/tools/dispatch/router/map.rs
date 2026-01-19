@@ -173,14 +173,6 @@ pub(in crate::tools::dispatch) async fn map(
                 meta_for_output.clone(),
             ));
         }
-        if let Some(limit) = request.limit {
-            if decoded.limit > 0 && decoded.limit != limit {
-                return Ok(invalid_cursor_with_meta(
-                    "Invalid cursor: different limit",
-                    meta_for_output.clone(),
-                ));
-            }
-        }
         decoded.offset
     } else {
         0usize
