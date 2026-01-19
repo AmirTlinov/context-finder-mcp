@@ -1052,7 +1052,7 @@ pub async fn meaning_pack(
                 // Keep NBA copy/paste runnable, but avoid blowing tight budgets by default.
                 // Include source_hash only when max_chars is comfortably above the default.
                 let source_hash = (max_chars >= 3_000)
-                    .then(|| ev.source_hash.as_deref())
+                    .then_some(ev.source_hash.as_deref())
                     .flatten();
                 let payload =
                     evidence_fetch_payload_json(&ev.file, ev.start_line, ev.end_line, source_hash);
