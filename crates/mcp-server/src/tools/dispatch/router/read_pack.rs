@@ -7135,9 +7135,9 @@ fn render_read_pack_context_doc(result: &ReadPackResult, response_mode: Response
     match result.intent {
         ReadPackIntent::Memory => doc.push_answer("Project memory: stable facts + key snippets."),
         ReadPackIntent::Recall => doc.push_answer("Recall: answers + supporting snippets."),
-        ReadPackIntent::File => doc.push_answer("File slice (see references)."),
-        ReadPackIntent::Grep => doc.push_answer("Grep matches with context (see references)."),
-        ReadPackIntent::Query => doc.push_answer("Query context pack (see references)."),
+        ReadPackIntent::File => doc.push_answer("File slice."),
+        ReadPackIntent::Grep => doc.push_answer("Grep matches with context."),
+        ReadPackIntent::Query => doc.push_answer("Query context pack."),
         ReadPackIntent::Onboarding => doc.push_answer("Onboarding snapshot (see notes)."),
         ReadPackIntent::Auto => doc.push_answer(&format!(
             "read_pack: intent={}",

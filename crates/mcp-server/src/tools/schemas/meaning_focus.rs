@@ -8,14 +8,32 @@ use super::response_mode::ResponseMode;
 /// Control how `meaning_focus` returns results.
 ///
 /// - `context`: default `.context` text output (CPV1).
+/// - `markdown`: alias for `context` (common user expectation).
 /// - `context_and_diagram`: `.context` text + an SVG diagram as an MCP `image` content block.
 /// - `diagram`: SVG diagram only (lowest token usage, requires image-capable client/model).
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MeaningFocusOutputFormat {
     Context,
     ContextAndDiagram,
     Diagram,
+}
+
+impl<'de> Deserialize<'de> for MeaningFocusOutputFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        match raw.as_str() {
+            "context" | "markdown" => Ok(Self::Context),
+            "context_and_diagram" => Ok(Self::ContextAndDiagram),
+            "diagram" => Ok(Self::Diagram),
+            other => Err(serde::de::Error::custom(format!(
+                "Invalid output_format '{other}'. Allowed: context|markdown|context_and_diagram|diagram. Example: {{\"output_format\":\"context\"}}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -55,10 +73,11 @@ pub struct MeaningFocusRequest {
 
     /// Output format:
     /// - "context" (default): CPV1 `.context` output only.
+    /// - "markdown": alias for "context".
     /// - "context_and_diagram": `.context` + `image/svg+xml` diagram.
     /// - "diagram": `image/svg+xml` diagram only.
     #[schemars(
-        description = "Output format: 'context' (default), 'context_and_diagram', or 'diagram'"
+        description = "Output format: 'context' (default), 'markdown' (alias), 'context_and_diagram', or 'diagram'"
     )]
     pub output_format: Option<MeaningFocusOutputFormat>,
 

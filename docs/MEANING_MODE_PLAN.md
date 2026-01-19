@@ -229,7 +229,7 @@ Key invariants enforced by implementation/tests:
   - removes lowest-priority body lines first
   - prunes unused `EV` and `D` lines
   - preserves `NBA`
-  - last resort keeps **at least one** `EV` + its `D` entry + `NBA evidence_fetch`
+  - last resort keeps **at least one** `EV` + its `D` entry + `NBA evidence_fetch <json payload>` (copy/paste runnable)
 
 Note: CP is the agent default. JSON MG is reserved for later phases (debug/tests).
 

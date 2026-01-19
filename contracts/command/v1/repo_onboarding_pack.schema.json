@@ -13,6 +13,12 @@
       "type": "array",
       "items": { "$ref": "#/$defs/doc_slice" }
     },
+    "omitted_doc_paths": {
+      "type": "array",
+      "description": "Best-effort list of doc candidate paths that were not included in `docs` (e.g., due to max_chars/docs_limit). Useful to continue onboarding with a narrower follow-up request without guessing.",
+      "items": { "type": "string" },
+      "default": []
+    },
     "docs_reason": {
       "description": "Why docs are empty when no slices were returned.",
       "anyOf": [

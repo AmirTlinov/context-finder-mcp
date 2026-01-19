@@ -127,6 +127,7 @@ impl RepoOnboardingPackService {
             root: root_display.clone(),
             map: map_outcome.map,
             docs: Vec::new(),
+            omitted_doc_paths: Vec::new(),
             docs_reason: None,
             next_actions: build_next_actions(&root_display, has_index),
             budget: RepoOnboardingPackBudget {
@@ -156,6 +157,17 @@ impl RepoOnboardingPackService {
             } else {
                 RepoOnboardingDocsReason::DocsNotFound
             });
+        }
+
+        if result.budget.truncated && !doc_candidates.is_empty() {
+            let included: HashSet<&str> = result.docs.iter().map(|d| d.file.as_str()).collect();
+            let last_included_idx = doc_candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, cand)| included.contains(cand.as_str()).then_some(idx))
+                .next_back();
+            let start_idx = last_included_idx.map(|idx| idx + 1).unwrap_or(0);
+            result.omitted_doc_paths = doc_candidates.iter().skip(start_idx).cloned().collect();
         }
 
         let mut outcome = CommandOutcome::from_value(result)?;

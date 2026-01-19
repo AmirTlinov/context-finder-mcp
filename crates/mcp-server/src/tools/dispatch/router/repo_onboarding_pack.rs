@@ -68,6 +68,36 @@ pub(in crate::tools::dispatch) async fn repo_onboarding_pack(
         doc.push_block_smart(&slice.content);
         doc.push_blank();
     }
+    if result.budget.truncated && !result.omitted_doc_paths.is_empty() {
+        doc.push_note("omitted_doc_paths (not included):");
+        let max_list = 10usize;
+        for path in result.omitted_doc_paths.iter().take(max_list) {
+            doc.push_line(path);
+        }
+        if result.omitted_doc_paths.len() > max_list {
+            doc.push_note(&format!(
+                "(+{} more omitted paths)",
+                result.omitted_doc_paths.len().saturating_sub(max_list)
+            ));
+        }
+
+        // Provide copy/paste runnable follow-ups to continue onboarding without guessing.
+        let first = &result.omitted_doc_paths[0];
+        let first_json = serde_json::to_string(first).unwrap_or_else(|_| "\"<invalid>\"".into());
+        doc.push_note("next (narrow, copy/paste):");
+        doc.push_note(&format!(
+            "repo_onboarding_pack {{\"doc_paths\":[{first_json}],\"docs_limit\":1}}"
+        ));
+        if result.omitted_doc_paths.len() >= 2 {
+            let second = &result.omitted_doc_paths[1];
+            let second_json =
+                serde_json::to_string(second).unwrap_or_else(|_| "\"<invalid>\"".into());
+            doc.push_note(&format!(
+                "repo_onboarding_pack {{\"doc_paths\":[{first_json},{second_json}],\"docs_limit\":2}}"
+            ));
+        }
+        doc.push_blank();
+    }
     if result.budget.truncated {
         if let Some(truncation) = result.budget.truncation.as_ref() {
             doc.push_note(&format!("truncated=true ({truncation:?})"));

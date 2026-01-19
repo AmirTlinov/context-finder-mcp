@@ -1130,6 +1130,8 @@ pub struct RepoOnboardingPackOutput {
     pub root: String,
     pub map: MapOutput,
     pub docs: Vec<RepoOnboardingDocSlice>,
+    #[serde(default)]
+    pub omitted_doc_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docs_reason: Option<RepoOnboardingDocsReason>,
     pub next_actions: Vec<ToolNextAction>,

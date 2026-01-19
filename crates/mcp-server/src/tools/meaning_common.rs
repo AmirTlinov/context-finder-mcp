@@ -2,6 +2,7 @@ use anyhow::Result;
 use context_code_chunker::{Chunker, ChunkerConfig};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -1110,6 +1111,27 @@ pub(super) fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"<invalid>\"".to_string())
 }
 
+pub(super) fn evidence_fetch_payload_json(
+    file: &str,
+    start_line: usize,
+    end_line: usize,
+    source_hash: Option<&str>,
+) -> String {
+    let mut out = String::new();
+    let _ = write!(
+        &mut out,
+        "{{\"items\":[{{\"file\":{},\"start_line\":{},\"end_line\":{}",
+        json_string(file),
+        start_line,
+        end_line
+    );
+    if let Some(hash) = source_hash {
+        let _ = write!(&mut out, ",\"source_hash\":{}", json_string(hash));
+    }
+    out.push_str("}]}");
+    out
+}
+
 pub(super) async fn hash_and_count_lines(path: &Path) -> Result<(String, usize)> {
     let meta = tokio::fs::metadata(path).await?;
     let file_size = meta.len();
@@ -1171,11 +1193,6 @@ pub(super) fn shrink_pack(pack: &mut String) -> bool {
         // Prefer preserving at least one evidence pointer for “precision fetch”, even under
         // extreme budgets. This keeps the pack actionable (semantic zoom → exact read).
         if let Some(ev_line) = lines.iter().find(|line| line.starts_with("EV ")) {
-            let ev_id = ev_line
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("ev0")
-                .to_string();
             let file_id = ev_line
                 .split_whitespace()
                 .find_map(|token| token.strip_prefix("file="))
@@ -1193,9 +1210,18 @@ pub(super) fn shrink_pack(pack: &mut String) -> bool {
                     minimal.push(d_line.clone());
                     minimal.push("S EVIDENCE".to_string());
                     minimal.push(ev_line.clone());
-                    minimal.push(format!(
-                        "NBA evidence_fetch ev={ev_id} file={file_id} {range}"
-                    ));
+                    let file_path = d_line
+                        .splitn(3, ' ')
+                        .nth(2)
+                        .and_then(|json_str| serde_json::from_str::<String>(json_str).ok())
+                        .unwrap_or_else(|| file_id.clone());
+                    let (start_line, end_line) = range
+                        .strip_prefix('L')
+                        .and_then(|rest| rest.split_once("-L"))
+                        .and_then(|(a, b)| Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?)))
+                        .unwrap_or((1, 1));
+                    let payload = evidence_fetch_payload_json(&file_path, start_line, end_line, None);
+                    minimal.push(format!("NBA evidence_fetch {payload}"));
                     *pack = minimal.join("\n") + "\n";
                     return true;
                 }

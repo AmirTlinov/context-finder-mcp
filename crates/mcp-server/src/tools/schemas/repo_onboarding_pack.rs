@@ -96,6 +96,8 @@ pub struct RepoOnboardingPackResult {
     pub root: String,
     pub map: MapResult,
     pub docs: Vec<FileSliceResult>,
+    #[serde(default)]
+    pub omitted_doc_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docs_reason: Option<RepoOnboardingDocsReason>,
     pub next_actions: Vec<RepoOnboardingNextAction>,

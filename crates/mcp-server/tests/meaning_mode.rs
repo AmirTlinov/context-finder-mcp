@@ -118,7 +118,23 @@ fn extract_ev_ref(line: &str) -> Option<&str> {
 
 fn assert_meaning_invariants(pack: &str) -> Result<()> {
     let mut ev_ids: HashSet<&str> = HashSet::new();
+    let mut dict: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut ev_items: Vec<(String, usize, usize, String)> = Vec::new(); // (file, start, end, sha256)
     for line in pack.lines() {
+        if line.starts_with("D ") {
+            let mut parts = line.splitn(3, ' ');
+            let _ = parts.next(); // D
+            let Some(id) = parts.next() else {
+                continue;
+            };
+            let Some(json_str) = parts.next() else {
+                continue;
+            };
+            if let Ok(value) = serde_json::from_str::<String>(json_str) {
+                dict.insert(id.to_string(), value);
+            }
+            continue;
+        }
         if line.starts_with("EV ") {
             let Some(id) = line
                 .strip_prefix("EV ")
@@ -131,6 +147,35 @@ fn assert_meaning_invariants(pack: &str) -> Result<()> {
                 line.contains(" sha256="),
                 "expected EV line to include sha256= (got: {line})"
             );
+
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            let mut file: Option<String> = None;
+            let mut start_line: Option<usize> = None;
+            let mut end_line: Option<usize> = None;
+            let mut sha256: Option<String> = None;
+            for token in tokens {
+                if let Some(d_id) = token.strip_prefix("file=") {
+                    file = dict.get(d_id).cloned().or_else(|| Some(d_id.to_string()));
+                    continue;
+                }
+                if let Some(hash) = token.strip_prefix("sha256=") {
+                    sha256 = Some(hash.to_string());
+                    continue;
+                }
+                if token.starts_with('L') && token.contains("-L") {
+                    if let Some(rest) = token.strip_prefix('L') {
+                        if let Some((a, b)) = rest.split_once("-L") {
+                            start_line = a.parse::<usize>().ok();
+                            end_line = b.parse::<usize>().ok();
+                        }
+                    }
+                }
+            }
+            if let (Some(file), Some(start_line), Some(end_line), Some(sha256)) =
+                (file, start_line, end_line, sha256)
+            {
+                ev_items.push((file, start_line, end_line, sha256));
+            }
         }
     }
     anyhow::ensure!(!ev_ids.is_empty(), "expected at least one EV line");
@@ -164,12 +209,46 @@ fn assert_meaning_invariants(pack: &str) -> Result<()> {
         nba.contains("evidence_fetch"),
         "expected NBA to suggest evidence_fetch (got: {nba})"
     );
-    let Some(ev) = extract_ev_ref(nba) else {
-        anyhow::bail!("NBA missing ev= pointer: {nba}");
-    };
+    let payload = nba
+        .strip_prefix("NBA evidence_fetch ")
+        .context("expected NBA evidence_fetch payload")?;
+    #[derive(Debug, Deserialize)]
+    struct EvidenceFetchArgs {
+        items: Vec<EvidenceFetchItem>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct EvidenceFetchItem {
+        file: String,
+        start_line: usize,
+        end_line: usize,
+        #[serde(default)]
+        source_hash: Option<String>,
+    }
+    let args: EvidenceFetchArgs = serde_json::from_str(payload)
+        .with_context(|| format!("Invalid NBA evidence_fetch JSON payload: {payload}"))?;
     anyhow::ensure!(
-        ev_ids.contains(ev),
-        "NBA references missing EV ({ev}): {nba}"
+        !args.items.is_empty(),
+        "expected NBA evidence_fetch items to be non-empty"
+    );
+    anyhow::ensure!(
+        !ev_items.is_empty(),
+        "expected EV line parser to collect at least one evidence item"
+    );
+    let matches_any_ev = args.items.iter().any(|item| {
+        ev_items.iter().any(|(file, start, end, sha)| {
+            file == &item.file
+                && *start == item.start_line
+                && *end == item.end_line
+                && item
+                    .source_hash
+                    .as_deref()
+                    .map(|h| h == sha.as_str())
+                    .unwrap_or(true)
+        })
+    });
+    anyhow::ensure!(
+        matches_any_ev,
+        "NBA evidence_fetch payload does not match any EV line: {nba}"
     );
 
     Ok(())

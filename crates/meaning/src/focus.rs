@@ -6,10 +6,10 @@ use std::path::Path;
 
 use crate::common::{
     build_ev_file_index, classify_boundaries, classify_files, contract_kind, detect_brokers,
-    detect_channel_mentions, directory_key, extract_asyncapi_flows, extract_code_outline,
-    hash_and_count_lines, infer_actor_by_path, infer_flow_actor, is_artifact_scope, json_string,
-    shrink_pack, AnchorKind, BoundaryCandidate, BoundaryKind, BrokerCandidate, CognitivePack,
-    EvidenceItem, EvidenceKind, FlowEdge,
+    detect_channel_mentions, directory_key, evidence_fetch_payload_json, extract_asyncapi_flows,
+    extract_code_outline, hash_and_count_lines, infer_actor_by_path, infer_flow_actor,
+    is_artifact_scope, json_string, shrink_pack, AnchorKind, BoundaryCandidate, BoundaryKind,
+    BrokerCandidate, CognitivePack, EvidenceItem, EvidenceKind, FlowEdge,
 };
 use crate::model::{MeaningFocusBudget, MeaningFocusRequest, MeaningFocusResult};
 use crate::pack::{
@@ -560,13 +560,20 @@ pub async fn meaning_focus(
     }
 
     let nba = evidence
-        .first()
-        .map(|ev| {
-            let d = cp.dict_id(&ev.file);
-            format!(
-                "NBA evidence_fetch ev=ev0 file={d} L{}-L{}",
-                ev.start_line, ev.end_line,
-            )
+        .iter()
+        .enumerate()
+        .find_map(|(idx, ev)| {
+            let ev_id = format!("ev{idx}");
+            used_ev_ids.contains(&ev_id).then(|| {
+                // Keep NBA copy/paste runnable, but avoid blowing tight budgets by default.
+                // Include source_hash only when max_chars is comfortably above the default.
+                let source_hash = (max_chars >= 3_000)
+                    .then(|| ev.source_hash.as_deref())
+                    .flatten();
+                let payload =
+                    evidence_fetch_payload_json(&ev.file, ev.start_line, ev.end_line, source_hash);
+                format!("NBA evidence_fetch {payload}")
+            })
         })
         .unwrap_or_else(|| "NBA map".to_string());
     cp.push_line(&nba);
