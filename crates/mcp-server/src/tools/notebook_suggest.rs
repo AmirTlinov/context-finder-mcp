@@ -189,6 +189,7 @@ fn build_suggested_runbooks(
         sections: portal_sections,
         created_at: None,
         updated_at: None,
+        tags: Vec::new(),
     });
 
     let mut contracts_ci_ids: Vec<String> = Vec::new();
@@ -217,6 +218,7 @@ fn build_suggested_runbooks(
             }],
             created_at: None,
             updated_at: None,
+            tags: Vec::new(),
         });
     }
 
@@ -239,6 +241,7 @@ fn build_suggested_runbooks(
             }],
             created_at: None,
             updated_at: None,
+            tags: Vec::new(),
         });
     }
 

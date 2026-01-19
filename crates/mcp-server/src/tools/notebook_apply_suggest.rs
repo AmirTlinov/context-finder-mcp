@@ -10,7 +10,8 @@ use super::notebook_store::{
     notebook_paths_for_scope, resolve_repo_identity, save_notebook,
 };
 use super::notebook_types::{
-    AgentNotebook, NotebookAnchor, NotebookEvidencePointer, NotebookScope, RunbookSection,
+    AgentNotebook, AgentRunbook, NotebookAnchor, NotebookEvidencePointer, NotebookScope,
+    RunbookPolicy, RunbookSection,
 };
 use super::schemas::notebook_apply_suggest::{
     NotebookApplySuggestBackupPolicy, NotebookApplySuggestChange, NotebookApplySuggestChangeAction,
@@ -367,12 +368,13 @@ fn apply_suggestion_to_notebook(
                     counts.skipped_anchors += 1;
                     counts.skipped_anchor_ids.push(incoming.id.clone());
                     if counts.changes.len() < 50 {
+                        let hint = skip_change_hint(&reason);
                         counts.changes.push(NotebookApplySuggestChange {
                             kind: NotebookApplySuggestChangeKind::Anchor,
                             id: incoming.id.clone(),
                             action: NotebookApplySuggestChangeAction::Skip,
                             reason: Some(reason),
-                            hint: None,
+                            hint,
                         });
                     } else {
                         counts.changes_truncated = true;
@@ -400,7 +402,11 @@ fn apply_suggestion_to_notebook(
                     NotebookApplySuggestChangeAction::Create
                 },
                 reason: None,
-                hint: anchor_change_hint(existing_anchor, &anchor),
+                hint: if existed {
+                    anchor_change_hint(existing_anchor, &anchor)
+                } else {
+                    anchor_create_hint(&anchor)
+                },
             });
         } else {
             counts.changes_truncated = true;
@@ -417,13 +423,77 @@ fn apply_suggestion_to_notebook(
 
     // Runbooks
     for incoming in &suggestion.runbooks {
-        let existed = notebook.runbooks.iter().any(|rb| rb.id == incoming.id);
         let mut runbook = incoming.clone();
         validate_runbook(&notebook.anchors, &runbook)?;
+
+        let existing_runbook = notebook.runbooks.iter().find(|rb| rb.id == runbook.id);
+        let existed = existing_runbook.is_some();
+        let mut adopt_hint: Option<String> = None;
+        if let Some(existing) = existing_runbook {
+            if overwrite_policy == NotebookApplySuggestOverwritePolicy::Safe {
+                if let Some(reason) = should_skip_runbook(existing)? {
+                    match reason {
+                        NotebookApplySuggestSkipReason::NotManaged => {
+                            // Safe adoption: if the existing runbook matches the incoming
+                            // suggestion, treat it as managed by attaching a fingerprint tag.
+                            let existing_fp = compute_runbook_fingerprint(existing)?;
+                            let incoming_fp = compute_runbook_fingerprint(&runbook)?;
+                            if existing_fp == incoming_fp {
+                                adopt_hint = Some("adopted: now managed".to_string());
+                            } else {
+                                counts.skipped_runbooks += 1;
+                                counts.skipped_runbook_ids.push(incoming.id.clone());
+                                if counts.changes.len() < 50 {
+                                    let hint = skip_change_hint(&reason);
+                                    counts.changes.push(NotebookApplySuggestChange {
+                                        kind: NotebookApplySuggestChangeKind::Runbook,
+                                        id: incoming.id.clone(),
+                                        action: NotebookApplySuggestChangeAction::Skip,
+                                        reason: Some(reason),
+                                        hint,
+                                    });
+                                } else {
+                                    counts.changes_truncated = true;
+                                }
+                                continue;
+                            }
+                        }
+                        NotebookApplySuggestSkipReason::ManualModified => {
+                            counts.skipped_runbooks += 1;
+                            counts.skipped_runbook_ids.push(incoming.id.clone());
+                            if counts.changes.len() < 50 {
+                                let hint = skip_change_hint(&reason);
+                                counts.changes.push(NotebookApplySuggestChange {
+                                    kind: NotebookApplySuggestChangeKind::Runbook,
+                                    id: incoming.id.clone(),
+                                    action: NotebookApplySuggestChangeAction::Skip,
+                                    reason: Some(reason),
+                                    hint,
+                                });
+                            } else {
+                                counts.changes_truncated = true;
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut change_hint = if existed {
+            runbook_change_hint(existing_runbook, &runbook)
+        } else {
+            runbook_create_hint(&runbook)
+        };
+        if change_hint.is_none() {
+            change_hint = adopt_hint;
+        }
+
         if runbook.created_at.as_deref().unwrap_or("").is_empty() {
             runbook.created_at = Some(now.to_string());
         }
         runbook.updated_at = Some(now.to_string());
+        set_runbook_suggest_fp_tag(&mut runbook)?;
         upsert_runbook(&mut notebook.runbooks, runbook)?;
         touched_runbook_ids.insert(incoming.id.clone());
         if existed {
@@ -441,7 +511,7 @@ fn apply_suggestion_to_notebook(
                     NotebookApplySuggestChangeAction::Create
                 },
                 reason: None,
-                hint: None,
+                hint: change_hint,
             });
         } else {
             counts.changes_truncated = true;
@@ -533,6 +603,48 @@ fn set_suggest_fp_tag(anchor: &mut NotebookAnchor) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+struct RunbookFingerprint {
+    id: String,
+    title: String,
+    purpose: String,
+    policy: RunbookPolicy,
+    sections: Vec<RunbookSection>,
+    tags: Vec<String>,
+}
+
+fn compute_runbook_fingerprint(runbook: &AgentRunbook) -> Result<String> {
+    let mut tags: Vec<String> = runbook
+        .tags
+        .iter()
+        .filter(|t| !t.starts_with(SUGGEST_FP_TAG_PREFIX))
+        .cloned()
+        .collect();
+    tags.sort();
+
+    let fp = RunbookFingerprint {
+        id: runbook.id.clone(),
+        title: runbook.title.clone(),
+        purpose: runbook.purpose.clone(),
+        policy: runbook.policy.clone(),
+        sections: runbook.sections.clone(),
+        tags,
+    };
+
+    let bytes = serde_json::to_vec(&fp).context("serialize runbook fingerprint")?;
+    let digest = Sha256::digest(&bytes);
+    Ok(hex_encode_lower(&digest))
+}
+
+fn set_runbook_suggest_fp_tag(runbook: &mut AgentRunbook) -> Result<()> {
+    let fp = compute_runbook_fingerprint(runbook)?;
+    runbook
+        .tags
+        .retain(|t| !t.starts_with(SUGGEST_FP_TAG_PREFIX));
+    runbook.tags.push(format!("{SUGGEST_FP_TAG_PREFIX}{fp}"));
+    Ok(())
+}
+
 fn should_skip_anchor(existing: &NotebookAnchor) -> Result<Option<NotebookApplySuggestSkipReason>> {
     let Some(stored_fp) = extract_suggest_fp(&existing.tags) else {
         return Ok(Some(NotebookApplySuggestSkipReason::NotManaged));
@@ -542,6 +654,27 @@ fn should_skip_anchor(existing: &NotebookAnchor) -> Result<Option<NotebookApplyS
         return Ok(Some(NotebookApplySuggestSkipReason::ManualModified));
     }
     Ok(None)
+}
+
+fn should_skip_runbook(existing: &AgentRunbook) -> Result<Option<NotebookApplySuggestSkipReason>> {
+    let Some(stored_fp) = extract_suggest_fp(&existing.tags) else {
+        return Ok(Some(NotebookApplySuggestSkipReason::NotManaged));
+    };
+    let actual_fp = compute_runbook_fingerprint(existing)?;
+    if actual_fp != stored_fp {
+        return Ok(Some(NotebookApplySuggestSkipReason::ManualModified));
+    }
+    Ok(None)
+}
+
+fn skip_change_hint(reason: &NotebookApplySuggestSkipReason) -> Option<String> {
+    let hint = match reason {
+        NotebookApplySuggestSkipReason::NotManaged => "not managed (use overwrite_policy=force)",
+        NotebookApplySuggestSkipReason::ManualModified => {
+            "manual edits detected (use overwrite_policy=force)"
+        }
+    };
+    Some(hint.to_string())
 }
 
 fn truncate_hint(s: &str, max_len: usize) -> String {
@@ -604,6 +737,81 @@ fn anchor_change_hint(
         .map(|l| (&l.kind, l.value.as_str()));
     if existing_loc != incoming_loc {
         parts.push("locator: changed".to_string());
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("; "))
+    }
+}
+
+fn anchor_create_hint(anchor: &NotebookAnchor) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(format!("label: {}", truncate_hint(&anchor.label, 32)));
+    parts.push(format!("kind: {:?}", anchor.kind));
+    parts.push(format!("evidence: {}", anchor.evidence.len()));
+    if let Some(locator) = anchor.locator.as_ref() {
+        parts.push(format!(
+            "locator: {:?} {}",
+            locator.kind,
+            truncate_hint(&locator.value, 32)
+        ));
+    }
+    Some(parts.join("; "))
+}
+
+fn runbook_create_hint(runbook: &AgentRunbook) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(format!("title: {}", truncate_hint(&runbook.title, 32)));
+    if !runbook.purpose.trim().is_empty() {
+        parts.push("purpose: set".to_string());
+    }
+    parts.push(format!("sections: {}", runbook.sections.len()));
+    Some(parts.join("; "))
+}
+
+fn runbook_change_hint(existing: Option<&AgentRunbook>, incoming: &AgentRunbook) -> Option<String> {
+    let existing = existing?;
+    let mut parts: Vec<String> = Vec::new();
+    if existing.title != incoming.title {
+        parts.push(format!(
+            "title: {} -> {}",
+            truncate_hint(&existing.title, 32),
+            truncate_hint(&incoming.title, 32)
+        ));
+    }
+    if existing.purpose != incoming.purpose {
+        parts.push("purpose: changed".to_string());
+    }
+    if existing.policy.default_mode != incoming.policy.default_mode {
+        parts.push(format!(
+            "default_mode: {:?} -> {:?}",
+            existing.policy.default_mode, incoming.policy.default_mode
+        ));
+    }
+    if (existing.policy.noise_budget - incoming.policy.noise_budget).abs() > f32::EPSILON {
+        parts.push("noise_budget: changed".to_string());
+    }
+    if existing.policy.max_items_per_section != incoming.policy.max_items_per_section {
+        parts.push(format!(
+            "max_items_per_section: {} -> {}",
+            existing.policy.max_items_per_section, incoming.policy.max_items_per_section
+        ));
+    }
+
+    if existing.sections.len() != incoming.sections.len() {
+        parts.push(format!(
+            "sections: {} -> {}",
+            existing.sections.len(),
+            incoming.sections.len()
+        ));
+    } else {
+        let old = serde_json::to_vec(&existing.sections).ok();
+        let new = serde_json::to_vec(&incoming.sections).ok();
+        if old != new {
+            parts.push("sections: changed".to_string());
+        }
     }
 
     if parts.is_empty() {

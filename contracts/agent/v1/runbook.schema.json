@@ -29,7 +29,7 @@
       "items": { "$ref": "./runbook_section.schema.json" }
     },
     "created_at": { "type": "string" },
-    "updated_at": { "type": "string" }
+    "updated_at": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" }, "default": [] }
   }
 }
-
