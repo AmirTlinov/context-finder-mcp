@@ -809,6 +809,8 @@ Expected MCP tool names (primary):
 
 Legacy MCP tool names (still supported): `map`, `list_files`, `file_slice`, `grep_context`.
 
+Convenience aliases: `grep` (alias for `rg`), `find` (alias for `ls`).
+
 ## Development checks
 
 ```bash

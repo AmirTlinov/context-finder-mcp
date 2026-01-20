@@ -11,9 +11,11 @@
 //! - `help` - `.context` legend (A/R/N/M) and usage notes
 //! - `cat` - Bounded file window (root-locked)
 //! - `rg` - Regex matches with before/after context hunks
+//! - `grep` - Alias for `rg`
 //! - `file_slice` - Legacy name for `cat`
 //! - `grep_context` - Legacy name for `rg`
 //! - `ls` - Bounded file enumeration (glob/substring filter)
+//! - `find` - Alias for `ls`
 //! - `list_files` - Legacy name for `ls`
 //! - `text_search` - Bounded text search (corpus or FS fallback)
 //! - `search` - Semantic search using natural language

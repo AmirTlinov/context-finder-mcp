@@ -81,6 +81,10 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Bounded file enumeration (ls-like, glob/substring filter).",
     },
     ToolDescriptor {
+        name: "find",
+        summary: "Alias for `ls` (bounded file enumeration).",
+    },
+    ToolDescriptor {
         name: "list_files",
         summary: "Legacy name for `ls` (bounded file enumeration).",
     },
@@ -99,6 +103,10 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
     ToolDescriptor {
         name: "rg",
         summary: "Regex matches with before/after context hunks (rg-like).",
+    },
+    ToolDescriptor {
+        name: "grep",
+        summary: "Alias for `rg` (regex matches with before/after context hunks).",
     },
     ToolDescriptor {
         name: "grep_context",

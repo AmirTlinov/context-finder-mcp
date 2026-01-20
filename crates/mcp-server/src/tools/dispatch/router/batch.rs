@@ -87,9 +87,11 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::Cat => "cat",
         BatchToolName::FileSlice => "file_slice",
         BatchToolName::Ls => "ls",
+        BatchToolName::Find => "find",
         BatchToolName::ListFiles => "list_files",
         BatchToolName::TextSearch => "text_search",
         BatchToolName::Rg => "rg",
+        BatchToolName::Grep => "grep",
         BatchToolName::GrepContext => "grep_context",
         BatchToolName::Doctor => "doctor",
         BatchToolName::Search => "search",
@@ -192,6 +194,9 @@ async fn dispatch_tool(
             ))),
         },
         BatchToolName::Ls => typed_call!(ListFilesRequest, super::list_files::list_files, "ls"),
+        BatchToolName::Find => {
+            typed_call!(ListFilesRequest, super::list_files::list_files, "find")
+        }
         BatchToolName::ListFiles => {
             typed_call!(
                 ListFilesRequest,
@@ -208,6 +213,13 @@ async fn dispatch_tool(
         }
         BatchToolName::Rg => {
             typed_call!(GrepContextRequest, super::grep_context::grep_context, "rg")
+        }
+        BatchToolName::Grep => {
+            typed_call!(
+                GrepContextRequest,
+                super::grep_context::grep_context,
+                "grep"
+            )
         }
         BatchToolName::GrepContext => typed_call!(
             GrepContextRequest,

@@ -3566,6 +3566,19 @@ impl ContextFinderService {
         ))
     }
 
+    /// List project file paths (find-like).
+    #[tool(
+        description = "Alias for `ls`. List project file paths (relative to project root). Safe replacement for `find`/`ls` in agent loops; supports glob/substring filtering and bounded output."
+    )]
+    pub async fn find(
+        &self,
+        Parameters(request): Parameters<ListFilesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::list_files::list_files(self, request).await?,
+        ))
+    }
+
     /// List project files within the project root (safe file enumeration for agents).
     #[tool(
         description = "Legacy name for `ls`. List project file paths (relative to project root). Safe replacement for `ls/find/rg --files`; supports glob/substring filtering and bounded output."
@@ -3584,6 +3597,19 @@ impl ContextFinderService {
         description = "Search project files with a regex and return merged context hunks (N lines before/after). Designed to replace `rg -C/-A/-B` plus multiple cat calls with a single bounded response."
     )]
     pub async fn rg(
+        &self,
+        Parameters(request): Parameters<GrepContextRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::grep_context::grep_context(self, request).await?,
+        ))
+    }
+
+    /// Regex search with merged context hunks (grep-like).
+    #[tool(
+        description = "Alias for `rg`. Search project files with a regex and return merged context hunks (N lines before/after)."
+    )]
+    pub async fn grep(
         &self,
         Parameters(request): Parameters<GrepContextRequest>,
     ) -> Result<CallToolResult, McpError> {
