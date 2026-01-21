@@ -6,8 +6,14 @@ use std::cmp::max;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::{timeout, Duration};
 
 const INDEX_WATERMARK_FILE_NAME: &str = "watermark.json";
+
+// Watermark computation must be cheap and bounded. Some repos (dataset-heavy / many untracked files)
+// can make `git status` extremely slow; in those cases we fall back to a filesystem watermark.
+const GIT_HEAD_TIMEOUT: Duration = Duration::from_millis(1_000);
+const GIT_STATUS_TIMEOUT: Duration = Duration::from_millis(2_000);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedIndexWatermark {
@@ -67,14 +73,18 @@ pub(crate) struct GitState {
 }
 
 pub(crate) async fn probe_git_state(project_root: &Path) -> Option<GitState> {
-    let head = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(project_root)
-        .arg("rev-parse")
-        .arg("HEAD")
-        .output()
-        .await
-        .ok()?;
+    let head = timeout(
+        GIT_HEAD_TIMEOUT,
+        tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(project_root)
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
     if !head.status.success() {
         return None;
     }
@@ -83,15 +93,19 @@ pub(crate) async fn probe_git_state(project_root: &Path) -> Option<GitState> {
         return None;
     }
 
-    let status = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(project_root)
-        .arg("status")
-        .arg("--porcelain")
-        .arg("-z")
-        .output()
-        .await
-        .ok()?;
+    let status = timeout(
+        GIT_STATUS_TIMEOUT,
+        tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(project_root)
+            .arg("status")
+            .arg("--porcelain")
+            .arg("-z")
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
     if !status.status.success() {
         return None;
     }
