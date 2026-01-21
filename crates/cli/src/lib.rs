@@ -613,8 +613,7 @@ fn command_action_requires_embeddings(action: &CommandAction) -> bool {
     )
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+pub async fn main_entry() -> Result<()> {
     let mut cli = Cli::parse();
 
     if let Some(model) = &cli.embed_model {

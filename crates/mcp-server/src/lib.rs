@@ -186,8 +186,7 @@ fn background_bootstrap_enabled() -> bool {
     true
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+pub async fn main_entry() -> Result<()> {
     if let Some(action) = handle_cli_args() {
         match action {
             CliAction::Exit(code) => std::process::exit(code),

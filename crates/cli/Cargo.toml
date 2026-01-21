@@ -9,11 +9,11 @@ build = "build.rs"
 
 [[bin]]
 name = "context"
-path = "src/main.rs"
+path = "src/bin/context.rs"
 
 [[bin]]
 name = "context-finder"
-path = "src/main.rs"
+path = "src/bin/context_finder.rs"
 
 [dependencies]
 # Workspace dependencies

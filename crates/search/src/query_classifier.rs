@@ -245,7 +245,7 @@ mod tests {
             QueryType::Path
         );
         assert_eq!(
-            QueryClassifier::classify("crates/cli/src/main.rs error"),
+            QueryClassifier::classify("crates/cli/src/lib.rs error"),
             QueryType::Path
         );
     }

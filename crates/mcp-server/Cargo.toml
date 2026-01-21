@@ -9,11 +9,11 @@ description = "MCP server for Context - semantic code search for AI agents"
 
 [[bin]]
 name = "context-mcp"
-path = "src/main.rs"
+path = "src/bin/context_mcp.rs"
 
 [[bin]]
 name = "context-finder-mcp"
-path = "src/main.rs"
+path = "src/bin/context_finder_mcp.rs"
 
 [dependencies]
 # Workspace dependencies (reuse existing crates)

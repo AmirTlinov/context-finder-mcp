@@ -94,7 +94,7 @@ context-finder search "embedding templates" --path . -n 10 --with-graph --json -
 context-finder map . -d 2 --json --quiet
 
 # Symbols in a file (fast index-backed glob mode)
-context-finder list-symbols . --file "crates/cli/src/main.rs" --json --quiet
+context-finder list-symbols . --file "crates/cli/src/lib.rs" --json --quiet
 ```
 
 ## Quality evaluation (golden datasets)

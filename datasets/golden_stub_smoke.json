@@ -9,8 +9,8 @@
     },
     {
       "id": "cli_main",
-      "query": "crates/cli/src/main.rs",
-      "expected_paths": ["crates/cli/src/main.rs"]
+      "query": "crates/cli/src/lib.rs",
+      "expected_paths": ["crates/cli/src/lib.rs"]
     },
     {
       "id": "meaning_common",

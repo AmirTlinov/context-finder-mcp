@@ -9,8 +9,31 @@ cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
 
 tmp_json="$(mktemp)"
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- eval . \
-  --dataset datasets/golden_stub_smoke.json \
+tmp_repo="$(mktemp -d)"
+cleanup() {
+  rm -f "${tmp_json}"
+  rm -rf "${tmp_repo}"
+}
+trap cleanup EXIT
+
+# Make the eval step hermetic: do not depend on existing per-repo state under
+# `.agents/mcp/context/.context` or legacy `.context*` dirs from prior local runs.
+tar \
+  --exclude='./target' \
+  --exclude='./.git' \
+  --exclude='./.agents' \
+  --exclude='./.branchmind_rust' \
+  --exclude='./.context' \
+  --exclude='./.context-finder' \
+  --exclude='./.fastembed_cache' \
+  --exclude='./.deps' \
+  -cf - . | tar -C "${tmp_repo}" -xf -
+
+CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- index "${tmp_repo}" \
+  --force --json --quiet >/dev/null
+
+CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- eval "${tmp_repo}" \
+  --dataset "${tmp_repo}/datasets/golden_stub_smoke.json" \
   --json --quiet > "${tmp_json}"
 
 TMP_JSON="${tmp_json}" python3 - <<'PY'

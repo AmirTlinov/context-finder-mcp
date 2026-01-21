@@ -84,7 +84,7 @@ Primary code source:
 
 Primary code source:
 
-- `crates/cli/src/main.rs` (`serve_http`, `/command`, `/health`)
+- `crates/cli/src/lib.rs` (`serve_http`, `/command`, `/health`)
 
 ### gRPC API
 
