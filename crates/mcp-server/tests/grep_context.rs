@@ -51,7 +51,7 @@ fn tool_text(result: &CallToolResult) -> Result<&str> {
 }
 
 #[tokio::test]
-async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
+async fn rg_works_without_index_and_merges_ranges() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -91,7 +91,7 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "temp project unexpectedly has a context dir before grep_context"
+        "temp project unexpectedly has a context dir before rg"
     );
 
     let args = serde_json::json!({
@@ -109,18 +109,18 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling grep_context")??;
+    .context("timeout calling rg")??;
 
-    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    assert_ne!(result.is_error, Some(true), "rg returned error");
     let text = tool_text(&result)?;
     assert!(
         text.contains("pattern=TARGET"),
-        "expected grep_context summary to include pattern=TARGET"
+        "expected rg summary to include pattern=TARGET"
     );
     assert!(
         text.contains("R: src/a.txt:3"),
@@ -137,7 +137,7 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "grep_context created project context side effects"
+        "rg created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -145,7 +145,7 @@ async fn grep_context_works_without_index_and_merges_ranges() -> Result<()> {
 }
 
 #[tokio::test]
-async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation() -> Result<()> {
+async fn rg_can_be_case_insensitive_and_reports_max_chars_truncation() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -175,7 +175,7 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "temp project unexpectedly has a context dir before grep_context"
+        "temp project unexpectedly has a context dir before rg"
     );
 
     let args = serde_json::json!({
@@ -193,14 +193,14 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling grep_context")??;
+    .context("timeout calling rg")??;
 
-    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    assert_ne!(result.is_error, Some(true), "rg returned error");
     let text = tool_text(&result)?;
     assert!(
         text.contains("TARGETTARGETTARGETTARGET"),
@@ -216,7 +216,7 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "grep_context created project context side effects"
+        "rg created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -224,7 +224,7 @@ async fn grep_context_can_be_case_insensitive_and_reports_max_chars_truncation()
 }
 
 #[tokio::test]
-async fn grep_context_budget_trimming_keeps_match_line_visible() -> Result<()> {
+async fn rg_budget_trimming_keeps_match_line_visible() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -271,14 +271,14 @@ async fn grep_context_budget_trimming_keeps_match_line_visible() -> Result<()> {
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling grep_context")??;
+    .context("timeout calling rg")??;
 
-    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    assert_ne!(result.is_error, Some(true), "rg returned error");
     let text = tool_text(&result)?;
     assert!(
         text.contains("line 150: TARGET"),
@@ -291,7 +291,7 @@ async fn grep_context_budget_trimming_keeps_match_line_visible() -> Result<()> {
 }
 
 #[tokio::test]
-async fn grep_context_minimal_small_budget_still_returns_payload_hunks() -> Result<()> {
+async fn rg_minimal_small_budget_still_returns_payload_hunks() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -333,18 +333,18 @@ async fn grep_context_minimal_small_budget_still_returns_payload_hunks() -> Resu
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling grep_context")??;
+    .context("timeout calling rg")??;
 
-    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    assert_ne!(result.is_error, Some(true), "rg returned error");
     let text = tool_text(&result)?;
     assert!(
         text.contains("pattern=TARGET"),
-        "expected grep_context summary to include pattern=TARGET"
+        "expected rg summary to include pattern=TARGET"
     );
     assert!(text.contains("TARGET"), "expected match text in output");
     assert!(text.contains("\nM: "), "expected truncation cursor (M:)");
@@ -354,7 +354,7 @@ async fn grep_context_minimal_small_budget_still_returns_payload_hunks() -> Resu
 }
 
 #[tokio::test]
-async fn grep_context_supports_literal_mode_and_cursor_only_continuation() -> Result<()> {
+async fn rg_supports_literal_mode_and_cursor_only_continuation() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -391,14 +391,14 @@ async fn grep_context_supports_literal_mode_and_cursor_only_continuation() -> Re
     let first = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: first_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling grep_context")??;
+    .context("timeout calling rg")??;
 
-    assert_ne!(first.is_error, Some(true), "grep_context returned error");
+    assert_ne!(first.is_error, Some(true), "rg returned error");
     let first_text = tool_text(&first)?;
     assert!(first_text.contains("1:* a+b"));
     let cursor = first_text
@@ -413,7 +413,7 @@ async fn grep_context_supports_literal_mode_and_cursor_only_continuation() -> Re
     let second = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: serde_json::json!({
                 "path": root.to_string_lossy(),
                 "cursor": cursor,
@@ -423,11 +423,11 @@ async fn grep_context_supports_literal_mode_and_cursor_only_continuation() -> Re
         }),
     )
     .await
-    .context("timeout calling grep_context (cursor-only)")??;
+    .context("timeout calling rg (cursor-only)")??;
     assert_ne!(
         second.is_error,
         Some(true),
-        "grep_context returned error (cursor-only)"
+        "rg returned error (cursor-only)"
     );
     let second_text = tool_text(&second)?;
     assert!(
@@ -441,7 +441,7 @@ async fn grep_context_supports_literal_mode_and_cursor_only_continuation() -> Re
 }
 
 #[tokio::test]
-async fn grep_context_tight_budget_max_chars_truncation_still_returns_cursor() -> Result<()> {
+async fn rg_tight_budget_max_chars_truncation_still_returns_cursor() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -484,14 +484,14 @@ async fn grep_context_tight_budget_max_chars_truncation_still_returns_cursor() -
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling grep_context")??;
+    .context("timeout calling rg")??;
 
-    assert_ne!(result.is_error, Some(true), "grep_context returned error");
+    assert_ne!(result.is_error, Some(true), "rg returned error");
     assert!(
         tool_text(&result)?.contains("TARGET"),
         "expected at least one match under tight budget"

@@ -12,17 +12,17 @@ use super::response_mode::ResponseMode;
 pub enum BatchToolName {
     Capabilities,
     Help,
+    #[serde(alias = "map")]
     Tree,
-    Map,
+    #[serde(alias = "file_slice")]
     Cat,
-    FileSlice,
+    #[serde(alias = "list_files")]
     Ls,
     Find,
-    ListFiles,
     TextSearch,
+    #[serde(alias = "grep_context")]
     Rg,
     Grep,
-    GrepContext,
     Doctor,
     Search,
     Context,

@@ -12,11 +12,8 @@
 //! - `cat` - Bounded file window (root-locked)
 //! - `rg` - Regex matches with before/after context hunks
 //! - `grep` - Alias for `rg`
-//! - `file_slice` - Legacy name for `cat`
-//! - `grep_context` - Legacy name for `rg`
 //! - `ls` - Bounded file enumeration (glob/substring filter)
 //! - `find` - Alias for `ls`
-//! - `list_files` - Legacy name for `ls`
 //! - `text_search` - Bounded text search (corpus or FS fallback)
 //! - `search` - Semantic search using natural language
 //! - `context` - Search with automatic graph-based context (calls, dependencies)
@@ -25,7 +22,6 @@
 //! - `explain` - Symbol details, deps, dependents, docs
 //! - `overview` - Architecture snapshot (layers, entry points)
 //! - `tree` - Project structure overview (directories, files, top symbols)
-//! - `map` - Legacy name for `tree`
 //! - `doctor` - Diagnose model/GPU/index configuration
 //! - `notebook_pack` - Agent notebook: list durable anchors + runbooks (cross-session)
 //! - `notebook_edit` - Agent notebook: upsert/delete anchors + runbooks (explicit writes)

@@ -83,16 +83,12 @@ fn batch_tool_name_label(tool: BatchToolName) -> &'static str {
         BatchToolName::Capabilities => "capabilities",
         BatchToolName::Help => "help",
         BatchToolName::Tree => "tree",
-        BatchToolName::Map => "map",
         BatchToolName::Cat => "cat",
-        BatchToolName::FileSlice => "file_slice",
         BatchToolName::Ls => "ls",
         BatchToolName::Find => "find",
-        BatchToolName::ListFiles => "list_files",
         BatchToolName::TextSearch => "text_search",
         BatchToolName::Rg => "rg",
         BatchToolName::Grep => "grep",
-        BatchToolName::GrepContext => "grep_context",
         BatchToolName::Doctor => "doctor",
         BatchToolName::Search => "search",
         BatchToolName::Context => "context",
@@ -182,27 +178,13 @@ async fn dispatch_tool(
         ),
         BatchToolName::Help => typed_call!(HelpRequest, super::help::help, "help"),
         BatchToolName::Tree => typed_call!(MapRequest, super::map::map, "tree"),
-        BatchToolName::Map => typed_call!(MapRequest, super::map::map, "map"),
         BatchToolName::Cat => match serde_json::from_value::<FileSliceRequest>(input) {
             Ok(req) => super::file_slice::file_slice(service, &req).await,
             Err(err) => Ok(invalid_request(format!("Invalid input for cat: {err}"))),
         },
-        BatchToolName::FileSlice => match serde_json::from_value::<FileSliceRequest>(input) {
-            Ok(req) => super::file_slice::file_slice(service, &req).await,
-            Err(err) => Ok(invalid_request(format!(
-                "Invalid input for file_slice: {err}"
-            ))),
-        },
         BatchToolName::Ls => typed_call!(ListFilesRequest, super::list_files::list_files, "ls"),
         BatchToolName::Find => {
             typed_call!(ListFilesRequest, super::list_files::list_files, "find")
-        }
-        BatchToolName::ListFiles => {
-            typed_call!(
-                ListFilesRequest,
-                super::list_files::list_files,
-                "list_files"
-            )
         }
         BatchToolName::TextSearch => {
             typed_call!(
@@ -221,11 +203,6 @@ async fn dispatch_tool(
                 "grep"
             )
         }
-        BatchToolName::GrepContext => typed_call!(
-            GrepContextRequest,
-            super::grep_context::grep_context,
-            "grep_context"
-        ),
         BatchToolName::Doctor => typed_call!(DoctorRequest, super::doctor::doctor, "doctor"),
         BatchToolName::Search => typed_call!(SearchRequest, super::search::search, "search"),
         BatchToolName::Context => typed_call!(ContextRequest, super::context::context, "context"),

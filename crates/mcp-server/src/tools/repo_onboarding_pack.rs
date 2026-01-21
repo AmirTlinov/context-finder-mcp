@@ -58,7 +58,7 @@ fn build_next_actions(root_display: &str, has_corpus: bool) -> Vec<RepoOnboardin
     }
 
     next_actions.push(RepoOnboardingNextAction {
-        tool: "grep_context".to_string(),
+        tool: "rg".to_string(),
         args: serde_json::json!({
             "path": root_display,
             "pattern": "TODO|FIXME",
@@ -75,8 +75,8 @@ fn build_next_actions(root_display: &str, has_corpus: bool) -> Vec<RepoOnboardin
             "path": root_display,
             "max_chars": 20000,
             "items": [
-                { "id": "docs", "tool": "list_files", "input": { "file_pattern": "*.md", "limit": 200 } },
-                { "id": "read", "tool": "file_slice", "input": { "file": { "$ref": "#/items/docs/data/files/0" }, "start_line": 1, "max_lines": 200 } }
+                { "id": "docs", "tool": "ls", "input": { "file_pattern": "*.md", "limit": 200 } },
+                { "id": "read", "tool": "cat", "input": { "file": { "$ref": "#/items/docs/data/files/0" }, "start_line": 1, "max_lines": 200 } }
             ]
         }),
         reason: "Example: chain tools in one call with `$ref` dependencies (batch v2).".to_string(),

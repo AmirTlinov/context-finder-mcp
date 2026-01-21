@@ -55,7 +55,9 @@ pub(in crate::tools::dispatch) async fn list_files(
             .filter(|s| !s.is_empty())
         {
             if let Ok(decoded) = decode_list_files_cursor(cursor) {
-                if decoded.v == CURSOR_VERSION && decoded.tool == "list_files" {
+                if decoded.v == CURSOR_VERSION
+                    && (decoded.tool == "ls" || decoded.tool == "list_files")
+                {
                     if let Some(root) = decoded.root.as_deref().map(str::trim) {
                         if !root.is_empty() {
                             let session_root_display =
@@ -134,9 +136,10 @@ pub(in crate::tools::dispatch) async fn list_files(
                     ));
                 }
             };
-            if decoded.v != CURSOR_VERSION || decoded.tool != "list_files" {
+            if decoded.v != CURSOR_VERSION || (decoded.tool != "ls" && decoded.tool != "list_files")
+            {
                 return Ok(invalid_cursor_with_meta(
-                    "Invalid cursor: wrong tool",
+                    "Invalid cursor: wrong tool (expected ls)",
                     meta_for_output.clone(),
                 ));
             }

@@ -69,12 +69,12 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
     for expected in [
         "capabilities",
         "help",
-        "map",
+        "tree",
         "repo_onboarding_pack",
         "read_pack",
-        "file_slice",
-        "list_files",
-        "grep_context",
+        "cat",
+        "ls",
+        "rg",
         "batch",
         "doctor",
         "search",
@@ -112,43 +112,43 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "temp project unexpectedly has a context dir before map"
+        "temp project unexpectedly has a context dir before tree"
     );
 
-    let map_args = serde_json::json!({
+    let tree_args = serde_json::json!({
         "path": root.to_string_lossy(),
         "depth": 2,
         "limit": 20,
         "response_mode": "facts",
     });
-    let map_result = tokio::time::timeout(
+    let tree_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "map".into(),
-            arguments: map_args.as_object().cloned(),
+            name: "tree".into(),
+            arguments: tree_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling map")??;
+    .context("timeout calling tree")??;
 
-    assert_ne!(map_result.is_error, Some(true), "map returned error");
-    let map_text = map_result
+    assert_ne!(tree_result.is_error, Some(true), "tree returned error");
+    let tree_text = tree_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("map missing text output")?;
-    assert!(map_text.contains("map:"), "map output missing summary");
+        .context("tree missing text output")?;
+    assert!(tree_text.contains("tree:"), "tree output missing summary");
     assert!(
-        map_text.contains("src"),
-        "expected src directory to appear in map output"
+        tree_text.contains("src"),
+        "expected src directory to appear in tree output"
     );
 
     assert!(
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "map created project context side effects"
+        "tree created project context side effects"
     );
 
     let doctor_args =
@@ -244,7 +244,7 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         "path": root.to_string_lossy(),
         "max_chars": 20000,
         "items": [
-            { "id": "map", "tool": "map", "input": { "depth": 2, "limit": 20 } },
+            { "id": "tree", "tool": "tree", "input": { "depth": 2, "limit": 20 } },
             { "id": "doctor", "tool": "doctor", "input": {} }
         ]
     });
@@ -275,8 +275,8 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
         "batch output missing summary"
     );
     assert!(
-        batch_text.contains("item map: tool=map status=ok"),
-        "batch output missing map item status"
+        batch_text.contains("item tree: tool=tree status=ok"),
+        "batch output missing tree item status"
     );
     assert!(
         batch_text.contains("item doctor: tool=doctor status=ok"),
@@ -363,7 +363,7 @@ async fn mcp_batch_truncates_when_budget_is_too_small() -> Result<()> {
 }
 
 #[tokio::test]
-async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
+async fn mcp_cat_reads_bounded_lines_and_rejects_escape() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -389,7 +389,7 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "temp project unexpectedly has a context dir before file_slice"
+        "temp project unexpectedly has a context dir before cat"
     );
 
     let slice_args = serde_json::json!({
@@ -402,24 +402,20 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
     let slice_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "file_slice".into(),
+            name: "cat".into(),
             arguments: slice_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling file_slice")??;
+    .context("timeout calling cat")??;
 
-    assert_ne!(
-        slice_result.is_error,
-        Some(true),
-        "file_slice returned error"
-    );
+    assert_ne!(slice_result.is_error, Some(true), "cat returned error");
     let slice_text = slice_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("file_slice missing text output")?;
+        .context("cat missing text output")?;
     assert!(slice_text.contains("R: src/main.rs:2"));
     assert!(slice_text.contains("line-2"));
     assert!(slice_text.contains("line-3"));
@@ -432,7 +428,7 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "file_slice created project context side effects"
+        "cat created project context side effects"
     );
 
     let outside_parent = root.parent().context("temp root has no parent")?;
@@ -455,17 +451,17 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
     let escape_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "file_slice".into(),
+            name: "cat".into(),
             arguments: escape_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling file_slice (escape)")??;
+    .context("timeout calling cat (escape)")??;
 
     assert_eq!(
         escape_result.is_error,
         Some(true),
-        "file_slice escape should error"
+        "cat escape should error"
     );
     let escape_text = escape_result
         .content
@@ -483,7 +479,7 @@ async fn mcp_file_slice_reads_bounded_lines_and_rejects_escape() -> Result<()> {
 }
 
 #[tokio::test]
-async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
+async fn mcp_ls_lists_paths_and_is_bounded() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -511,7 +507,7 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "temp project unexpectedly has a context dir before list_files"
+        "temp project unexpectedly has a context dir before ls"
     );
 
     let list_args = serde_json::json!({
@@ -523,28 +519,24 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
     let list_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "list_files".into(),
+            name: "ls".into(),
             arguments: list_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling list_files")??;
+    .context("timeout calling ls")??;
 
-    assert_ne!(
-        list_result.is_error,
-        Some(true),
-        "list_files returned error"
-    );
+    assert_ne!(list_result.is_error, Some(true), "ls returned error");
     let list_text = list_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("list_files missing text output")?;
+        .context("ls missing text output")?;
     assert!(list_text.contains("src/main.rs"));
     assert!(
         !list_text.contains("\nM: "),
-        "did not expect truncation cursor for list_files"
+        "did not expect truncation cursor for ls"
     );
 
     let limited_args = serde_json::json!({
@@ -555,23 +547,23 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
     let limited_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "list_files".into(),
+            name: "ls".into(),
             arguments: limited_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling list_files (limited)")??;
+    .context("timeout calling ls (limited)")??;
     assert_ne!(
         limited_result.is_error,
         Some(true),
-        "list_files (limited) returned error"
+        "ls (limited) returned error"
     );
     let limited_text = limited_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("list_files (limited) missing text output")?;
+        .context("ls (limited) missing text output")?;
     assert!(
         limited_text.contains("\nM: "),
         "expected truncation cursor (M:)"
@@ -581,7 +573,7 @@ async fn mcp_list_files_lists_paths_and_is_bounded() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "list_files created project context side effects"
+        "ls created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

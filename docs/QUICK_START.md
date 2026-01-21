@@ -403,13 +403,13 @@ Safety note (multi-agent): once a session has an established default root, `read
   "max_chars": 6000
 }
 
-// Read a file window (internally calls cat; legacy: file_slice)
+// Read a file window (internally calls cat)
 {
   "path": "/path/to/project",
   "intent": "file",
   "file": "src/lib.rs",
-  "offset": 120,
-  "limit": 80,
+  "start_line": 120,
+  "max_lines": 80,
   "max_chars": 2000,
   "response_mode": "facts",
   "timeout_ms": 12000
@@ -439,7 +439,7 @@ Semantic context pack tool (`context_pack`; bounded output; supports path filter
 }
 ```
 
-Regex context reads tool (`rg`; grep `-B/-A/-C` style, merged hunks, bounded output; legacy: `grep_context`):
+Regex context reads tool (`rg`; grep `-B/-A/-C` style, merged hunks, bounded output):
 
 ```jsonc
 {
@@ -462,13 +462,13 @@ Regex context reads tool (`rg`; grep `-B/-A/-C` style, merged hunks, bounded out
 Pagination (cursor): when the `.context` output includes an `M: <cursor>` line near the end, call it again with `cursor: "<cursor>"`.
 In `response_mode: "full"`, tools include extra diagnostics; error responses may also include compact `next:` hints.
 
-Cursor tokens are opaque and bound to the original query/options (changing them will be rejected).
+Cursor tokens are opaque and bound to the original query identity (file/pattern/etc). Budget knobs (e.g. `max_chars`, `limit`, `max_lines`) can be adjusted on continuation.
 For some tight-loop tools (notably `cat` and `rg`), the cursor contains enough info for cursor-only continuation — you do not need to resend the original options.
 
 Most *semantic* MCP tools default to `response_mode: "facts"` and include `meta.index_state` (best-effort) on both success and error responses to expose index freshness.
 Some tight-loop read tools (`cat`, `rg`, `ls`, `text_search`, `tree`) default to `response_mode: "minimal"` to keep output almost entirely project content.
 For these tools, `response_mode: "facts"` stays low-noise by design (it strips helper guidance but still avoids heavy diagnostics). Use `response_mode: "full"` when you explicitly want diagnostics / freshness details (including `meta.index_state`).
-For example, `tree` (legacy: `map`) in `"minimal"` returns mostly directory paths (low noise), while `"full"` can include richer diagnostics.
+For example, `tree` in `"minimal"` returns mostly directory paths (low noise), while `"full"` can include richer diagnostics.
 Use `response_mode: "minimal"` for the smallest possible response. Use `response_mode: "full"` when debugging tool behavior or investigating index freshness.
 For semantic tools (`context_pack`, `context`, `impact`, `trace`, `explain`, `overview`),
 `auto_index` defaults to true; use `auto_index=false` or `auto_index_budget_ms` to control the
@@ -528,7 +528,7 @@ If the response is truncated, continue with `cursor` (cursor-only continuation):
 }
 ```
 
-List files tool (`ls`; legacy: `list_files`) (bounded file enumeration; designed to replace `ls/find/rg --files` in agent loops):
+List files tool (`ls`) (bounded file enumeration; designed to replace `ls/find/rg --files` in agent loops):
 
 ```jsonc
 {
@@ -806,8 +806,6 @@ Expected MCP tool names (primary):
 - `cat`, `ls`, `rg`, `batch`
 - `doctor`, `search`, `context`, `context_pack`
 - `text_search`, `explain`, `impact`, `trace`, `overview`
-
-Legacy MCP tool names (still supported): `map`, `list_files`, `file_slice`, `grep_context`.
 
 Convenience aliases: `grep` (alias for `rg`), `find` (alias for `ls`).
 

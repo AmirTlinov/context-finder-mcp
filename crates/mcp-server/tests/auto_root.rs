@@ -38,7 +38,7 @@ fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
 }
 
 #[tokio::test]
-async fn list_files_uses_env_root_when_path_missing() -> Result<()> {
+async fn ls_uses_env_root_when_path_missing() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let tmp = tempfile::tempdir().context("tempdir")?;
@@ -67,20 +67,20 @@ async fn list_files_uses_env_root_when_path_missing() -> Result<()> {
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "list_files".into(),
+            name: "ls".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling list_files")??;
+    .context("timeout calling ls")??;
 
-    assert_ne!(result.is_error, Some(true), "list_files returned error");
+    assert_ne!(result.is_error, Some(true), "ls returned error");
     let text = result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("list_files missing text output")?;
+        .context("ls missing text output")?;
     assert!(
         text.contains("src/a.rs"),
         "expected src/a.rs in list_files output"

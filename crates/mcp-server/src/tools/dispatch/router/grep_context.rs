@@ -254,7 +254,7 @@ fn decode_resume_cursor(
 
     let decoded: GrepContextCursorV1 =
         decode_cursor(cursor).map_err(|err| format!("Invalid cursor: {err}"))?;
-    if decoded.v != CURSOR_VERSION || decoded.tool != "grep_context" {
+    if decoded.v != CURSOR_VERSION || (decoded.tool != "rg" && decoded.tool != "grep_context") {
         return Err("Invalid cursor: wrong tool".to_string());
     }
     if let Some(hash) = decoded.root_hash {
@@ -330,7 +330,9 @@ pub(in crate::tools::dispatch) async fn grep_context(
             .filter(|s| !s.is_empty())
         {
             if let Ok(decoded) = decode_cursor::<GrepContextCursorV1>(cursor) {
-                if decoded.v == CURSOR_VERSION && decoded.tool == "grep_context" {
+                if decoded.v == CURSOR_VERSION
+                    && (decoded.tool == "rg" || decoded.tool == "grep_context")
+                {
                     if let Some(root) = decoded.root.as_deref().map(str::trim) {
                         if !root.is_empty() {
                             let session_root_display =
@@ -408,7 +410,7 @@ pub(in crate::tools::dispatch) async fn grep_context(
     };
 
     if let Some(decoded) = cursor_payload.as_ref() {
-        if decoded.v != CURSOR_VERSION || decoded.tool != "grep_context" {
+        if decoded.v != CURSOR_VERSION || (decoded.tool != "rg" && decoded.tool != "grep_context") {
             return Ok(invalid_cursor_with_meta(
                 "Invalid cursor: wrong tool",
                 meta_for_output.clone(),
@@ -736,7 +738,7 @@ pub(in crate::tools::dispatch) async fn grep_context(
         if let Some(last_hunk) = result.hunks.last() {
             let synthesized = GrepContextCursorV1 {
                 v: CURSOR_VERSION,
-                tool: "grep_context".to_string(),
+                tool: "rg".to_string(),
                 root: Some(root_display.clone()),
                 root_hash: Some(cursor_fingerprint(&root_display)),
                 pattern: pattern.clone(),

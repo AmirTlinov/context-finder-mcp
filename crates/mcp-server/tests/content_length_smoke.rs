@@ -162,8 +162,8 @@ async fn mcp_supports_content_length_framing() -> Result<()> {
     assert!(
         tools
             .iter()
-            .any(|t| t.get("name").and_then(Value::as_str) == Some("map")),
-        "tools/list missing 'map'"
+            .any(|t| t.get("name").and_then(Value::as_str) == Some("tree")),
+        "tools/list missing 'tree'"
     );
     assert!(
         tools
@@ -448,13 +448,13 @@ async fn shared_backend_proxy_supports_content_length_and_path_injection() -> Re
         });
         send_frame(&mut stdin, &initialized).await?;
 
-        // tools/call: file_slice without path (proxy should inject from cwd)
+        // tools/call: cat without path (proxy should inject from cwd)
         let call_req = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
             "params": {
-                "name": "file_slice",
+                "name": "cat",
                 "arguments": {
                     "file": "README.md",
                     "max_lines": 1,

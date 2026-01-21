@@ -87,23 +87,23 @@ async fn cursor_alias_survives_process_restart() -> Result<()> {
     let resp_a = tokio::time::timeout(
         Duration::from_secs(10),
         service_a.call_tool(CallToolRequestParam {
-            name: "file_slice".into(),
+            name: "cat".into(),
             arguments: args_a.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling file_slice on server A")??;
+    .context("timeout calling cat on server A")??;
 
     let text_a = resp_a
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("missing file_slice text output from server A")?;
+        .context("missing cat text output from server A")?;
     let cursor = text_a
         .lines()
         .find_map(|line| line.strip_prefix("M: ").map(str::to_string))
-        .context("missing next_cursor (M:) line in file_slice response A")?;
+        .context("missing next_cursor (M:) line in cat response A")?;
     assert!(
         cursor.starts_with("cfcs2:"),
         "expected compact cursor alias, got: {cursor:?}"
@@ -122,19 +122,19 @@ async fn cursor_alias_survives_process_restart() -> Result<()> {
     let resp_b = tokio::time::timeout(
         Duration::from_secs(10),
         service_b.call_tool(CallToolRequestParam {
-            name: "file_slice".into(),
+            name: "cat".into(),
             arguments: args_b.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling file_slice on server B")??;
+    .context("timeout calling cat on server B")??;
 
     let text_b = resp_b
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("missing file_slice text output from server B")?;
+        .context("missing cat text output from server B")?;
     assert!(
         text_b.contains("two"),
         "expected second page to include \"two\""
@@ -179,24 +179,24 @@ async fn cursor_aliases_do_not_collide_across_concurrent_servers() -> Result<()>
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             svc.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice")?
-        .context("call file_slice")?;
+        .context("timeout calling cat")?
+        .context("call cat")?;
 
         let text = resp
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice text output")?;
+            .context("missing cat text output")?;
         let cursor = text
             .lines()
             .find_map(|line| line.strip_prefix("M: ").map(str::to_string))
-            .context("missing next_cursor (M:) line in file_slice output")?;
+            .context("missing next_cursor (M:) line in cat output")?;
         svc.cancel().await.context("shutdown mcp service")?;
         Ok::<String, anyhow::Error>(cursor)
     };
@@ -235,20 +235,20 @@ async fn cursor_aliases_do_not_collide_across_concurrent_servers() -> Result<()>
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             service_c.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .with_context(|| format!("timeout calling file_slice on server C for {label}"))?
-        .with_context(|| format!("call file_slice on server C for {label}"))?;
+        .with_context(|| format!("timeout calling cat on server C for {label}"))?
+        .with_context(|| format!("call cat on server C for {label}"))?;
 
         let text = resp
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice text output from server C")?;
+            .context("missing cat text output from server C")?;
         assert!(
             text.contains(expected),
             "expected {label} continuation to include {expected:?}, got: {text}"
@@ -274,7 +274,7 @@ async fn cursor_alias_signature_mismatch_fails_closed() -> Result<()> {
     let resp_a = tokio::time::timeout(
         Duration::from_secs(10),
         service_a.call_tool(CallToolRequestParam {
-            name: "file_slice".into(),
+            name: "cat".into(),
             arguments: serde_json::json!({
                 "path": root.to_string_lossy(),
                 "file": "README.md",
@@ -287,18 +287,18 @@ async fn cursor_alias_signature_mismatch_fails_closed() -> Result<()> {
         }),
     )
     .await
-    .context("timeout calling file_slice on server A")??;
+    .context("timeout calling cat on server A")??;
     let text_a = resp_a
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("missing file_slice text output from server A")?;
+        .context("missing cat text output from server A")?;
     let cursor = text_a
         .lines()
         .find_map(|line| line.strip_prefix("M: ").map(str::trim))
         .map(str::to_string)
-        .context("missing next_cursor (M:) line in file_slice response A")?;
+        .context("missing next_cursor (M:) line in cat response A")?;
     assert!(
         cursor.starts_with("cfcs2:"),
         "expected cfcs2 cursor alias, got: {cursor:?}"
@@ -350,7 +350,7 @@ async fn cursor_alias_signature_mismatch_fails_closed() -> Result<()> {
     let resp_b = tokio::time::timeout(
         Duration::from_secs(10),
         service_b.call_tool(CallToolRequestParam {
-            name: "file_slice".into(),
+            name: "cat".into(),
             arguments: serde_json::json!({
                 "path": root.to_string_lossy(),
                 "cursor": cursor,
@@ -362,7 +362,7 @@ async fn cursor_alias_signature_mismatch_fails_closed() -> Result<()> {
         }),
     )
     .await
-    .context("timeout calling file_slice on server B")??;
+    .context("timeout calling cat on server B")??;
 
     assert_eq!(
         resp_b.is_error,

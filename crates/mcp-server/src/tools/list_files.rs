@@ -116,7 +116,7 @@ pub(super) async fn compute_list_files_result(
             .unwrap_or_default();
         next_cursor = Some(encode_cursor(&ListFilesCursorV1 {
             v: CURSOR_VERSION,
-            tool: "list_files".to_string(),
+            tool: "ls".to_string(),
             root: Some(root_display.to_string()),
             root_hash: Some(cursor_fingerprint(root_display)),
             file_pattern: file_pattern.map(str::to_string),

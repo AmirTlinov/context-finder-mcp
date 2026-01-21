@@ -45,11 +45,8 @@ pub(super) fn prepare_item_input(
         tool,
         BatchToolName::ContextPack
             | BatchToolName::Cat
-            | BatchToolName::FileSlice
             | BatchToolName::Ls
             | BatchToolName::Find
-            | BatchToolName::ListFiles
-            | BatchToolName::GrepContext
             | BatchToolName::Rg
             | BatchToolName::Grep
             | BatchToolName::NotebookPack

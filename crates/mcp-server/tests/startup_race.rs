@@ -40,7 +40,7 @@ fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
     anyhow::bail!("failed to locate context-finder-mcp binary")
 }
 
-async fn call_file_slice_once(
+async fn call_cat_once(
     service: &RunningService<RoleClient, impl rmcp::service::Service<RoleClient>>,
     max_chars: usize,
 ) -> Result<()> {
@@ -52,25 +52,22 @@ async fn call_file_slice_once(
     let resp = tokio::time::timeout(
         Duration::from_secs(8),
         service.call_tool(CallToolRequestParam {
-            name: "file_slice".into(),
+            name: "cat".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling file_slice")?
-    .context("call file_slice")?;
+    .context("timeout calling cat")?
+    .context("call cat")?;
 
-    anyhow::ensure!(
-        resp.is_error != Some(true),
-        "file_slice returned error: {resp:?}"
-    );
+    anyhow::ensure!(resp.is_error != Some(true), "cat returned error: {resp:?}");
 
     let text = resp
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("file_slice missing text output")?;
+        .context("cat missing text output")?;
     assert!(text.contains("\nhello\n"), "expected to read first line");
     assert!(!text.contains("world"), "expected max_lines=1");
 
@@ -113,7 +110,7 @@ async fn shared_backend_concurrent_startup_is_bounded() -> Result<()> {
                 .context("timeout starting shared-backend MCP proxy")?
                 .context("start shared-backend MCP proxy")?;
 
-            call_file_slice_once(&service, 2048).await?;
+            call_cat_once(&service, 2048).await?;
             service.cancel().await.context("shutdown proxy service")?;
             Ok::<(), anyhow::Error>(())
         }));

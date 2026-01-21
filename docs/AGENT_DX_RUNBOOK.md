@@ -58,7 +58,7 @@ Suggested recovery steps:
 
 ## Regex hygiene (`rg`)
 
-`rg` uses **Rust regex** by default. (Legacy name: `grep_context`.)
+`rg` uses **Rust regex** by default.
 
 Common pitfalls:
 

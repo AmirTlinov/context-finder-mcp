@@ -138,7 +138,7 @@ async fn repo_onboarding_pack_returns_map_docs_and_next_actions() -> Result<()> 
         text.contains("A: repo_onboarding_pack:"),
         "expected answer line describing the tool result"
     );
-    assert!(text.contains("N: map:"), "expected map section marker");
+    assert!(text.contains("N: tree:"), "expected tree section marker");
     assert!(
         text.lines().any(|line| line.trim() == "src"),
         "expected src in map output"
@@ -330,7 +330,7 @@ async fn repo_onboarding_pack_keeps_map_under_tight_budget_even_with_long_docs()
     .await?;
 
     assert_is_context_doc(&text);
-    assert!(text.contains("N: map:"), "expected map section marker");
+    assert!(text.contains("N: tree:"), "expected tree section marker");
     assert!(
         text.lines().any(|line| line.trim() == "src"),
         "expected src in map output even with long docs"

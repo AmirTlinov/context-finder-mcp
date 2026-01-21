@@ -30,11 +30,11 @@ Context is meant to be **more convenient than shell probing** *by design*:
 - **Agent-first output:** MCP tools return a single bounded `.context` payload under `max_chars` (high payload density, low tool chatter).
 - **Legend on demand:** MCP `help` explains the `.context` envelope (`A:/R:/N:/M:`); `[LEGEND]` is only emitted by `help` to keep other tools low-noise.
 - **One-call orchestration:** MCP `batch` runs multiple tools under one bounded `.context` response (partial success per item). For machine-readable batching and `$ref` workflows, use the Command API `batch`.
-- **Safe file reads:** MCP `cat` returns a bounded file window (root-locked, line-based, hashed). (Legacy name: `file_slice`.)
-- **Regex context reads:** MCP `rg` returns all regex matches with `before/after` context (grep `-B/-A/-C`), merged into compact hunks under hard budgets. (Legacy name: `grep_context`.)
+- **Safe file reads:** MCP `cat` returns a bounded file window (root-locked, line-based, hashed).
+- **Regex context reads:** MCP `rg` returns all regex matches with `before/after` context (grep `-B/-A/-C`), merged into compact hunks under hard budgets.
 - **Convenience aliases:** MCP `grep` → `rg`, and MCP `find` → `ls` (same behavior; just muscle-memory names).
-- **Safe file listing:** MCP `ls` returns bounded file paths (glob/substring filter). (Legacy name: `list_files`.)
-- **Repo onboarding pack:** MCP `repo_onboarding_pack` returns `tree` (legacy: `map`) + key docs (`cat`; legacy: `file_slice`) in one bounded response. It trims structure before docs under tight budgets, auto-refreshes the index by default, and reports `docs_reason` when no docs were included.
+- **Safe file listing:** MCP `ls` returns bounded file paths (glob/substring filter).
+- **Repo onboarding pack:** MCP `repo_onboarding_pack` returns `tree` + key docs (`cat`) in one bounded response. It trims structure before docs under tight budgets, auto-refreshes the index by default, and reports `docs_reason` when no docs were included.
 - **One-call reading pack:** MCP `read_pack` is the single entry point for daily “project memory”, targeted reads (`file`/`grep`/`query`), and one-call recall (`questions`/`ask`). By default it returns a compact `project_facts` section + `snippet` payloads under one `max_chars` budget; richer graph/overview output is opt-in.
 - **Cursor pagination:** when truncated, MCP tools include an `M: <cursor>` line in `.context` output so agents can continue without guessing.
 - **Freshness when you ask for it:** semantic tools can report index freshness via `meta.index_state` (and reindex attempts) without polluting tight-loop reads; use `response_mode: "full"` when you need diagnostics.
@@ -225,7 +225,7 @@ Want one MCP tool to replace `cat`/`sed`, `rg -C`, *and* semantic packs? Use `re
   "max_chars": 2000
 }
 
-// Read a file window (cat; legacy: file_slice)
+// Read a file window (cat)
 {
   "path": "/path/to/project",
   "intent": "file",
@@ -242,7 +242,7 @@ Want one MCP tool to replace `cat`/`sed`, `rg -C`, *and* semantic packs? Use `re
 }
 ```
 
-Need grep-like reads with N lines of context across a repo (without `rg` + `sed` loops)? Use `rg` (legacy: `grep_context`):
+Need grep-like reads with N lines of context across a repo (without `rg` + `sed` loops)? Use `rg`:
 
 ```jsonc
 {
@@ -260,7 +260,7 @@ Need grep-like reads with N lines of context across a repo (without `rg` + `sed`
 }
 ```
 
-If the output is truncated, the `.context` text includes an `M: <cursor>` line. `rg` supports cursor-only continuation (legacy: `grep_context`):
+If the output is truncated, the `.context` text includes an `M: <cursor>` line. `rg` supports cursor-only continuation:
 
 ```jsonc
 { "path": "/path/to/project", "cursor": "<cursor>" }
@@ -289,31 +289,29 @@ Agent-friendly tip: the MCP tool `batch` lets you execute multiple tools in one 
 }
 ```
 
-When you need the *exact* contents of a file region (without `cat`/`sed`), use the MCP tool `cat` (legacy: `file_slice`):
+When you need the *exact* contents of a file region (without `cat`/`sed`), use the MCP tool `cat`:
 
 ```jsonc
 {
   "path": "/path/to/project",
   "file": "src/lib.rs",
-  "offset": 120,
-  "limit": 80,
+  "start_line": 120,
+  "max_lines": 80,
   "max_chars": 2000
 }
 ```
 
-If the response is truncated, continue with `cursor` (keep the same limits):
+If the response is truncated, continue with `cursor`:
 
 ```jsonc
 {
   "path": "/path/to/project",
-  "file": "src/lib.rs",
   "cursor": "<cursor>",
-  "limit": 80,
   "max_chars": 2000
 }
 ```
 
-When you need file paths first (without `ls/find/rg --files`), use `ls` (legacy: `list_files`):
+When you need file paths first (without `ls/find/rg --files`), use `ls`:
 
 ```jsonc
 {

@@ -71,7 +71,7 @@ async fn call_tool_allow_error(
 }
 
 #[tokio::test]
-async fn list_files_cursor_root_mismatch_includes_details() -> Result<()> {
+async fn ls_cursor_root_mismatch_includes_details() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -106,7 +106,7 @@ async fn list_files_cursor_root_mismatch_includes_details() -> Result<()> {
 
     let list1 = call_tool_allow_error(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root1.path().to_string_lossy(),
             "file_pattern": "src/*.rs",
@@ -119,27 +119,27 @@ async fn list_files_cursor_root_mismatch_includes_details() -> Result<()> {
     assert_ne!(
         list1.is_error,
         Some(true),
-        "expected list_files on root1 to succeed"
+        "expected ls on root1 to succeed"
     );
     assert!(
         list1.structured_content.is_none(),
-        "list_files should not return structured_content"
+        "ls should not return structured_content"
     );
     let list1_text = list1
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("list_files(root1) missing text output")?;
+        .context("ls(root1) missing text output")?;
     let cursor = list1_text
         .lines()
         .find_map(|line| line.strip_prefix("M: ").map(str::trim))
         .map(str::to_string)
-        .context("list_files(root1) missing M: cursor (expected pagination)")?;
+        .context("ls(root1) missing M: cursor (expected pagination)")?;
 
     let list2 = call_tool_allow_error(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root2.path().to_string_lossy(),
             "cursor": cursor,
@@ -153,12 +153,12 @@ async fn list_files_cursor_root_mismatch_includes_details() -> Result<()> {
     assert_eq!(
         list2.is_error,
         Some(true),
-        "expected list_files on root2 with root1 cursor to error"
+        "expected ls on root2 with root1 cursor to error"
     );
 
     assert!(
         list2.structured_content.is_none(),
-        "list_files should not return structured_content on error"
+        "ls should not return structured_content on error"
     );
     let list2_text = list2
         .content
@@ -190,7 +190,7 @@ async fn list_files_cursor_root_mismatch_includes_details() -> Result<()> {
 }
 
 #[tokio::test]
-async fn file_slice_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+async fn cat_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -215,7 +215,7 @@ async fn file_slice_cursor_only_does_not_switch_roots_when_session_root_is_set()
 
     let res_root2 = call_tool_allow_error(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root2.path().to_string_lossy(),
             "file": "README.md",
@@ -228,13 +228,13 @@ async fn file_slice_cursor_only_does_not_switch_roots_when_session_root_is_set()
     assert_ne!(
         res_root2.is_error,
         Some(true),
-        "expected file_slice(root2) to succeed"
+        "expected cat(root2) to succeed"
     );
     let cursor = extract_cursor_from_text(&res_root2)?;
 
     let res_root1 = call_tool_allow_error(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root1.path().to_string_lossy(),
             "file": "README.md",
@@ -247,12 +247,12 @@ async fn file_slice_cursor_only_does_not_switch_roots_when_session_root_is_set()
     assert_ne!(
         res_root1.is_error,
         Some(true),
-        "expected file_slice(root1) to succeed"
+        "expected cat(root1) to succeed"
     );
 
     let res_foreign = call_tool_allow_error(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "cursor": cursor,
             "max_chars": 2000,
@@ -263,7 +263,7 @@ async fn file_slice_cursor_only_does_not_switch_roots_when_session_root_is_set()
     assert_eq!(
         res_foreign.is_error,
         Some(true),
-        "expected file_slice cursor-only root switch to error"
+        "expected cat cursor-only root switch to error"
     );
     let res_text = res_foreign
         .content
@@ -281,7 +281,7 @@ async fn file_slice_cursor_only_does_not_switch_roots_when_session_root_is_set()
 }
 
 #[tokio::test]
-async fn grep_context_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+async fn rg_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -309,7 +309,7 @@ async fn grep_context_cursor_only_does_not_switch_roots_when_session_root_is_set
 
     let res_root2 = call_tool_allow_error(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root2.path().to_string_lossy(),
             "pattern": "needle",
@@ -323,13 +323,13 @@ async fn grep_context_cursor_only_does_not_switch_roots_when_session_root_is_set
     assert_ne!(
         res_root2.is_error,
         Some(true),
-        "expected grep_context(root2) to succeed"
+        "expected rg(root2) to succeed"
     );
     let cursor = extract_cursor_from_text(&res_root2)?;
 
     let res_root1 = call_tool_allow_error(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root1.path().to_string_lossy(),
             "pattern": "needle",
@@ -343,12 +343,12 @@ async fn grep_context_cursor_only_does_not_switch_roots_when_session_root_is_set
     assert_ne!(
         res_root1.is_error,
         Some(true),
-        "expected grep_context(root1) to succeed"
+        "expected rg(root1) to succeed"
     );
 
     let res_foreign = call_tool_allow_error(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "cursor": cursor,
             "max_chars": 20_000,
@@ -359,7 +359,7 @@ async fn grep_context_cursor_only_does_not_switch_roots_when_session_root_is_set
     assert_eq!(
         res_foreign.is_error,
         Some(true),
-        "expected grep_context cursor-only root switch to error"
+        "expected rg cursor-only root switch to error"
     );
     let res_text = res_foreign
         .content
@@ -507,7 +507,7 @@ async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Res
 
     let res_root2 = call_tool_allow_error(
         &service,
-        "map",
+        "tree",
         serde_json::json!({
             "path": root2.path().to_string_lossy(),
             "depth": 2,
@@ -520,13 +520,13 @@ async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Res
     assert_ne!(
         res_root2.is_error,
         Some(true),
-        "expected map(root2) to succeed"
+        "expected tree(root2) to succeed"
     );
     let cursor = extract_cursor_from_text(&res_root2)?;
 
     let res_root1 = call_tool_allow_error(
         &service,
-        "map",
+        "tree",
         serde_json::json!({
             "path": root1.path().to_string_lossy(),
             "depth": 2,
@@ -539,12 +539,12 @@ async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Res
     assert_ne!(
         res_root1.is_error,
         Some(true),
-        "expected map(root1) to succeed"
+        "expected tree(root1) to succeed"
     );
 
     let res_foreign = call_tool_allow_error(
         &service,
-        "map",
+        "tree",
         serde_json::json!({
             "cursor": cursor,
             "max_chars": 20_000,
@@ -555,7 +555,7 @@ async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Res
     assert_eq!(
         res_foreign.is_error,
         Some(true),
-        "expected map cursor-only root switch to error"
+        "expected tree cursor-only root switch to error"
     );
     let res_text = res_foreign
         .content
@@ -573,7 +573,7 @@ async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Res
 }
 
 #[tokio::test]
-async fn list_files_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
+async fn ls_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -607,7 +607,7 @@ async fn list_files_cursor_only_does_not_switch_roots_when_session_root_is_set()
 
     let res_root2 = call_tool_allow_error(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root2.path().to_string_lossy(),
             "file_pattern": "src/*.rs",
@@ -620,13 +620,13 @@ async fn list_files_cursor_only_does_not_switch_roots_when_session_root_is_set()
     assert_ne!(
         res_root2.is_error,
         Some(true),
-        "expected list_files(root2) to succeed"
+        "expected ls(root2) to succeed"
     );
     let cursor = extract_cursor_from_text(&res_root2)?;
 
     let res_root1 = call_tool_allow_error(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root1.path().to_string_lossy(),
             "file_pattern": "src/*.rs",
@@ -639,12 +639,12 @@ async fn list_files_cursor_only_does_not_switch_roots_when_session_root_is_set()
     assert_ne!(
         res_root1.is_error,
         Some(true),
-        "expected list_files(root1) to succeed"
+        "expected ls(root1) to succeed"
     );
 
     let res_foreign = call_tool_allow_error(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "cursor": cursor,
             "max_chars": 20_000,
@@ -655,7 +655,7 @@ async fn list_files_cursor_only_does_not_switch_roots_when_session_root_is_set()
     assert_eq!(
         res_foreign.is_error,
         Some(true),
-        "expected list_files cursor-only root switch to error"
+        "expected ls cursor-only root switch to error"
     );
     let res_text = res_foreign
         .content

@@ -261,7 +261,7 @@ pub(super) async fn compute_map_result(
     let next_cursor = if truncated {
         Some(encode_cursor(&MapCursorV1 {
             v: CURSOR_VERSION,
-            tool: "map".to_string(),
+            tool: "tree".to_string(),
             root: Some(root_display.to_string()),
             root_hash: Some(cursor_fingerprint(root_display)),
             depth,

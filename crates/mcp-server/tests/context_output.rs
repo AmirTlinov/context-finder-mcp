@@ -116,9 +116,9 @@ async fn read_tools_return_low_noise_context_docs() -> Result<()> {
     )
     .context("write README.md")?;
 
-    let file_slice = call_tool_text(
+    let cat = call_tool_text(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": "src/lib.rs",
@@ -128,11 +128,11 @@ async fn read_tools_return_low_noise_context_docs() -> Result<()> {
         }),
     )
     .await?;
-    assert_is_low_noise_context_doc(&file_slice);
+    assert_is_low_noise_context_doc(&cat);
 
-    let grep_context = call_tool_text(
+    let rg = call_tool_text(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "pattern": "alpha",
@@ -141,7 +141,7 @@ async fn read_tools_return_low_noise_context_docs() -> Result<()> {
         }),
     )
     .await?;
-    assert_is_low_noise_context_doc(&grep_context);
+    assert_is_low_noise_context_doc(&rg);
 
     let text_search = call_tool_text(
         &service,
@@ -194,9 +194,9 @@ async fn default_output_is_low_noise_context() -> Result<()> {
     std::fs::write(root.join("src").join("lib.rs"), "pub fn alpha() {}\n")
         .context("write src/lib.rs")?;
 
-    let file_slice = call_tool_text(
+    let cat = call_tool_text(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": "src/lib.rs",
@@ -206,7 +206,7 @@ async fn default_output_is_low_noise_context() -> Result<()> {
         }),
     )
     .await?;
-    assert_is_low_noise_context_doc(&file_slice);
+    assert_is_low_noise_context_doc(&cat);
 
     Ok(())
 }
@@ -278,7 +278,7 @@ async fn text_search_context_output_uses_budget_effectively() -> Result<()> {
 }
 
 #[tokio::test]
-async fn file_slice_context_output_respects_max_chars() -> Result<()> {
+async fn cat_context_output_respects_max_chars() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -306,7 +306,7 @@ async fn file_slice_context_output_respects_max_chars() -> Result<()> {
     let max_chars = 260usize;
     let text = call_tool_text(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": "src/lib.rs",
@@ -320,7 +320,7 @@ async fn file_slice_context_output_respects_max_chars() -> Result<()> {
     assert_is_low_noise_context_doc(&text);
     anyhow::ensure!(
         text.chars().count() <= max_chars,
-        "expected file_slice context output to respect max_chars (used_chars={}, max_chars={})",
+        "expected cat context output to respect max_chars (used_chars={}, max_chars={})",
         text.chars().count(),
         max_chars
     );
@@ -333,7 +333,7 @@ async fn file_slice_context_output_respects_max_chars() -> Result<()> {
 }
 
 #[tokio::test]
-async fn file_slice_handles_long_paths_under_tight_budgets() -> Result<()> {
+async fn cat_handles_long_paths_under_tight_budgets() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -362,7 +362,7 @@ async fn file_slice_handles_long_paths_under_tight_budgets() -> Result<()> {
     let max_chars = 2_000usize;
     let text = call_tool_text(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": rel,
@@ -376,13 +376,13 @@ async fn file_slice_handles_long_paths_under_tight_budgets() -> Result<()> {
     assert_is_low_noise_context_doc(&text);
     anyhow::ensure!(
         text.chars().count() <= max_chars,
-        "expected long-path file_slice to respect max_chars (used_chars={}, max_chars={})",
+        "expected long-path cat to respect max_chars (used_chars={}, max_chars={})",
         text.chars().count(),
         max_chars
     );
     assert!(
         text.contains("let v = 1;"),
-        "expected file_slice to include file content under long path"
+        "expected cat to include file content under long path"
     );
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -390,7 +390,7 @@ async fn file_slice_handles_long_paths_under_tight_budgets() -> Result<()> {
 }
 
 #[tokio::test]
-async fn list_files_context_output_respects_max_chars_and_keeps_cursor() -> Result<()> {
+async fn ls_context_output_respects_max_chars_and_keeps_cursor() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -418,7 +418,7 @@ async fn list_files_context_output_respects_max_chars_and_keeps_cursor() -> Resu
     let max_chars = 260usize;
     let text = call_tool_text(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file_pattern": "src/*",
@@ -431,13 +431,13 @@ async fn list_files_context_output_respects_max_chars_and_keeps_cursor() -> Resu
     assert_is_low_noise_context_doc(&text);
     anyhow::ensure!(
         text.chars().count() <= max_chars,
-        "expected list_files `.context` output to respect max_chars (used_chars={}, max_chars={})",
+        "expected ls `.context` output to respect max_chars (used_chars={}, max_chars={})",
         text.chars().count(),
         max_chars
     );
     assert!(
         text.contains("\nM: "),
-        "expected list_files to include a cursor line (M:) under tight budgets"
+        "expected ls to include a cursor line (M:) under tight budgets"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

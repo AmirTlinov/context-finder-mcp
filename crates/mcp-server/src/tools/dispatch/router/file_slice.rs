@@ -39,7 +39,10 @@ pub(in crate::tools::dispatch) async fn file_slice(
     let cursor_payload = expanded_cursor.as_deref().and_then(|cursor| {
         decode_cursor::<FileSliceCursorV1>(cursor)
             .ok()
-            .filter(|decoded| decoded.v == CURSOR_VERSION && decoded.tool == "file_slice")
+            .filter(|decoded| {
+                decoded.v == CURSOR_VERSION
+                    && (decoded.tool == "cat" || decoded.tool == "file_slice")
+            })
     });
 
     const DEFAULT_MAX_CHARS: usize = 2_000;

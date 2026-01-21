@@ -255,7 +255,7 @@ stable `project_facts` first, then relevant snippets — and pagination via `cur
 For the exact request/response fields, treat the MCP schema as the source of truth:
 `crates/mcp-server/src/tools/schemas/read_pack.rs`.
 
-Read a file window (internally calls `cat`; legacy: `file_slice`):
+Read a file window (internally calls `cat`):
 
 ```jsonc
 {
@@ -305,7 +305,7 @@ Recall supports a tiny per-question directive syntax inside `questions[]` string
 - `ctx:<N>` — grep context lines per snippet (bounded)
 - `index:5s` / `deep:8000ms` — per-question auto-index budget (deep mode)
 
-Read all regex matches with N lines of context (internally calls `rg`; legacy: `grep_context`):
+Read all regex matches with N lines of context (internally calls `rg`):
 
 ```jsonc
 {
@@ -332,7 +332,7 @@ Build a bounded semantic context pack (internally calls `context_pack`):
 }
 ```
 
-### 3) Read all regex matches with context: `rg` (legacy: `grep_context`)
+### 3) Read all regex matches with context: `rg`
 
 This is the “grep -B/-A/-C, but bounded and merge-aware” tool for agents:
 

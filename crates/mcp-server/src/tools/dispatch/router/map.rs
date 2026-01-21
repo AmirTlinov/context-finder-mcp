@@ -65,7 +65,7 @@ pub(in crate::tools::dispatch) async fn map(
     };
     if path_missing {
         if let Some(decoded) = cursor_payload.as_ref() {
-            if decoded.v == CURSOR_VERSION && decoded.tool == "map" {
+            if decoded.v == CURSOR_VERSION && (decoded.tool == "tree" || decoded.tool == "map") {
                 if let Some(root) = decoded.root.as_deref().map(str::trim) {
                     if !root.is_empty() {
                         let session_root_display =
@@ -134,9 +134,9 @@ pub(in crate::tools::dispatch) async fn map(
         .unwrap_or(10);
 
     let offset = if let Some(decoded) = cursor_payload.as_ref() {
-        if decoded.v != CURSOR_VERSION || decoded.tool != "map" {
+        if decoded.v != CURSOR_VERSION || (decoded.tool != "tree" && decoded.tool != "map") {
             return Ok(invalid_cursor_with_meta(
-                "Invalid cursor: wrong tool",
+                "Invalid cursor: wrong tool (expected tree)",
                 meta_for_output.clone(),
             ));
         }
@@ -236,7 +236,7 @@ pub(in crate::tools::dispatch) async fn map(
     }
 
     let mut doc = ContextDocBuilder::new();
-    doc.push_answer(&format!("map: {} directories", result.directories.len()));
+    doc.push_answer(&format!("tree: {} directories", result.directories.len()));
     doc.push_root_fingerprint(meta_for_structured.root_fingerprint);
     if let Some(note) = cursor_ignored_note {
         doc.push_note(note);

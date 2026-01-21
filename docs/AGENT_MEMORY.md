@@ -65,7 +65,7 @@ Note: `rg` / `ls` / `text_search` treat the filesystem as the source of truth ev
 
 Note: `text_search` is budget-first. Use `max_chars` to bound the response size; under tight budgets it returns a small number of matches (possibly with truncated match text) plus `next_cursor` for continuation.
 
-Note: `tree` (legacy: `map`) is primarily an onboarding/overview helper. In `"minimal"` it returns mostly directory paths (lowest noise); in `"full"` it can include richer diagnostics (e.g. top symbols / coverage).
+Note: `tree` is primarily an onboarding/overview helper. In `"minimal"` it returns mostly directory paths (lowest noise); in `"full"` it can include richer diagnostics (e.g. top symbols / coverage).
 
 ## Output format (MCP): `.context` text (agent-native)
 
@@ -83,8 +83,8 @@ To keep agent context windows clean, `[LEGEND]` is **not** included in regular t
 
 Agent context windows are “sticky” — once a secret is printed, it tends to spread. Context Finder therefore uses a conservative denylist by default:
 
-- `cat` refuses to read common secret locations (e.g. `.env`, SSH keys, `*.pem`/`*.key`) (legacy: `file_slice`)
-- `rg` / `text_search` skip secret paths (and refuse explicit secret file reads) (legacy: `grep_context`)
+- `cat` refuses to read common secret locations (e.g. `.env`, SSH keys, `*.pem`/`*.key`)
+- `rg` / `text_search` skip secret paths (and refuse explicit secret file reads)
 - `read_pack` refuses `intent=file` reads of secrets, and skips secrets in filesystem fallbacks
 
 If you *explicitly* need to inspect secret files (debugging local env, investigating credentials leakage, etc.), you can opt in per call:
@@ -237,5 +237,5 @@ Optional:
 Treat the MCP schema as the canonical reference for exact fields:
 
 - `read_pack`: `crates/mcp-server/src/tools/schemas/read_pack.rs`
-- `cat` (legacy: `file_slice`): `crates/mcp-server/src/tools/schemas/file_slice.rs`
-- `rg` (legacy: `grep_context`): `crates/mcp-server/src/tools/schemas/grep_context.rs`
+- `cat`: `crates/mcp-server/src/tools/schemas/file_slice.rs`
+- `rg`: `crates/mcp-server/src/tools/schemas/grep_context.rs`

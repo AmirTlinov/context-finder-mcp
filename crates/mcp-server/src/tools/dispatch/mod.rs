@@ -381,6 +381,10 @@ pub(in crate::tools::dispatch) fn mcp_default_budgets() -> context_protocol::Def
         repo_onboarding_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
         context_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
         batch_max_chars: MCP_DEFAULT_MAX_CHARS,
+        cat_max_chars: MCP_DEFAULT_MAX_CHARS,
+        rg_max_chars: MCP_DEFAULT_MAX_CHARS,
+        ls_max_chars: MCP_DEFAULT_MAX_CHARS,
+        tree_max_chars: MCP_DEFAULT_MAX_CHARS,
         file_slice_max_chars: MCP_DEFAULT_MAX_CHARS,
         grep_context_max_chars: MCP_DEFAULT_MAX_CHARS,
         list_files_max_chars: MCP_DEFAULT_MAX_CHARS,
@@ -3333,23 +3337,8 @@ impl ContextFinderService {
     }
 
     /// Project structure overview (tree-like).
-    #[tool(
-        description = "Project structure overview with directories, files, and top symbols. Shell-friendly name for `map` (like `tree`)."
-    )]
+    #[tool(description = "Project structure overview with directories, files, and top symbols.")]
     pub async fn tree(
-        &self,
-        Parameters(request): Parameters<MapRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::map::map(self, request).await?,
-        ))
-    }
-
-    /// Get project structure overview
-    #[tool(
-        description = "Legacy name for `tree`. Get project structure overview with directories, files, and top symbols. Use this first to understand a new codebase."
-    )]
-    pub async fn map(
         &self,
         Parameters(request): Parameters<MapRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -3514,19 +3503,6 @@ impl ContextFinderService {
         ))
     }
 
-    /// Read a bounded slice of a file within the project root (safe file access for agents).
-    #[tool(
-        description = "Legacy name for `cat`. Read a bounded slice of a file (by line) within the project root. Safe replacement for ad-hoc `cat/sed` reads; enforces max_lines/max_chars and prevents path traversal."
-    )]
-    pub async fn file_slice(
-        &self,
-        Parameters(request): Parameters<FileSliceRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::file_slice::file_slice(self, &request).await?,
-        ))
-    }
-
     /// Fetch exact evidence spans (verbatim) referenced by meaning packs.
     #[tool(
         description = "Evidence fetch (verbatim): read exact line windows for one or more evidence pointers. Intended as the on-demand 'territory' step after meaning-first navigation."
@@ -3579,19 +3555,6 @@ impl ContextFinderService {
         ))
     }
 
-    /// List project files within the project root (safe file enumeration for agents).
-    #[tool(
-        description = "Legacy name for `ls`. List project file paths (relative to project root). Safe replacement for `ls/find/rg --files`; supports glob/substring filtering and bounded output."
-    )]
-    pub async fn list_files(
-        &self,
-        Parameters(request): Parameters<ListFilesRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::list_files::list_files(self, request).await?,
-        ))
-    }
-
     /// Regex search with merged context hunks (rg-like).
     #[tool(
         description = "Search project files with a regex and return merged context hunks (N lines before/after). Designed to replace `rg -C/-A/-B` plus multiple cat calls with a single bounded response."
@@ -3610,19 +3573,6 @@ impl ContextFinderService {
         description = "Alias for `rg`. Search project files with a regex and return merged context hunks (N lines before/after)."
     )]
     pub async fn grep(
-        &self,
-        Parameters(request): Parameters<GrepContextRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::grep_context::grep_context(self, request).await?,
-        ))
-    }
-
-    /// Regex search with merged context hunks (grep-like).
-    #[tool(
-        description = "Legacy name for `rg`. Search project files with a regex and return merged context hunks (N lines before/after). Designed to replace `rg -C/-A/-B` plus multiple cat calls with a single bounded response."
-    )]
-    pub async fn grep_context(
         &self,
         Parameters(request): Parameters<GrepContextRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -4896,28 +4846,28 @@ mod tests {
     }
 
     #[test]
-    fn batch_prepare_item_input_injects_max_chars_for_list_files() {
+    fn batch_prepare_item_input_injects_max_chars_for_ls() {
         let input = serde_json::json!({});
-        let prepared = prepare_item_input(input, Some("/root"), BatchToolName::ListFiles, 5_000);
+        let prepared = prepare_item_input(input, Some("/root"), BatchToolName::Ls, 5_000);
 
         let obj = prepared.as_object().expect("prepared input must be object");
         assert_eq!(obj.get("path").and_then(|v| v.as_str()), Some("/root"));
         assert!(
             obj.get("max_chars").is_some(),
-            "expected max_chars to be injected for list_files"
+            "expected max_chars to be injected for ls"
         );
     }
 
     #[test]
-    fn batch_prepare_item_input_injects_max_chars_for_grep_context() {
+    fn batch_prepare_item_input_injects_max_chars_for_rg() {
         let input = serde_json::json!({});
-        let prepared = prepare_item_input(input, Some("/root"), BatchToolName::GrepContext, 5_000);
+        let prepared = prepare_item_input(input, Some("/root"), BatchToolName::Rg, 5_000);
 
         let obj = prepared.as_object().expect("prepared input must be object");
         assert_eq!(obj.get("path").and_then(|v| v.as_str()), Some("/root"));
         assert!(
             obj.get("max_chars").is_some(),
-            "expected max_chars to be injected for grep_context"
+            "expected max_chars to be injected for rg"
         );
     }
 

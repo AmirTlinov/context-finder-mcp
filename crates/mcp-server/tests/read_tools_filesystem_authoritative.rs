@@ -90,11 +90,11 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
         .await
         .context("save corpus")?;
 
-    // list_files should include src/main.rs even though corpus does not.
+    // ls should include src/main.rs even though corpus does not.
     let list_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "list_files".into(),
+            name: "ls".into(),
             arguments: serde_json::json!({
                 "path": root.to_string_lossy(),
                 "limit": 50,
@@ -106,12 +106,8 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
         }),
     )
     .await
-    .context("timeout calling list_files")??;
-    assert_ne!(
-        list_result.is_error,
-        Some(true),
-        "list_files returned error"
-    );
+    .context("timeout calling ls")??;
+    assert_ne!(list_result.is_error, Some(true), "ls returned error");
     assert!(
         list_result
             .content
@@ -119,14 +115,14 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
             .and_then(|c| c.as_text())
             .map(|t| t.text.contains("src/main.rs"))
             .unwrap_or(false),
-        "expected src/main.rs in list_files output"
+        "expected src/main.rs in ls output"
     );
 
-    // grep_context should find the needle in src/main.rs without requiring file_pattern hints.
+    // rg should find the needle in src/main.rs without requiring file_pattern hints.
     let grep_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "grep_context".into(),
+            name: "rg".into(),
             arguments: serde_json::json!({
                 "path": root.to_string_lossy(),
                 "pattern": "needle",
@@ -139,12 +135,8 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
         }),
     )
     .await
-    .context("timeout calling grep_context")??;
-    assert_ne!(
-        grep_result.is_error,
-        Some(true),
-        "grep_context returned error"
-    );
+    .context("timeout calling rg")??;
+    assert_ne!(grep_result.is_error, Some(true), "rg returned error");
     assert!(
         grep_result
             .content
@@ -152,7 +144,7 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
             .and_then(|c| c.as_text())
             .map(|t| t.text.contains("src/main.rs") && t.text.contains("needle"))
             .unwrap_or(false),
-        "expected grep_context to return a match from src/main.rs"
+        "expected rg to return a match from src/main.rs"
     );
 
     // text_search should find the needle in src/main.rs even when a corpus exists.

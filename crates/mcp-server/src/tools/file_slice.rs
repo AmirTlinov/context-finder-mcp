@@ -83,7 +83,7 @@ fn decode_resume_cursor(
 
     let decoded: FileSliceCursorV1 =
         decode_cursor(cursor).map_err(|err| format!("Invalid cursor: {err}"))?;
-    if decoded.v != CURSOR_VERSION || decoded.tool != "file_slice" {
+    if decoded.v != CURSOR_VERSION || (decoded.tool != "cat" && decoded.tool != "file_slice") {
         return Err("Invalid cursor: wrong tool".to_string());
     }
     if let Some(hash) = decoded.root_hash {
@@ -119,7 +119,7 @@ fn encode_next_cursor(
 ) -> std::result::Result<String, String> {
     let token = FileSliceCursorV1 {
         v: CURSOR_VERSION,
-        tool: "file_slice".to_string(),
+        tool: "cat".to_string(),
         root: Some(validation.root_display.to_string()),
         root_hash: Some(validation.root_hash),
         file: validation.display_file.to_string(),
@@ -269,7 +269,7 @@ pub(super) fn compute_file_slice_result(
         .map(|cursor| decode_cursor(cursor).map_err(|err| format!("Invalid cursor: {err}")))
         .transpose()?;
     if let Some(decoded) = cursor_payload.as_ref() {
-        if decoded.v != CURSOR_VERSION || decoded.tool != "file_slice" {
+        if decoded.v != CURSOR_VERSION || (decoded.tool != "cat" && decoded.tool != "file_slice") {
             return Err("Invalid cursor: wrong tool".to_string());
         }
         if let Some(hash) = decoded.root_hash {

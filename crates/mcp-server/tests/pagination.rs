@@ -118,7 +118,7 @@ async fn call_tool(
 }
 
 #[tokio::test]
-async fn list_files_supports_cursor_pagination() -> Result<()> {
+async fn ls_supports_cursor_pagination() -> Result<()> {
     let (tmp, service) = start_service().await?;
     let root = tmp.path();
 
@@ -139,7 +139,7 @@ async fn list_files_supports_cursor_pagination() -> Result<()> {
         };
         let result = call_tool(
             &service,
-            "list_files",
+            "ls",
             serde_json::json!({
                 "path": root.to_string_lossy(),
                 "file_pattern": "src/*",
@@ -150,7 +150,7 @@ async fn list_files_supports_cursor_pagination() -> Result<()> {
             }),
         )
         .await?;
-        assert_ne!(result.is_error, Some(true), "list_files returned error");
+        assert_ne!(result.is_error, Some(true), "ls returned error");
 
         let text = tool_text(&result)?;
         let files = extract_bare_lines(text);
@@ -174,7 +174,7 @@ async fn list_files_supports_cursor_pagination() -> Result<()> {
 }
 
 #[tokio::test]
-async fn file_slice_supports_cursor_pagination() -> Result<()> {
+async fn cat_supports_cursor_pagination() -> Result<()> {
     let (tmp, service) = start_service().await?;
     let root = tmp.path();
 
@@ -188,7 +188,7 @@ async fn file_slice_supports_cursor_pagination() -> Result<()> {
         let max_lines = if cursor.is_some() { 2 } else { 1 };
         let result = call_tool(
             &service,
-            "file_slice",
+            "cat",
             serde_json::json!({
                 "path": root.to_string_lossy(),
                 "file": "README.md",
@@ -199,7 +199,7 @@ async fn file_slice_supports_cursor_pagination() -> Result<()> {
             }),
         )
         .await?;
-        assert_ne!(result.is_error, Some(true), "file_slice returned error");
+        assert_ne!(result.is_error, Some(true), "cat returned error");
 
         let text = tool_text(&result)?;
         for line in extract_bare_lines(text) {
@@ -225,7 +225,7 @@ async fn file_slice_supports_cursor_pagination() -> Result<()> {
 }
 
 #[tokio::test]
-async fn grep_context_supports_cursor_pagination() -> Result<()> {
+async fn rg_supports_cursor_pagination() -> Result<()> {
     let (tmp, service) = start_service().await?;
     let root = tmp.path();
 
@@ -235,7 +235,7 @@ async fn grep_context_supports_cursor_pagination() -> Result<()> {
 
     let first = call_tool(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "pattern": "a+b",
@@ -249,14 +249,14 @@ async fn grep_context_supports_cursor_pagination() -> Result<()> {
         }),
     )
     .await?;
-    assert_ne!(first.is_error, Some(true), "grep_context returned error");
+    assert_ne!(first.is_error, Some(true), "rg returned error");
     let first_text = tool_text(&first)?;
     assert!(first_text.contains("1:* a+b"));
-    let cursor = extract_cursor(first_text).context("missing cursor (M:) in grep_context")?;
+    let cursor = extract_cursor(first_text).context("missing cursor (M:) in rg")?;
 
     let second = call_tool(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "cursor": cursor,
@@ -266,7 +266,7 @@ async fn grep_context_supports_cursor_pagination() -> Result<()> {
     assert_ne!(
         second.is_error,
         Some(true),
-        "grep_context returned error (cursor-only)"
+        "rg returned error (cursor-only)"
     );
     let second_text = tool_text(&second)?;
     assert!(second_text.contains("4:* a+b"));
@@ -382,7 +382,7 @@ async fn read_pack_supports_cursor_continuation() -> Result<()> {
 }
 
 #[tokio::test]
-async fn map_supports_cursor_continuation_with_limit_change() -> Result<()> {
+async fn tree_supports_cursor_continuation_with_limit_change() -> Result<()> {
     let (tmp, service) = start_service().await?;
     let root = tmp.path();
 
@@ -394,7 +394,7 @@ async fn map_supports_cursor_continuation_with_limit_change() -> Result<()> {
 
     let first = call_tool(
         &service,
-        "map",
+        "tree",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "depth": 2,
@@ -403,13 +403,13 @@ async fn map_supports_cursor_continuation_with_limit_change() -> Result<()> {
         }),
     )
     .await?;
-    assert_ne!(first.is_error, Some(true), "map returned error");
+    assert_ne!(first.is_error, Some(true), "tree returned error");
     let first_text = tool_text(&first)?;
-    let cursor = extract_cursor(first_text).context("missing cursor (M:) in map")?;
+    let cursor = extract_cursor(first_text).context("missing cursor (M:) in tree")?;
 
     let second = call_tool(
         &service,
-        "map",
+        "tree",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "cursor": cursor,
@@ -422,7 +422,7 @@ async fn map_supports_cursor_continuation_with_limit_change() -> Result<()> {
     assert_ne!(
         second.is_error,
         Some(true),
-        "map returned error (cursor with changed limit)"
+        "tree returned error (cursor with changed limit)"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

@@ -107,13 +107,13 @@ Primary code source:
 
 Key agent-oriented tools (MCP):
 
-- `repo_onboarding_pack` — one call returns `tree` (legacy: `map`) + key docs slices + `next_actions` under one `max_chars` budget.
-- `rg` — regex context reads (grep `-B/-A/-C`) with merged hunks, explicit budgets, and `next_cursor` pagination. (Legacy name: `grep_context`.)
-- `cat` — bounded file reads (designed to replace `cat`/`sed` loops); supports `next_cursor` pagination for large files. (Legacy name: `file_slice`.)
+- `repo_onboarding_pack` — one call returns `tree` + key docs slices + `next_actions` under one `max_chars` budget.
+- `rg` — regex context reads (grep `-B/-A/-C`) with merged hunks, explicit budgets, and `next_cursor` pagination.
+- `cat` — bounded file reads (designed to replace `cat`/`sed` loops); supports `next_cursor` pagination for large files.
 - `read_pack` — one-call “semantic reading” facade: returns `cat` / `rg` / `context_pack` / `repo_onboarding_pack` results as `sections[]` under one budget; supports cursor-only continuation for file/grep.
 - `batch` — one-call orchestration; batch `version: 2` (default) supports `$ref` (JSON Pointer) + optional `$default` for light templating between items.
 
-Large outputs: `tree` (legacy: `map`), `ls` (legacy: `list_files`), `text_search`, `rg`, `cat` can return `next_cursor` so callers can page without relying on truncation heuristics.
+Large outputs: `tree`, `ls`, `text_search`, `rg`, `cat` can return `next_cursor` so callers can page without relying on truncation heuristics.
 
 ## Change workflow (human + AI agents)
 

@@ -73,10 +73,6 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Project structure overview (tree-like directories + symbols).",
     },
     ToolDescriptor {
-        name: "map",
-        summary: "Legacy name for `tree` (project structure overview).",
-    },
-    ToolDescriptor {
         name: "ls",
         summary: "Bounded file enumeration (ls-like, glob/substring filter).",
     },
@@ -85,16 +81,8 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Alias for `ls` (bounded file enumeration).",
     },
     ToolDescriptor {
-        name: "list_files",
-        summary: "Legacy name for `ls` (bounded file enumeration).",
-    },
-    ToolDescriptor {
         name: "cat",
         summary: "Bounded file window (cat-like, root-locked, hashed).",
-    },
-    ToolDescriptor {
-        name: "file_slice",
-        summary: "Legacy name for `cat` (bounded file window, root-locked, hashed).",
     },
     ToolDescriptor {
         name: "evidence_fetch",
@@ -107,10 +95,6 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
     ToolDescriptor {
         name: "grep",
         summary: "Alias for `rg` (regex matches with before/after context hunks).",
-    },
-    ToolDescriptor {
-        name: "grep_context",
-        summary: "Legacy name for `rg` (regex matches with before/after context hunks).",
     },
     ToolDescriptor {
         name: "text_search",

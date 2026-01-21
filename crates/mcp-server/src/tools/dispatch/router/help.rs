@@ -93,7 +93,7 @@ pub(in crate::tools::dispatch) async fn help(
         obj.insert(
             "recommended_flow".to_string(),
             json!([
-                "grep_context → file_slice (deterministic navigation)",
+                "rg → cat (deterministic navigation)",
                 "read_pack (one-call onboarding/recall)",
                 "context_pack (semantic hits + related halo)",
                 "batch (multi-step workflows, $ref piping)",
@@ -103,8 +103,8 @@ pub(in crate::tools::dispatch) async fn help(
             "cheat_sheet".to_string(),
             json!({
                 "exact_string": "text_search",
-                "regex_context": "grep_context",
-                "open_reference": "file_slice",
+                "regex_context": "rg",
+                "open_reference": "cat",
                 "natural_language_find": ["search", "context_pack"],
                 "call_path": "trace",
                 "impact_fanout": "impact",

@@ -171,7 +171,7 @@ When stale, attempt bounded re-anchoring (in order):
 
 1) same file + snippet hash match window
 2) symbol-based re-anchoring (when symbol known)
-3) rg (legacy: grep_context) constrained to the anchor’s zone scope
+3) rg constrained to the anchor’s zone scope
 
 If re-anchor succeeds, emit new evidence pointers **and mark the move** (with evidence).
 If it fails, emit next actions to guide the agent (fail-closed).

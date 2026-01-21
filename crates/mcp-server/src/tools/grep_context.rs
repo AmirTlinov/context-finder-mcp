@@ -579,7 +579,7 @@ fn build_next_cursor(
         .unwrap_or_default();
     let token = GrepContextCursorV1 {
         v: CURSOR_VERSION,
-        tool: "grep_context".to_string(),
+        tool: "rg".to_string(),
         root: Some(root_display.to_string()),
         root_hash: Some(cursor_fingerprint(root_display)),
         pattern: pattern.to_string(),

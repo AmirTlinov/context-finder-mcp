@@ -109,9 +109,9 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
     std::fs::create_dir_all(root.join("docs")).context("mkdir docs")?;
     std::fs::write(root.join("docs/README.md"), "# Docs\n").context("write docs/README.md")?;
 
-    let map = call_tool(
+    let tree = call_tool(
         &service,
-        "map",
+        "tree",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "depth": 2,
@@ -121,13 +121,13 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
     )
     .await?;
     assert!(
-        map.structured_content.is_none(),
-        "map should not return structured_content"
+        tree.structured_content.is_none(),
+        "tree should not return structured_content"
     );
 
     let list = call_tool(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "limit": 50,
@@ -137,12 +137,12 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
     .await?;
     assert!(
         list.structured_content.is_none(),
-        "list_files should not return structured_content"
+        "ls should not return structured_content"
     );
 
     let slice = call_tool(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": "src/main.rs",
@@ -154,7 +154,7 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
     .await?;
     assert!(
         slice.structured_content.is_none(),
-        "file_slice should not return structured_content"
+        "cat should not return structured_content"
     );
 
     let text_search = call_tool(
@@ -173,9 +173,9 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
         "text_search should not return structured_content"
     );
 
-    let grep_context = call_tool(
+    let rg = call_tool(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "pattern": r"fn\s+main",
@@ -188,8 +188,8 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
     )
     .await?;
     assert!(
-        grep_context.structured_content.is_none(),
-        "grep_context should not return structured_content"
+        rg.structured_content.is_none(),
+        "rg should not return structured_content"
     );
 
     let onboarding = call_tool(
@@ -231,7 +231,7 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
     // cross-project mixups even when the client UI hides structured content.
     let list_error = call_tool_allow_error(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "cursor": "lol",
@@ -242,7 +242,7 @@ async fn core_tools_do_not_return_structured_content() -> Result<()> {
     assert_eq!(
         list_error.is_error,
         Some(true),
-        "expected list_files to return an error for invalid cursor"
+        "expected ls to return an error for invalid cursor"
     );
     let list_error_text = list_error
         .content

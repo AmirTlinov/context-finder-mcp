@@ -93,7 +93,7 @@ fn assert_error_code(result: &rmcp::model::CallToolResult, expected: &str) -> Re
 }
 
 #[tokio::test]
-async fn file_slice_refuses_secret_by_default_but_allows_opt_in() -> Result<()> {
+async fn cat_refuses_secret_by_default_but_allows_opt_in() -> Result<()> {
     let (tmp, service) = start_service().await?;
     let root = tmp.path();
 
@@ -101,7 +101,7 @@ async fn file_slice_refuses_secret_by_default_but_allows_opt_in() -> Result<()> 
 
     let denied = call_tool(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": ".env",
@@ -114,7 +114,7 @@ async fn file_slice_refuses_secret_by_default_but_allows_opt_in() -> Result<()> 
 
     let allowed = call_tool(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": ".env",
@@ -131,7 +131,7 @@ async fn file_slice_refuses_secret_by_default_but_allows_opt_in() -> Result<()> 
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("file_slice missing text content")?;
+        .context("cat missing text content")?;
     assert!(text.contains("R: .env:1 file slice"));
     assert!(text.contains("SECRET=1"));
 
@@ -140,7 +140,7 @@ async fn file_slice_refuses_secret_by_default_but_allows_opt_in() -> Result<()> 
 }
 
 #[tokio::test]
-async fn grep_context_refuses_secret_file_by_default_but_allows_opt_in() -> Result<()> {
+async fn rg_refuses_secret_file_by_default_but_allows_opt_in() -> Result<()> {
     let (tmp, service) = start_service().await?;
     let root = tmp.path();
 
@@ -148,7 +148,7 @@ async fn grep_context_refuses_secret_file_by_default_but_allows_opt_in() -> Resu
 
     let denied = call_tool(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "pattern": "SECRET",
@@ -164,7 +164,7 @@ async fn grep_context_refuses_secret_file_by_default_but_allows_opt_in() -> Resu
 
     let allowed = call_tool(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "pattern": "SECRET",
@@ -184,7 +184,7 @@ async fn grep_context_refuses_secret_file_by_default_but_allows_opt_in() -> Resu
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("grep_context missing text content")?;
+        .context("rg missing text content")?;
     assert!(text.contains("R: .env:1 grep hunk"));
     assert!(text.contains("SECRET=1"));
 

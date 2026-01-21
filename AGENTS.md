@@ -29,8 +29,8 @@ Breaking changes require a new `contracts/<surface>/v(N+1)/` line.
 
 When you need to *understand a repo* or *read lots of context*, prefer bounded MCP tools over ad-hoc `ls/rg/sed` loops:
 
-- `repo_onboarding_pack` — first call in a new repo (map + key docs + next actions).
-- `rg` (legacy: `grep_context`) — “grep with N lines before/after”, merged into hunks under strict budgets.
+- `repo_onboarding_pack` — first call in a new repo (tree + key docs + next actions).
+- `rg` — “grep with N lines before/after”, merged into hunks under strict budgets.
 - `batch` with `version: 2` — chain tool calls with `$ref` (JSON Pointer) dependencies under one `max_chars`.
 - Cursor pagination — if `next_cursor` is present, continue by repeating the call with `cursor`.
 

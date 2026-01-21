@@ -233,8 +233,8 @@ fn resolve_intent(request: &ReadPackRequest) -> ToolResult<ReadPackIntent> {
             ));
         }
         intent = match header.tool.as_str() {
-            "file_slice" => ReadPackIntent::File,
-            "grep_context" => ReadPackIntent::Grep,
+            "cat" | "file_slice" => ReadPackIntent::File,
+            "rg" | "grep" | "grep_context" => ReadPackIntent::Grep,
             "read_pack" => match header.mode.as_deref() {
                 Some("recall") => ReadPackIntent::Recall,
                 Some("memory") => ReadPackIntent::Memory,
@@ -481,7 +481,7 @@ const REASON_ANCHOR_FOCUS_FILE: &str = "anchor:focus_file";
 const REASON_ANCHOR_DOC: &str = "anchor:doc";
 const REASON_ANCHOR_ENTRYPOINT: &str = "anchor:entrypoint";
 const REASON_NEEDLE_GREP_HUNK: &str = "needle:grep_hunk";
-const REASON_NEEDLE_FILE_SLICE: &str = "needle:file_slice";
+const REASON_NEEDLE_FILE_SLICE: &str = "needle:cat";
 const REASON_HALO_CONTEXT_PACK_PRIMARY: &str = "halo:context_pack_primary";
 const REASON_HALO_CONTEXT_PACK_RELATED: &str = "halo:context_pack_related";
 const REASON_INTENT_FILE: &str = "intent:file";
@@ -1258,10 +1258,10 @@ async fn handle_file_intent(
     };
     let cursor_payload = decode_file_slice_cursor(expanded_cursor.as_deref())?;
     if let Some(decoded) = cursor_payload.as_ref() {
-        if decoded.v != CURSOR_VERSION || decoded.tool != "file_slice" {
+        if decoded.v != CURSOR_VERSION || (decoded.tool != "cat" && decoded.tool != "file_slice") {
             return Err(call_error(
                 "invalid_cursor",
-                "Invalid cursor: wrong tool (expected file_slice)",
+                "Invalid cursor: wrong tool (expected cat)",
             ));
         }
         let expected_root_hash = cursor_fingerprint(&ctx.root_display);
@@ -1427,8 +1427,11 @@ fn validate_grep_cursor_tool_root(
     decoded: &GrepContextCursorV1,
     root_display: &str,
 ) -> ToolResult<()> {
-    if decoded.v != CURSOR_VERSION || decoded.tool != "grep_context" {
-        return Err(call_error("invalid_cursor", "Invalid cursor: wrong tool"));
+    if decoded.v != CURSOR_VERSION || (decoded.tool != "rg" && decoded.tool != "grep_context") {
+        return Err(call_error(
+            "invalid_cursor",
+            "Invalid cursor: wrong tool (expected rg)",
+        ));
     }
     let expected_root_hash = cursor_fingerprint(root_display);
     let expected_root_fingerprint = root_fingerprint(root_display);
@@ -1696,7 +1699,7 @@ async fn handle_grep_intent(
                     "max_chars": ctx.max_chars,
                     "cursor": next_cursor,
                 }),
-                reason: "Continue grep_context pagination (next page of hunks).".to_string(),
+                reason: "Continue rg pagination (next page of hunks).".to_string(),
             });
         }
     }

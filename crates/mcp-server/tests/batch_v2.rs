@@ -63,8 +63,8 @@ async fn batch_v2_resolves_refs_between_items() -> Result<()> {
         "path": root.to_string_lossy(),
         "max_chars": 20000,
         "items": [
-            { "id": "files", "tool": "list_files", "input": { "file_pattern": "src/*", "limit": 10 } },
-            { "id": "ctx", "tool": "grep_context", "input": { "pattern": "TARGET", "file": { "$ref": "#/items/files/data/files/0" }, "before": 0, "after": 0 } }
+            { "id": "files", "tool": "ls", "input": { "file_pattern": "src/*", "limit": 10 } },
+            { "id": "ctx", "tool": "rg", "input": { "pattern": "TARGET", "file": { "$ref": "#/items/files/data/files/0" }, "before": 0, "after": 0 } }
         ]
     });
 
@@ -90,7 +90,7 @@ async fn batch_v2_resolves_refs_between_items() -> Result<()> {
         .map(|t| t.text.as_str())
         .context("batch missing text output")?;
     assert!(
-        text.contains("item ctx: tool=grep_context status=ok"),
+        text.contains("item ctx: tool=rg status=ok"),
         "expected ctx item to succeed"
     );
     assert!(
@@ -158,7 +158,7 @@ async fn batch_v2_accepts_action_payload_aliases() -> Result<()> {
         .map(|t| t.text.as_str())
         .context("batch missing text output")?;
     assert!(
-        text.contains("item files: tool=list_files status=ok"),
+        text.contains("item files: tool=ls status=ok"),
         "expected files item to succeed"
     );
     assert!(
@@ -197,7 +197,7 @@ async fn batch_v2_respects_max_chars_budget() -> Result<()> {
         "path": root.to_string_lossy(),
         "max_chars": max_chars,
         "items": [
-            { "id": "files", "tool": "list_files", "input": { "file_pattern": "src/*", "limit": 5 } }
+            { "id": "files", "tool": "ls", "input": { "file_pattern": "src/*", "limit": 5 } }
         ]
     });
 
@@ -280,10 +280,7 @@ async fn batch_accepts_legacy_string_items_for_back_compat() -> Result<()> {
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
         .context("batch missing text output")?;
-    assert!(
-        text.contains("tool=list_files status=ok"),
-        "expected list_files to succeed"
-    );
+    assert!(text.contains("tool=ls status=ok"), "expected ls to succeed");
     assert!(text.contains("src/a.txt"), "expected src/a.txt in output");
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -317,7 +314,7 @@ async fn batch_v2_ref_to_failed_item_data_returns_error() -> Result<()> {
         "max_chars": 20000,
         "items": [
             { "id": "search", "tool": "text_search", "input": { "pattern": "   ", "file_pattern": "src/*" } },
-            { "id": "slice", "tool": "file_slice", "input": { "file": { "$ref": "#/items/search/data/matches/0/file" }, "start_line": 1, "max_lines": 1 } }
+            { "id": "slice", "tool": "cat", "input": { "file": { "$ref": "#/items/search/data/matches/0/file" }, "start_line": 1, "max_lines": 1 } }
         ]
     });
 
@@ -343,7 +340,7 @@ async fn batch_v2_ref_to_failed_item_data_returns_error() -> Result<()> {
         .map(|t| t.text.as_str())
         .context("batch missing text output")?;
     assert!(
-        text.contains("item slice: tool=file_slice status=error"),
+        text.contains("item slice: tool=cat status=error"),
         "expected slice item to error"
     );
     assert!(

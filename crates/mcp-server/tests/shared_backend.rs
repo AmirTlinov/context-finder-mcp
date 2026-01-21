@@ -167,19 +167,19 @@ async fn shared_backend_proxy_roundtrips_tool_calls() -> Result<()> {
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice via shared backend proxy")??;
+        .context("timeout calling cat via shared backend proxy")??;
 
         let text = resp
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice text content")?;
+            .context("missing cat text content")?;
         assert!(text.contains("README.md"));
         assert!(text.contains("\nhello\n"));
         assert!(!text.contains("world"));
@@ -243,7 +243,7 @@ async fn shared_backend_proxy_accepts_tools_call_without_handshake() -> Result<(
             "id": 1,
             "method": "tools/call",
             "params": {
-                "name": "file_slice",
+                "name": "cat",
                 "arguments": {
                     "path": root.to_string_lossy(),
                     "file": "README.md",
@@ -322,19 +322,19 @@ async fn shared_backend_daemon_recovers_from_stale_socket_file() -> Result<()> {
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice via shared backend proxy")??;
+        .context("timeout calling cat via shared backend proxy")??;
 
         let text = resp
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice text content")?;
+            .context("missing cat text content")?;
         assert!(text.contains("\nhello\n"));
         assert!(!text.contains("world"));
 
@@ -385,19 +385,19 @@ async fn shared_backend_proxy_injects_path_from_cwd_on_first_call() -> Result<()
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args_no_path.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice (no path) via shared backend proxy")??;
+        .context("timeout calling cat (no path) via shared backend proxy")??;
 
         let text = resp
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice text content")?;
+            .context("missing cat text content")?;
         assert!(text.contains("\nhello\n"));
         assert!(!text.contains("world"));
 
@@ -448,18 +448,18 @@ async fn shared_backend_proxy_recovers_when_daemon_restarts() -> Result<()> {
         let resp1 = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice (first)")??;
+        .context("timeout calling cat (first)")??;
         let text1 = resp1
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice (first) text content")?;
+            .context("missing cat (first) text content")?;
         assert!(text1.contains("\nhello\n"));
         assert!(!text1.contains("world"));
 
@@ -482,18 +482,18 @@ async fn shared_backend_proxy_recovers_when_daemon_restarts() -> Result<()> {
         let resp2 = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice (after restart)")??;
+        .context("timeout calling cat (after restart)")??;
         let text2 = resp2
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice (after restart) text content")?;
+            .context("missing cat (after restart) text content")?;
         assert!(text2.contains("\nhello\n"));
         assert!(!text2.contains("world"));
 
@@ -567,18 +567,18 @@ async fn shared_backend_proxy_restarts_daemon_when_binary_changes() -> Result<()
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice via restarted daemon")??;
+        .context("timeout calling cat via restarted daemon")??;
         let text = resp
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice text content")?;
+            .context("missing cat text content")?;
         assert!(text.contains("\nhello\n"));
         assert!(!text.contains("world"));
 
@@ -659,35 +659,35 @@ async fn shared_backend_sessions_do_not_share_default_root() -> Result<()> {
         let resp_a1 = tokio::time::timeout(
             Duration::from_secs(10),
             service_a.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args_a.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice A (with path)")??;
+        .context("timeout calling cat A (with path)")??;
         let text_a1 = resp_a1
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice A text content")?;
+            .context("missing cat A text content")?;
         assert!(text_a1.contains("\nalpha\n"));
 
         let resp_b1 = tokio::time::timeout(
             Duration::from_secs(10),
             service_b.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args_b.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice B (with path)")??;
+        .context("timeout calling cat B (with path)")??;
         let text_b1 = resp_b1
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice B text content")?;
+            .context("missing cat B text content")?;
         assert!(text_b1.contains("\nbeta\n"));
 
         // Now omit `path` and rely on per-connection session defaults. If the daemon shares session
@@ -701,35 +701,35 @@ async fn shared_backend_sessions_do_not_share_default_root() -> Result<()> {
         let resp_a2 = tokio::time::timeout(
             Duration::from_secs(10),
             service_a.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args_no_path.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice A (no path)")??;
+        .context("timeout calling cat A (no path)")??;
         let text_a2 = resp_a2
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice A (no path) text content")?;
+            .context("missing cat A (no path) text content")?;
         assert!(text_a2.contains("\nalpha\n"));
 
         let resp_b2 = tokio::time::timeout(
             Duration::from_secs(10),
             service_b.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args_no_path.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice B (no path)")??;
+        .context("timeout calling cat B (no path)")??;
         let text_b2 = resp_b2
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice B (no path) text content")?;
+            .context("missing cat B (no path) text content")?;
         assert!(text_b2.contains("\nbeta\n"));
 
         Ok::<(), anyhow::Error>(())
@@ -795,18 +795,18 @@ async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_u
         let resp1 = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice (before hot reload)")??;
+        .context("timeout calling cat (before hot reload)")??;
         let text1 = resp1
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice (before hot reload) text content")?;
+            .context("missing cat (before hot reload) text content")?;
         assert!(text1.contains("\nhello\n"));
         assert!(!text1.contains("world"));
 
@@ -848,12 +848,12 @@ async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_u
             let result = tokio::time::timeout(
                 Duration::from_secs(10),
                 service.call_tool(CallToolRequestParam {
-                    name: "file_slice".into(),
+                    name: "cat".into(),
                     arguments: args.as_object().cloned(),
                 }),
             )
             .await
-            .context("timeout calling file_slice (after hot reload)");
+            .context("timeout calling cat (after hot reload)");
 
             match result {
                 Ok(Ok(value)) => {
@@ -866,18 +866,18 @@ async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_u
                         tokio::time::sleep(Duration::from_millis(200)).await;
                         continue;
                     }
-                    return Err(err).context("file_slice failed after hot reload");
+                    return Err(err).context("cat failed after hot reload");
                 }
                 Err(err) => return Err(err),
             }
         }
-        let resp2 = resp2.context("missing file_slice response after hot reload")?;
+        let resp2 = resp2.context("missing cat response after hot reload")?;
         let text2 = resp2
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice (after hot reload) text content")?;
+            .context("missing cat (after hot reload) text content")?;
         assert!(text2.contains("\nhello\n"));
         assert!(!text2.contains("world"));
 
@@ -954,19 +954,19 @@ async fn shared_backend_proxy_recovers_from_unresponsive_daemon() -> Result<()> 
         let resp = tokio::time::timeout(
             Duration::from_secs(10),
             service.call_tool(CallToolRequestParam {
-                name: "file_slice".into(),
+                name: "cat".into(),
                 arguments: args.as_object().cloned(),
             }),
         )
         .await
-        .context("timeout calling file_slice after daemon recovery")??;
+        .context("timeout calling cat after daemon recovery")??;
 
         let text = resp
             .content
             .first()
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
-            .context("missing file_slice text content")?;
+            .context("missing cat text content")?;
         assert!(text.contains("\nhello\n"));
         assert!(!text.contains("world"));
 

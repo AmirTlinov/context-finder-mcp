@@ -1063,7 +1063,7 @@ mod tests {
             "id": 1,
             "method": "tools/call",
             "params": {
-                "name": "list_files",
+                "name": "ls",
                 "arguments": {
                     "cursor": "abcdef"
                 }
@@ -1085,7 +1085,7 @@ mod tests {
             "id": 1,
             "method": "tools/call",
             "params": {
-                "name": "list_files",
+                "name": "ls",
                 "arguments": {
                     "cursor": "   "
                 }

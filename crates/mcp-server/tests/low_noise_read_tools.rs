@@ -111,9 +111,9 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
         "temp project unexpectedly has a context dir before read tools"
     );
 
-    let file_slice = call_tool_text(
+    let cat = call_tool_text(
         &service,
-        "file_slice",
+        "cat",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file": "README.md",
@@ -123,11 +123,11 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
         }),
     )
     .await?;
-    assert!(file_slice.starts_with("[CONTENT]\n"));
+    assert!(cat.starts_with("[CONTENT]\n"));
 
-    let list_files = call_tool_text(
+    let ls = call_tool_text(
         &service,
-        "list_files",
+        "ls",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file_pattern": "src/*",
@@ -137,11 +137,11 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
         }),
     )
     .await?;
-    assert!(list_files.starts_with("[CONTENT]\n"));
+    assert!(ls.starts_with("[CONTENT]\n"));
 
-    let grep_context = call_tool_text(
+    let rg = call_tool_text(
         &service,
-        "grep_context",
+        "rg",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "pattern": "TARGET",
@@ -152,7 +152,7 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
         }),
     )
     .await?;
-    assert!(grep_context.starts_with("[CONTENT]\n"));
+    assert!(rg.starts_with("[CONTENT]\n"));
 
     let text_search = call_tool_text(
         &service,
@@ -167,9 +167,9 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
     .await?;
     assert!(text_search.starts_with("[CONTENT]\n"));
 
-    let map = call_tool_text(
+    let tree = call_tool_text(
         &service,
-        "map",
+        "tree",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "depth": 2,
@@ -178,7 +178,7 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
         }),
     )
     .await?;
-    assert!(map.starts_with("[CONTENT]\n"));
+    assert!(tree.starts_with("[CONTENT]\n"));
 
     assert!(
         !context_dir.exists()
