@@ -6,6 +6,7 @@ use rmcp::{
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -100,6 +101,27 @@ fn assert_error_code(result: &rmcp::model::CallToolResult, expected: &str) -> Re
         text.contains(&format!("A: error: {expected}")),
         "expected error code {expected}, got:\n{text}"
     );
+    Ok(())
+}
+
+fn run_git(root: &Path, args: &[&str]) -> Result<()> {
+    let output = StdCommand::new("git")
+        .current_dir(root)
+        .args(args)
+        .env("GIT_AUTHOR_NAME", "context-finder-tests")
+        .env("GIT_AUTHOR_EMAIL", "tests@example.invalid")
+        .env("GIT_COMMITTER_NAME", "context-finder-tests")
+        .env("GIT_COMMITTER_EMAIL", "tests@example.invalid")
+        .output()
+        .with_context(|| format!("run git {args:?}"))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "git {args:?} failed (status={:?})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status.code()
+        );
+    }
     Ok(())
 }
 
@@ -460,6 +482,430 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
     )
     .await?;
     assert_error_code(&wrong_cursor, "invalid_cursor")?;
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn edge_cases_smoke_pack_covers_all_tools_minimally() -> Result<()> {
+    let root = tempfile::tempdir().context("tempdir root")?;
+    let root_path = root.path();
+
+    // Tiny, deterministic repo content to give every tool something to work with.
+    std::fs::create_dir_all(root_path.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root_path.join("src").join("lib.rs"),
+        "pub fn beta() -> i32 { 2 }\n\npub fn alpha() -> i32 { beta() }\n",
+    )
+    .context("write src/lib.rs")?;
+    std::fs::write(
+        root_path.join("src").join("main.rs"),
+        "fn main() {\n  println!(\"hi\");\n}\n",
+    )
+    .context("write src/main.rs")?;
+    // Make README large enough to force pagination/cursor.
+    let mut readme = String::new();
+    for i in 0..300 {
+        readme.push_str(&format!("line {i}\n"));
+    }
+    std::fs::write(root_path.join("README.md"), readme).context("write README.md")?;
+    std::fs::create_dir_all(root_path.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+    std::fs::write(
+        root_path.join(".github").join("workflows").join("ci.yml"),
+        "name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n",
+    )
+    .context("write ci.yml")?;
+
+    // Git + a worktree (exercise worktree_pack + .worktrees UX).
+    std::fs::create_dir_all(root_path.join(".worktrees")).context("mkdir .worktrees")?;
+    run_git(root_path, &["init", "-q"])?;
+    run_git(root_path, &["add", "."])?;
+    run_git(root_path, &["commit", "-m", "init", "-q"])?;
+    run_git(
+        root_path,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            ".worktrees/feature",
+            "-q",
+        ],
+    )?;
+
+    let service = start_service(root_path).await?;
+
+    // Core discovery.
+    let caps = call_tool(&service, "capabilities", serde_json::json!({})).await?;
+    assert_ne!(caps.is_error, Some(true), "capabilities should succeed");
+
+    let help = call_tool(&service, "help", serde_json::json!({})).await?;
+    assert_ne!(help.is_error, Some(true), "help should succeed");
+    assert!(
+        tool_text(&help)?.contains("[LEGEND]"),
+        "help should include [LEGEND]"
+    );
+
+    let tree = call_tool(
+        &service,
+        "tree",
+        serde_json::json!({ "depth": 3, "limit": 50, "max_chars": 4000, "response_mode": "facts" }),
+    )
+    .await?;
+    assert_ne!(tree.is_error, Some(true), "tree should succeed");
+
+    let ls = call_tool(
+        &service,
+        "ls",
+        serde_json::json!({ "limit": 100, "max_chars": 4000, "response_mode": "facts" }),
+    )
+    .await?;
+    assert_ne!(ls.is_error, Some(true), "ls should succeed");
+
+    let find = call_tool(
+        &service,
+        "find",
+        serde_json::json!({ "limit": 20, "max_chars": 2000, "response_mode": "minimal" }),
+    )
+    .await?;
+    assert_ne!(find.is_error, Some(true), "find should succeed");
+
+    // Cursor ergonomics: continuing with a cursor must not depend on preserving max_lines.
+    let cat_page1 = call_tool(
+        &service,
+        "cat",
+        serde_json::json!({
+            "file": "README.md",
+            "start_line": 1,
+            "max_lines": 1,
+            "max_chars": 2000,
+            "response_mode": "compact",
+        }),
+    )
+    .await?;
+    assert_ne!(cat_page1.is_error, Some(true), "cat should succeed");
+    let cat_cursor = extract_cursor(tool_text(&cat_page1)?).context("expected cat cursor")?;
+    let cat_page2 = call_tool(
+        &service,
+        "cat",
+        serde_json::json!({
+            "cursor": cat_cursor,
+            // Intentional mismatch vs page1: max_lines changes.
+            "max_lines": 2,
+            "max_chars": 2000,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        cat_page2.is_error,
+        Some(true),
+        "cat cursor continuation should succeed"
+    );
+
+    // Text + regex search.
+    let text_search = call_tool(
+        &service,
+        "text_search",
+        serde_json::json!({
+            "pattern": "fn main",
+            "max_results": 10,
+            "max_chars": 4000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        text_search.is_error,
+        Some(true),
+        "text_search should succeed"
+    );
+
+    let rg = call_tool(
+        &service,
+        "rg",
+        serde_json::json!({
+            "pattern": "pub fn",
+            "literal": true,
+            "max_hunks": 5,
+            "max_chars": 4000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(rg.is_error, Some(true), "rg should succeed");
+
+    let grep = call_tool(
+        &service,
+        "grep",
+        serde_json::json!({
+            "pattern": "pub fn",
+            "literal": true,
+            "max_hunks": 1,
+            "max_chars": 2000,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(grep.is_error, Some(true), "grep alias should succeed");
+
+    // Packs: onboarding + meaning.
+    let onboarding = call_tool(
+        &service,
+        "repo_onboarding_pack",
+        serde_json::json!({ "max_chars": 2000, "response_mode": "facts", "auto_index": false }),
+    )
+    .await?;
+    assert_ne!(
+        onboarding.is_error,
+        Some(true),
+        "repo_onboarding_pack should succeed"
+    );
+
+    let read_pack = call_tool(
+        &service,
+        "read_pack",
+        serde_json::json!({
+            "intent": "onboarding",
+            "max_lines": 80,
+            "max_chars": 3000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(read_pack.is_error, Some(true), "read_pack should succeed");
+
+    let meaning_pack = call_tool(
+        &service,
+        "meaning_pack",
+        serde_json::json!({
+            "query": "canon loop",
+            "max_chars": 4000,
+            "output_format": "markdown",
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        meaning_pack.is_error,
+        Some(true),
+        "meaning_pack should succeed"
+    );
+
+    let meaning_focus = call_tool(
+        &service,
+        "meaning_focus",
+        serde_json::json!({
+            "focus": "src",
+            "max_chars": 4000,
+            "output_format": "markdown",
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        meaning_focus.is_error,
+        Some(true),
+        "meaning_focus should succeed"
+    );
+    assert!(
+        tool_text(&meaning_focus)?.contains("NBA evidence_fetch"),
+        "meaning_focus should provide a copy/paste runnable evidence_fetch payload"
+    );
+
+    // Evidence fetch should work for a simple pointer.
+    let evidence = call_tool(
+        &service,
+        "evidence_fetch",
+        serde_json::json!({
+            "items": [{ "file": "src/lib.rs", "start_line": 1, "end_line": 2, "source_hash": null }],
+            "max_lines": 10,
+            "max_chars": 2000,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        evidence.is_error,
+        Some(true),
+        "evidence_fetch should succeed"
+    );
+
+    // Diagnostics / semantics (must be usable without long delays).
+    let doctor = call_tool(
+        &service,
+        "doctor",
+        serde_json::json!({ "response_mode": "compact", "max_chars": 4000 }),
+    )
+    .await?;
+    assert_ne!(doctor.is_error, Some(true), "doctor should succeed");
+
+    for (tool, args) in [
+        (
+            "search",
+            serde_json::json!({
+                "query": "alpha",
+                "limit": 5,
+                "response_mode": "facts",
+                "auto_index": false,
+            }),
+        ),
+        (
+            "context",
+            serde_json::json!({
+                "query": "alpha",
+                "limit": 3,
+                "response_mode": "facts",
+                "auto_index": false,
+            }),
+        ),
+        (
+            "context_pack",
+            serde_json::json!({
+                "query": "alpha",
+                "max_chars": 4000,
+                "response_mode": "facts",
+                "auto_index": false,
+                "include_paths": ["src"],
+            }),
+        ),
+        (
+            "impact",
+            serde_json::json!({
+                "symbol": "alpha",
+                "depth": 1,
+                "response_mode": "facts",
+                "auto_index": false,
+            }),
+        ),
+        (
+            "trace",
+            serde_json::json!({
+                "from": "alpha",
+                "to": "beta",
+                "response_mode": "facts",
+                "auto_index": false,
+            }),
+        ),
+        (
+            "explain",
+            serde_json::json!({
+                "symbol": "alpha",
+                "response_mode": "facts",
+                "auto_index": false,
+            }),
+        ),
+        (
+            "overview",
+            serde_json::json!({
+                "response_mode": "facts",
+                "auto_index": false,
+            }),
+        ),
+    ] {
+        let out = call_tool(&service, tool, args).await?;
+        // We allow per-tool graceful degradation (invalid_request), but never internal errors.
+        if out.is_error == Some(true) {
+            let text = tool_text(&out)?;
+            assert!(
+                !text.contains("A: error: internal"),
+                "{tool} returned internal error:\n{text}"
+            );
+        }
+    }
+
+    // Worktrees.
+    let worktrees = call_tool(
+        &service,
+        "worktree_pack",
+        serde_json::json!({ "limit": 20, "max_chars": 4000, "response_mode": "facts" }),
+    )
+    .await?;
+    assert_ne!(
+        worktrees.is_error,
+        Some(true),
+        "worktree_pack should succeed"
+    );
+
+    let atlas = call_tool(
+        &service,
+        "atlas_pack",
+        serde_json::json!({ "max_chars": 6000, "response_mode": "facts" }),
+    )
+    .await?;
+    assert_ne!(atlas.is_error, Some(true), "atlas_pack should succeed");
+
+    // Notebook/runbook: one-click apply via batch v2 `$ref`, then load the portal.
+    let apply_batch = call_tool(
+        &service,
+        "batch",
+        serde_json::json!({
+            "version": 2,
+            "stop_on_error": true,
+            "max_chars": 20000,
+            "response_mode": "facts",
+            "items": [
+                {
+                    "id": "suggest",
+                    "tool": "notebook_suggest",
+                    "input": { "query": "entrypoints ci", "max_chars": 800, "response_mode": "minimal" }
+                },
+                {
+                    "id": "apply",
+                    "tool": "notebook_apply_suggest",
+                    "input": {
+                        "version": 1,
+                        "mode": "apply",
+                        "scope": "project",
+                        "allow_truncated": false,
+                        "suggestion": { "$ref": "#/items/suggest/data" }
+                    }
+                }
+            ]
+        }),
+    )
+    .await?;
+    assert_ne!(
+        apply_batch.is_error,
+        Some(true),
+        "batch apply should succeed"
+    );
+
+    let notebook = call_tool(
+        &service,
+        "notebook_pack",
+        serde_json::json!({ "max_chars": 4000, "response_mode": "facts" }),
+    )
+    .await?;
+    assert_ne!(
+        notebook.is_error,
+        Some(true),
+        "notebook_pack should succeed"
+    );
+    let notebook_text = tool_text(&notebook)?;
+    let portal_id = notebook_text
+        .lines()
+        .find(|line| line.contains("Daily portal") && line.contains("id="))
+        .and_then(|line| line.split("id=").nth(1))
+        .and_then(|tail| tail.split(',').next())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .context("failed to extract Daily portal runbook id from notebook_pack")?;
+
+    let runbook = call_tool(
+        &service,
+        "runbook_pack",
+        serde_json::json!({
+            "runbook_id": portal_id,
+            "mode": "summary",
+            "max_chars": 4000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(runbook.is_error, Some(true), "runbook_pack should succeed");
 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
