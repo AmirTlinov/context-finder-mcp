@@ -294,6 +294,10 @@ pub(super) fn compute_file_slice_result(
         return Err("Error: file is required when no cursor is provided".to_string());
     };
 
+    if file_str.chars().any(|ch| ch.is_control()) {
+        return Err("Invalid file path: contains control characters (newline/tab/etc)".to_string());
+    }
+
     let candidate = resolve_candidate_path(root, file_str);
 
     let canonical_file = match candidate.canonicalize() {
