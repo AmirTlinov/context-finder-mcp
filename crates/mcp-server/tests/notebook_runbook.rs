@@ -216,6 +216,56 @@ async fn notebook_and_runbook_basic_flow() -> Result<()> {
 }
 
 #[tokio::test]
+async fn notebook_edit_accepts_anchor_upsert_alias() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    )
+    .context("write main.rs")?;
+
+    let edit = serde_json::json!({
+        "version": 1,
+        "path": root.to_string_lossy().to_string(),
+        "ops": [
+            {
+                "op": "anchor_upsert",
+                "anchor": {
+                    "id": "a_alias",
+                    "kind": "entrypoint",
+                    "label": "Main entry (alias op)",
+                    "evidence": [
+                        {"file": "src/main.rs", "start_line": 1, "end_line": 3}
+                    ]
+                }
+            }
+        ]
+    });
+    let _ = call_tool_text(&service, "notebook_edit", edit).await?;
+
+    let pack = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        pack.contains("id=a_alias"),
+        "notebook_pack should mention anchor id"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn notebook_apply_suggest_preview_apply_rollback() -> Result<()> {
     let service = start_mcp_server().await?;
 

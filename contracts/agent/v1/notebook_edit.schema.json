@@ -24,7 +24,7 @@
           "additionalProperties": false,
           "required": ["op", "anchor"],
           "properties": {
-            "op": { "type": "string", "const": "upsert_anchor" },
+            "op": { "type": "string", "enum": ["upsert_anchor", "anchor_upsert"] },
             "anchor": { "$ref": "./notebook_anchor.schema.json" }
           }
         },
@@ -62,4 +62,3 @@
     }
   }
 }
-
