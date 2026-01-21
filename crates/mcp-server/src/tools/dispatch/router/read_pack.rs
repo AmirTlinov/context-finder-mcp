@@ -1361,7 +1361,13 @@ async fn handle_file_intent(
             cursor: expanded_cursor,
         },
     )
-    .map_err(|err| call_error("internal", err))?;
+    .map_err(|err| {
+        if err.trim_start().starts_with("Invalid cursor") {
+            call_error("invalid_cursor", err)
+        } else {
+            call_error("invalid_request", err)
+        }
+    })?;
 
     if let Some(cursor) = slice.next_cursor.take() {
         let compact = compact_cursor_alias(service, cursor).await;
