@@ -435,6 +435,30 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
         "expected meaning_focus answer line"
     );
 
+    // 14b) UX: invalid output_format should explain allowed values.
+    let focus_bad_format = call_tool(
+        &service,
+        "meaning_focus",
+        serde_json::json!({
+            "focus": "src",
+            "output_format": "md",
+            "max_chars": 2000,
+            "response_mode": "facts",
+        }),
+    )
+    .await;
+    let err = focus_bad_format
+        .expect_err("meaning_focus with invalid output_format should fail");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Invalid output_format 'md'"),
+        "expected invalid output_format error, got:\n{msg}"
+    );
+    assert!(
+        msg.contains("Allowed: context|markdown|context_and_diagram|diagram"),
+        "expected allowed output_format values in error, got:\n{msg}"
+    );
+
     // 15) `evidence_fetch` should accept pointers without hashes.
     let evidence = call_tool(
         &service,
@@ -676,6 +700,34 @@ async fn edge_cases_smoke_pack_covers_all_tools_minimally() -> Result<()> {
     )
     .await?;
     assert_ne!(read_pack.is_error, Some(true), "read_pack should succeed");
+
+    // read_pack text UX: full mode should surface context_pack/onboarding summaries directly
+    // (no references to structured_content, which isn't returned to clients).
+    let read_pack_full = call_tool(
+        &service,
+        "read_pack",
+        serde_json::json!({
+            "intent": "query",
+            "query": "alpha",
+            "max_chars": 6000,
+            "response_mode": "full",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        read_pack_full.is_error,
+        Some(true),
+        "read_pack full should succeed"
+    );
+    let read_pack_full_text = tool_text(&read_pack_full)?;
+    assert!(
+        read_pack_full_text.contains("context_pack:"),
+        "read_pack full should include context_pack summary"
+    );
+    assert!(
+        !read_pack_full_text.contains("structured_content"),
+        "read_pack output must not mention structured_content"
+    );
 
     let meaning_pack = call_tool(
         &service,

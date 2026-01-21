@@ -7270,15 +7270,211 @@ fn render_read_pack_context_doc(result: &ReadPackResult, response_mode: Response
                     doc.push_blank();
                 }
             }
-            ReadPackSection::Overview { .. }
-            | ReadPackSection::ContextPack { .. }
-            | ReadPackSection::RepoOnboardingPack { .. } => {
-                if response_mode == ResponseMode::Full {
-                    doc.push_note(
-                        "non-snippet section omitted in text output (see structured_content)",
-                    );
+            ReadPackSection::Overview { result: overview } => {
+                doc.push_note(&format!(
+                    "overview: {} files={} chunks={} lines={} graph(nodes={} edges={})",
+                    overview.project.name,
+                    overview.project.files,
+                    overview.project.chunks,
+                    overview.project.lines,
+                    overview.graph_stats.nodes,
+                    overview.graph_stats.edges
+                ));
+
+                if response_mode != ResponseMode::Minimal {
+                    if !overview.entry_points.is_empty() {
+                        doc.push_note("entry_points:");
+                        for ep in overview.entry_points.iter().take(6) {
+                            doc.push_line(&format!(" - {ep}"));
+                        }
+                        if overview.entry_points.len() > 6 {
+                            doc.push_line(&format!(
+                                " - … (showing 6 of {})",
+                                overview.entry_points.len()
+                            ));
+                        }
+                    }
+                    if !overview.layers.is_empty() {
+                        doc.push_note("layers:");
+                        for layer in overview.layers.iter().take(6) {
+                            doc.push_line(&format!(
+                                " - {} (files={}) — {}",
+                                layer.name, layer.files, layer.role
+                            ));
+                        }
+                        if overview.layers.len() > 6 {
+                            doc.push_line(&format!(
+                                " - … (showing 6 of {})",
+                                overview.layers.len()
+                            ));
+                        }
+                    }
+                    if !overview.key_types.is_empty() {
+                        doc.push_note("key_types:");
+                        for ty in overview.key_types.iter().take(6) {
+                            doc.push_line(&format!(
+                                " - {} ({}) @ {} — coupling={}",
+                                ty.name, ty.kind, ty.file, ty.coupling
+                            ));
+                        }
+                        if overview.key_types.len() > 6 {
+                            doc.push_line(&format!(
+                                " - … (showing 6 of {})",
+                                overview.key_types.len()
+                            ));
+                        }
+                    }
+                }
+
+                doc.push_blank();
+            }
+            ReadPackSection::ContextPack { result: pack_value } => {
+                let parsed: Result<context_search::ContextPackOutput, _> =
+                    serde_json::from_value(pack_value.clone());
+                match parsed {
+                    Ok(pack) => {
+                        let primary = pack.items.iter().filter(|i| i.role == "primary").count();
+                        let related = pack.items.iter().filter(|i| i.role == "related").count();
+                        doc.push_note(&format!(
+                            "context_pack: query={} items={} (primary={} related={}) truncated={} dropped_items={}",
+                            trim_chars(&pack.query, 80),
+                            pack.items.len(),
+                            primary,
+                            related,
+                            pack.budget.truncated,
+                            pack.budget.dropped_items
+                        ));
+
+                        if response_mode == ResponseMode::Full {
+                            let per_item_chars = 700usize;
+                            for item in pack.items.iter().take(4) {
+                                doc.push_ref_header(
+                                    &item.file,
+                                    item.start_line,
+                                    Some(item.role.as_str()),
+                                );
+                                if let Some(symbol) = item.symbol.as_deref() {
+                                    doc.push_note(&format!(
+                                        "symbol={} score={:.3}",
+                                        symbol, item.score
+                                    ));
+                                } else {
+                                    doc.push_note(&format!("score={:.3}", item.score));
+                                }
+                                doc.push_block_smart(&trim_chars(&item.content, per_item_chars));
+                                doc.push_blank();
+                            }
+                            if pack.items.len() > 4 {
+                                doc.push_note(&format!(
+                                    "context_pack: … (showing 4 of {} items)",
+                                    pack.items.len()
+                                ));
+                                doc.push_blank();
+                            }
+
+                            if !pack.next_actions.is_empty() {
+                                doc.push_note("context_pack next_actions:");
+                                let mut shown = 0usize;
+                                for action in pack.next_actions.iter().take(3) {
+                                    shown += 1;
+                                    let args = serde_json::to_string(&action.args)
+                                        .unwrap_or_else(|_| "{}".to_string());
+                                    doc.push_line(&format!(" - {} {args}", action.tool));
+                                }
+                                if pack.next_actions.len() > shown {
+                                    doc.push_line(&format!(
+                                        " - … (showing {shown} of {})",
+                                        pack.next_actions.len()
+                                    ));
+                                }
+                                doc.push_blank();
+                            }
+                        } else {
+                            doc.push_blank();
+                        }
+                    }
+                    Err(_) => {
+                        doc.push_note("context_pack: (unrecognized result shape)");
+                        doc.push_blank();
+                    }
                 }
             }
+            ReadPackSection::RepoOnboardingPack { result: pack } => {
+                doc.push_note(&format!(
+                    "repo_onboarding_pack: docs={} omitted={} truncated={}",
+                    pack.docs.len(),
+                    pack.omitted_doc_paths.len(),
+                    pack.budget.truncated
+                ));
+                if let Some(reason) = pack.docs_reason.as_ref() {
+                    if response_mode == ResponseMode::Full {
+                        doc.push_note(&format!("docs_reason={reason:?}"));
+                    }
+                }
+
+                if response_mode != ResponseMode::Minimal {
+                    doc.push_note(&format!(
+                        "map: dirs={} truncated={}",
+                        pack.map.directories.len(),
+                        pack.map.truncated
+                    ));
+                }
+
+                for doc_slice in &pack.docs {
+                    doc.push_ref_header(&doc_slice.file, doc_slice.start_line, Some("doc slice"));
+                    doc.push_block_smart(&doc_slice.content);
+                    doc.push_blank();
+                }
+
+                if !pack.omitted_doc_paths.is_empty() {
+                    doc.push_note(&format!("omitted_docs: {}", pack.omitted_doc_paths.len()));
+                    for path in pack.omitted_doc_paths.iter().take(10) {
+                        doc.push_line(&format!(" - {path}"));
+                    }
+                    if pack.omitted_doc_paths.len() > 10 {
+                        doc.push_line(&format!(
+                            " - … (showing 10 of {})",
+                            pack.omitted_doc_paths.len()
+                        ));
+                    }
+                    doc.push_blank();
+                }
+
+                if response_mode == ResponseMode::Full && !pack.next_actions.is_empty() {
+                    doc.push_note("repo_onboarding_pack next_actions:");
+                    let mut shown = 0usize;
+                    for action in pack.next_actions.iter().take(3) {
+                        shown += 1;
+                        let args = serde_json::to_string(&action.args)
+                            .unwrap_or_else(|_| "{}".to_string());
+                        doc.push_line(&format!(" - {} {args}", action.tool));
+                    }
+                    if pack.next_actions.len() > shown {
+                        doc.push_line(&format!(
+                            " - … (showing {shown} of {})",
+                            pack.next_actions.len()
+                        ));
+                    }
+                    doc.push_blank();
+                }
+            }
+        }
+    }
+
+    if response_mode == ResponseMode::Full && !result.next_actions.is_empty() {
+        doc.push_blank();
+        doc.push_note("next_actions:");
+        let mut shown = 0usize;
+        for action in result.next_actions.iter().take(4) {
+            shown += 1;
+            let args = serde_json::to_string(&action.args).unwrap_or_else(|_| "{}".to_string());
+            doc.push_line(&format!(" - {} {args}", action.tool));
+        }
+        if result.next_actions.len() > shown {
+            doc.push_line(&format!(
+                " - … (showing {shown} of {})",
+                result.next_actions.len()
+            ));
         }
     }
 
@@ -7703,11 +7899,13 @@ mod tests {
     use super::{
         build_context, collect_github_workflow_candidates, collect_memory_file_candidates,
         finalize_and_trim, handle_recall_intent, is_disallowed_memory_file,
-        parse_recall_question_directives, recall_question_policy, repair_recall_cursor_after_trim,
-        ProjectFactsResult, ReadPackBudget, ReadPackIntent, ReadPackRecallCursorV1,
-        ReadPackRecallResult, ReadPackRequest, ReadPackResult, ReadPackSection, ReadPackSnippet,
-        ReadPackSnippetKind, ReadPackTruncation, RecallQuestionMode, ResponseMode,
+        parse_recall_question_directives, recall_question_policy, render_read_pack_context_doc,
+        repair_recall_cursor_after_trim, ProjectFactsResult, ReadPackBudget, ReadPackIntent,
+        ReadPackRecallCursorV1, ReadPackRecallResult, ReadPackRequest, ReadPackResult,
+        ReadPackSection, ReadPackSnippet, ReadPackSnippetKind, ReadPackTruncation,
+        RecallQuestionMode, ResponseMode,
     };
+    use context_protocol::ToolNextAction;
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -7737,6 +7935,83 @@ mod tests {
             include_docs: None,
             allow_secrets: None,
         }
+    }
+
+    #[test]
+    fn render_read_pack_renders_context_pack_and_next_actions_in_text() {
+        let pack = context_search::ContextPackOutput {
+            version: 1,
+            query: "find alpha entrypoint".to_string(),
+            model_id: "stub".to_string(),
+            profile: "quality".to_string(),
+            items: vec![context_search::ContextPackItem {
+                id: "i0".to_string(),
+                role: "primary".to_string(),
+                file: "src/lib.rs".to_string(),
+                start_line: 1,
+                end_line: 3,
+                symbol: Some("alpha".to_string()),
+                chunk_type: Some("code".to_string()),
+                score: 0.9,
+                imports: Vec::new(),
+                content: "pub fn alpha() -> i32 { 1 }\n".to_string(),
+                relationship: None,
+                distance: None,
+            }],
+            budget: context_search::ContextPackBudget {
+                max_chars: 2000,
+                used_chars: 200,
+                truncated: false,
+                dropped_items: 0,
+                truncation: None,
+            },
+            next_actions: vec![ToolNextAction {
+                tool: "cat".to_string(),
+                args: serde_json::json!({ "file": "src/lib.rs", "start_line": 1, "max_lines": 40 }),
+                reason: "Open the referenced file for more context.".to_string(),
+            }],
+            meta: context_indexer::ToolMeta::default(),
+        };
+
+        let result = ReadPackResult {
+            version: 1,
+            intent: ReadPackIntent::Query,
+            root: ".".to_string(),
+            sections: vec![ReadPackSection::ContextPack {
+                result: serde_json::to_value(&pack).expect("pack should serialize"),
+            }],
+            next_actions: vec![ToolNextAction {
+                tool: "read_pack".to_string(),
+                args: serde_json::json!({ "intent": "query", "query": "alpha", "max_chars": 4000 }),
+                reason: "Retry with a larger budget.".to_string(),
+            }],
+            next_cursor: None,
+            budget: ReadPackBudget {
+                max_chars: 2000,
+                used_chars: 200,
+                truncated: false,
+                truncation: None,
+            },
+            meta: None,
+        };
+
+        let text = render_read_pack_context_doc(&result, ResponseMode::Full);
+        assert!(
+            text.contains("context_pack:"),
+            "expected context_pack summary, got:\n{text}"
+        );
+        assert!(
+            text.contains("R: src/lib.rs:1"),
+            "expected item file ref, got:\n{text}"
+        );
+        assert!(
+            text.contains("next_actions:"),
+            "expected next_actions section, got:\n{text}"
+        );
+        assert!(
+            !text.contains("structured_content"),
+            "must not mention structured_content in text output:\n{text}"
+        );
     }
 
     #[test]
