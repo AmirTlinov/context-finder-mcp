@@ -8,18 +8,13 @@ use context_indexer::ToolMeta;
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum NotebookEditOp {
     #[serde(alias = "anchor_upsert")]
-    UpsertAnchor {
-        anchor: NotebookAnchor,
-    },
-    DeleteAnchor {
-        id: String,
-    },
-    UpsertRunbook {
-        runbook: AgentRunbook,
-    },
-    DeleteRunbook {
-        id: String,
-    },
+    UpsertAnchor { anchor: NotebookAnchor },
+    #[serde(alias = "anchor_delete")]
+    DeleteAnchor { id: String },
+    #[serde(alias = "runbook_upsert")]
+    UpsertRunbook { runbook: AgentRunbook },
+    #[serde(alias = "runbook_delete")]
+    DeleteRunbook { id: String },
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

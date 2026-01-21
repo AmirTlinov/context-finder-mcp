@@ -266,6 +266,225 @@ async fn notebook_edit_accepts_anchor_upsert_alias() -> Result<()> {
 }
 
 #[tokio::test]
+async fn notebook_edit_accepts_runbook_upsert_alias() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    )
+    .context("write main.rs")?;
+
+    let edit = serde_json::json!({
+        "version": 1,
+        "path": root.to_string_lossy().to_string(),
+        "ops": [
+            {
+                "op": "upsert_anchor",
+                "anchor": {
+                    "id": "a1",
+                    "kind": "entrypoint",
+                    "label": "Main entry",
+                    "evidence": [
+                        {"file": "src/main.rs", "start_line": 1, "end_line": 3}
+                    ]
+                }
+            },
+            {
+                "op": "runbook_upsert",
+                "runbook": {
+                    "id": "rb_alias",
+                    "title": "Core refresh (alias op)",
+                    "sections": [
+                        {"id": "s1", "kind": "anchors", "title": "Hot spots", "anchor_ids": ["a1"], "include_evidence": true}
+                    ]
+                }
+            }
+        ]
+    });
+    let _ = call_tool_text(&service, "notebook_edit", edit).await?;
+
+    let pack = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        pack.contains("id=rb_alias"),
+        "notebook_pack should mention runbook id"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn notebook_edit_accepts_anchor_delete_alias() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    )
+    .context("write main.rs")?;
+
+    let create = serde_json::json!({
+        "version": 1,
+        "path": root.to_string_lossy().to_string(),
+        "ops": [
+            {
+                "op": "upsert_anchor",
+                "anchor": {
+                    "id": "a_del",
+                    "kind": "entrypoint",
+                    "label": "Main entry",
+                    "evidence": [
+                        {"file": "src/main.rs", "start_line": 1, "end_line": 3}
+                    ]
+                }
+            }
+        ]
+    });
+    let _ = call_tool_text(&service, "notebook_edit", create).await?;
+
+    let before = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(before.contains("id=a_del"), "expected anchor before delete");
+
+    let delete = serde_json::json!({
+        "version": 1,
+        "path": root.to_string_lossy().to_string(),
+        "ops": [
+            {
+                "op": "anchor_delete",
+                "id": "a_del"
+            }
+        ]
+    });
+    let _ = call_tool_text(&service, "notebook_edit", delete).await?;
+
+    let after = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        !after.contains("id=a_del"),
+        "did not expect anchor after delete"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn notebook_edit_accepts_runbook_delete_alias() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    )
+    .context("write main.rs")?;
+
+    let create = serde_json::json!({
+        "version": 1,
+        "path": root.to_string_lossy().to_string(),
+        "ops": [
+            {
+                "op": "upsert_anchor",
+                "anchor": {
+                    "id": "a1",
+                    "kind": "entrypoint",
+                    "label": "Main entry",
+                    "evidence": [
+                        {"file": "src/main.rs", "start_line": 1, "end_line": 3}
+                    ]
+                }
+            },
+            {
+                "op": "upsert_runbook",
+                "runbook": {
+                    "id": "rb_del",
+                    "title": "Core refresh",
+                    "sections": [
+                        {"id": "s1", "kind": "anchors", "title": "Hot spots", "anchor_ids": ["a1"], "include_evidence": true}
+                    ]
+                }
+            }
+        ]
+    });
+    let _ = call_tool_text(&service, "notebook_edit", create).await?;
+
+    let before = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        before.contains("id=rb_del"),
+        "expected runbook before delete"
+    );
+
+    let delete = serde_json::json!({
+        "version": 1,
+        "path": root.to_string_lossy().to_string(),
+        "ops": [
+            {
+                "op": "runbook_delete",
+                "id": "rb_del"
+            }
+        ]
+    });
+    let _ = call_tool_text(&service, "notebook_edit", delete).await?;
+
+    let after = call_tool_text(
+        &service,
+        "notebook_pack",
+        serde_json::json!({
+            "path": root.to_string_lossy().to_string(),
+            "max_chars": 2000
+        }),
+    )
+    .await?;
+    assert!(
+        !after.contains("id=rb_del"),
+        "did not expect runbook after delete"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn notebook_apply_suggest_preview_apply_rollback() -> Result<()> {
     let service = start_mcp_server().await?;
 

@@ -34,7 +34,7 @@
           "additionalProperties": false,
           "required": ["op", "id"],
           "properties": {
-            "op": { "type": "string", "const": "delete_anchor" },
+            "op": { "type": "string", "enum": ["delete_anchor", "anchor_delete"] },
             "id": { "type": "string" }
           }
         },
@@ -44,7 +44,7 @@
           "additionalProperties": false,
           "required": ["op", "runbook"],
           "properties": {
-            "op": { "type": "string", "const": "upsert_runbook" },
+            "op": { "type": "string", "enum": ["upsert_runbook", "runbook_upsert"] },
             "runbook": { "$ref": "./runbook.schema.json" }
           }
         },
@@ -54,7 +54,7 @@
           "additionalProperties": false,
           "required": ["op", "id"],
           "properties": {
-            "op": { "type": "string", "const": "delete_runbook" },
+            "op": { "type": "string", "enum": ["delete_runbook", "runbook_delete"] },
             "id": { "type": "string" }
           }
         }
