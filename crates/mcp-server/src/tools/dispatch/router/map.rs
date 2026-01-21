@@ -20,6 +20,7 @@ pub(in crate::tools::dispatch) async fn map(
     mut request: MapRequest,
 ) -> Result<CallToolResult, McpError> {
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Minimal);
+    let mut cursor_ignored_note: Option<&'static str> = None;
 
     if let Some(cursor) = request.cursor.as_deref() {
         match expand_cursor_alias(service, cursor).await {
@@ -168,12 +169,13 @@ pub(in crate::tools::dispatch) async fn map(
             ));
         }
         if decoded.depth != depth {
-            return Ok(invalid_cursor_with_meta(
-                "Invalid cursor: different depth",
-                meta_for_output.clone(),
-            ));
+            // Depth changes the aggregation shape. Treat this as a recoverable mismatch: ignore
+            // the cursor and restart from offset 0 (instead of failing the tool call).
+            cursor_ignored_note = Some("cursor ignored: different depth (restarting pagination)");
+            0usize
+        } else {
+            decoded.offset
         }
-        decoded.offset
     } else {
         0usize
     };
@@ -236,6 +238,9 @@ pub(in crate::tools::dispatch) async fn map(
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!("map: {} directories", result.directories.len()));
     doc.push_root_fingerprint(meta_for_structured.root_fingerprint);
+    if let Some(note) = cursor_ignored_note {
+        doc.push_note(note);
+    }
     for dir in &result.directories {
         match (dir.files, dir.chunks) {
             (Some(files), Some(chunks)) => {

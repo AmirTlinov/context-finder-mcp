@@ -26,6 +26,7 @@ pub(in crate::tools::dispatch) async fn list_files(
     const MAX_MAX_CHARS: usize = 500_000;
 
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Minimal);
+    let mut cursor_ignored_note: Option<&'static str> = None;
 
     let requested_allow_secrets = request.allow_secrets;
     if let Some(cursor) = request.cursor.as_deref() {
@@ -168,25 +169,32 @@ pub(in crate::tools::dispatch) async fn list_files(
                 ));
             }
             if decoded.file_pattern != normalized_file_pattern {
-                return Ok(invalid_cursor_with_meta(
-                    "Invalid cursor: different file_pattern",
-                    meta_for_output.clone(),
-                ));
-            }
-            if let Some(allow_secrets) = requested_allow_secrets {
+                // Pattern changes the file universe. Restart from the beginning.
+                cursor_ignored_note =
+                    Some("cursor ignored: different file_pattern (restarting pagination)");
+                (None, None, None, None)
+            } else if let Some(allow_secrets) = requested_allow_secrets {
                 if decoded.allow_secrets != allow_secrets {
-                    return Ok(invalid_cursor_with_meta(
-                        "Invalid cursor: different allow_secrets",
-                        meta_for_output.clone(),
-                    ));
+                    // The caller is explicitly changing allow_secrets; restart from the beginning.
+                    cursor_ignored_note =
+                        Some("cursor ignored: different allow_secrets (restarting pagination)");
+                    (None, None, None, None)
+                } else {
+                    (
+                        Some(decoded.last_file),
+                        Some(decoded.allow_secrets),
+                        Some(decoded.limit),
+                        Some(decoded.max_chars),
+                    )
                 }
+            } else {
+                (
+                    Some(decoded.last_file),
+                    Some(decoded.allow_secrets),
+                    Some(decoded.limit),
+                    Some(decoded.max_chars),
+                )
             }
-            (
-                Some(decoded.last_file),
-                Some(decoded.allow_secrets),
-                Some(decoded.limit),
-                Some(decoded.max_chars),
-            )
         } else {
             (None, None, None, None)
         };
@@ -275,6 +283,9 @@ pub(in crate::tools::dispatch) async fn list_files(
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!("{} files", result.files.len()));
     doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    if let Some(note) = cursor_ignored_note {
+        doc.push_note(note);
+    }
     for file in &result.files {
         doc.push_line(file);
     }
