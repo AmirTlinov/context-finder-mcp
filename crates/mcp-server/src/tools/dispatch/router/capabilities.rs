@@ -74,6 +74,21 @@ pub(in crate::tools::dispatch) async fn capabilities(
         result.capabilities.default_budgets.max_chars
     ));
     doc.push_note(&format!(
+        "default_budgets.read_pack_max_chars: {}",
+        result.capabilities.default_budgets.read_pack_max_chars
+    ));
+    doc.push_note(&format!(
+        "default_budgets.repo_onboarding_pack_max_chars: {}",
+        result
+            .capabilities
+            .default_budgets
+            .repo_onboarding_pack_max_chars
+    ));
+    doc.push_note(&format!(
+        "default_budgets.context_pack_max_chars: {}",
+        result.capabilities.default_budgets.context_pack_max_chars
+    ));
+    doc.push_note(&format!(
         "start: tool={}",
         result.capabilities.start_route.tool
     ));

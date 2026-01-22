@@ -645,8 +645,22 @@ pub(in crate::tools::dispatch) async fn batch(
         return Ok(invalid_request_with_meta(
             "Batch items must not be empty",
             meta,
-            None,
-            Vec::new(),
+            Some(
+                "Provide `items: [{id, tool, input}]`. Example: {\"version\":2,\"max_chars\":4000,\"items\":[{\"id\":\"tree\",\"tool\":\"tree\",\"input\":{\"depth\":2,\"limit\":20}}]}"
+                    .to_string(),
+            ),
+            vec![
+                context_protocol::ToolNextAction {
+                    tool: "help".to_string(),
+                    args: serde_json::json!({"topic": "cheat"}),
+                    reason: "Cheat-sheet for core tools + batch usage".to_string(),
+                },
+                context_protocol::ToolNextAction {
+                    tool: "help".to_string(),
+                    args: serde_json::json!({"topic": "tools"}),
+                    reason: "List available tools".to_string(),
+                },
+            ],
         ));
     }
 

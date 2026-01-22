@@ -375,13 +375,16 @@ const MIN_AUTO_INDEX_BUDGET_MS: u64 = 100;
 const MAX_AUTO_INDEX_BUDGET_MS: u64 = 120_000;
 
 const MCP_DEFAULT_MAX_CHARS: usize = 2_000;
+// Onboarding tools are typically the first call in a fresh agent session; give them a bit more room
+// by default so the first page contains both a map and at least one doc snippet.
+const MCP_DEFAULT_ONBOARDING_MAX_CHARS: usize = 6_000;
 
 pub(in crate::tools::dispatch) fn mcp_default_budgets() -> context_protocol::DefaultBudgets {
     context_protocol::DefaultBudgets {
         max_chars: MCP_DEFAULT_MAX_CHARS,
-        read_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
-        repo_onboarding_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
-        context_pack_max_chars: MCP_DEFAULT_MAX_CHARS,
+        read_pack_max_chars: MCP_DEFAULT_ONBOARDING_MAX_CHARS,
+        repo_onboarding_pack_max_chars: MCP_DEFAULT_ONBOARDING_MAX_CHARS,
+        context_pack_max_chars: MCP_DEFAULT_ONBOARDING_MAX_CHARS,
         batch_max_chars: MCP_DEFAULT_MAX_CHARS,
         cat_max_chars: MCP_DEFAULT_MAX_CHARS,
         rg_max_chars: MCP_DEFAULT_MAX_CHARS,

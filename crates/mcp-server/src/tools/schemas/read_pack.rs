@@ -100,7 +100,7 @@ pub struct ReadPackRequest {
     #[serde(alias = "limit")]
     pub max_lines: Option<usize>,
 
-    /// Maximum number of UTF-8 characters for the underlying result (default: 2000)
+    /// Maximum number of UTF-8 characters for the underlying result (default: 6000)
     #[schemars(description = "Maximum number of UTF-8 characters for the underlying result")]
     pub max_chars: Option<usize>,
 

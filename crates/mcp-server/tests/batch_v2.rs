@@ -37,6 +37,65 @@ fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
 }
 
 #[tokio::test]
+async fn batch_missing_items_returns_agent_friendly_invalid_request() -> Result<()> {
+    let bin = locate_context_finder_mcp_bin()?;
+
+    let mut cmd = Command::new(bin);
+    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
+    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("RUST_LOG", "warn");
+    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+
+    let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
+    let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .context("timeout starting MCP server")??;
+
+    // Missing `items` should not trip JSON-RPC invalid params; it should return an agent-native
+    // invalid_request envelope with a deterministic hint.
+    let args = serde_json::json!({});
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        service.call_tool(CallToolRequestParam {
+            name: "batch".into(),
+            arguments: args.as_object().cloned(),
+        }),
+    )
+    .await
+    .context("timeout calling batch")??;
+
+    assert_eq!(
+        result.is_error,
+        Some(true),
+        "expected batch to return error"
+    );
+    let text = result
+        .content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.as_str())
+        .context("batch missing text output")?;
+    assert!(
+        text.contains("A: error: invalid_request"),
+        "expected invalid_request envelope"
+    );
+    assert!(
+        text.contains("Batch items must not be empty"),
+        "expected missing items message"
+    );
+    assert!(
+        text.contains("hint: Provide `items"),
+        "expected hint with example payload"
+    );
+    assert!(text.contains("next: help"), "expected recovery next action");
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn batch_v2_resolves_refs_between_items() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 

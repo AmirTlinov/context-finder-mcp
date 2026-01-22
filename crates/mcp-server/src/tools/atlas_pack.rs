@@ -21,7 +21,7 @@ use super::{
 
 const VERSION: u32 = 1;
 
-const DEFAULT_MAX_CHARS: usize = 2_000;
+const DEFAULT_MAX_CHARS: usize = 6_000;
 const MIN_MAX_CHARS: usize = 800;
 const MAX_MAX_CHARS: usize = 500_000;
 

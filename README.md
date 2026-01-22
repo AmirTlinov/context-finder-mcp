@@ -29,6 +29,7 @@ Context is meant to be **more convenient than shell probing** *by design*:
 
 - **Agent-first output:** MCP tools return a single bounded `.context` payload under `max_chars` (high payload density, low tool chatter).
 - **Legend on demand:** MCP `help` explains the `.context` envelope (`A:/R:/N:/M:`); `[LEGEND]` is only emitted by `help` to keep other tools low-noise.
+- **Help topics:** `help {"topic":"tools"}` lists the tool inventory; `help {"topic":"cheat"}` is a quick usage cheat-sheet; `help {"topic":"budgets"}` explains recommended `max_chars` presets.
 - **One-call orchestration:** MCP `batch` runs multiple tools under one bounded `.context` response (partial success per item). For machine-readable batching and `$ref` workflows, use the Command API `batch`.
 - **Safe file reads:** MCP `cat` returns a bounded file window (root-locked, line-based, hashed).
 - **Regex context reads:** MCP `rg` returns all regex matches with `before/after` context (grep `-B/-A/-C`), merged into compact hunks under hard budgets.
@@ -200,7 +201,7 @@ Map-first onboarding (one MCP call → map + key docs; use `response_mode: "full
   "map_depth": 2,
   "docs_limit": 6,
   "response_mode": "full",
-  "max_chars": 2000
+  "max_chars": 6000
 }
 ```
 
@@ -222,7 +223,7 @@ Want one MCP tool to replace `cat`/`sed`, `rg -C`, *and* semantic packs? Use `re
     "deep index:8s k:5 ctx:20 How does auto-index decide the project root? in:crates", // per-question deep mode + knobs
     "deep How does auto-index decide the project root?" // optional: per-question deep mode (semantic + index if needed)
   ],
-  "max_chars": 2000
+  "max_chars": 6000
 }
 
 // Read a file window (cat)

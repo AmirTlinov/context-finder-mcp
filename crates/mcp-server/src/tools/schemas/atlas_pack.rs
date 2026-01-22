@@ -22,7 +22,7 @@ pub struct AtlasPackRequest {
     #[schemars(description = "Maximum number of worktrees to include in the atlas (bounded).")]
     pub worktree_limit: Option<usize>,
 
-    /// Hard `max_chars` budget for the `.context` response (including envelope).
+    /// Hard `max_chars` budget for the `.context` response (including envelope, default: 6000).
     #[schemars(
         description = "Hard max_chars budget for the .context response (including envelope)."
     )]

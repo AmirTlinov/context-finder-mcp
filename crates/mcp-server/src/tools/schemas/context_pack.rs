@@ -19,7 +19,7 @@ pub struct ContextPackRequest {
     #[schemars(description = "Maximum number of primary results")]
     pub limit: Option<usize>,
 
-    /// Maximum total characters for packed output (default: 2000)
+    /// Maximum total characters for packed output (default: 6000)
     #[schemars(description = "Maximum total characters in packed output")]
     pub max_chars: Option<usize>,
 

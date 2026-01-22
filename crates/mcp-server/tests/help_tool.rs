@@ -123,3 +123,41 @@ async fn help_is_the_only_tool_that_returns_legend() -> Result<()> {
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
 }
+
+#[tokio::test]
+async fn help_supports_tools_topic_and_lists_known_topics_on_unknown() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tools = call_tool_text(
+        &service,
+        "help",
+        serde_json::json!({
+            "topic": "tools"
+        }),
+    )
+    .await?;
+    assert!(
+        tools.contains("Tool inventory:"),
+        "expected tools topic header"
+    );
+    assert!(
+        tools.contains("- read_pack:"),
+        "expected read_pack to be listed in tools inventory"
+    );
+
+    let unknown = call_tool_text(
+        &service,
+        "help",
+        serde_json::json!({
+            "topic": "definitely-not-a-topic"
+        }),
+    )
+    .await?;
+    assert!(
+        unknown.contains("available topics:"),
+        "expected unknown topic to list available topics"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}

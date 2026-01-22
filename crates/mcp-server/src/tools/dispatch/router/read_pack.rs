@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 const VERSION: u32 = 1;
-const DEFAULT_MAX_CHARS: usize = 2_000;
+const DEFAULT_MAX_CHARS: usize = 6_000;
 const MIN_MAX_CHARS: usize = 400;
 const MAX_MAX_CHARS: usize = 500_000;
 const DEFAULT_GREP_CONTEXT: usize = 20;

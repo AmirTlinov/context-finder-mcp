@@ -83,6 +83,8 @@ MCP tool output is intentionally `.context` text only (agent-native). For machin
 
 To keep agent context windows clean, `[LEGEND]` is **not** included in regular tool output (even in `"full"`). Use the `help` tool to fetch the legend on demand.
 
+Tip: `help {"topic":"tools"}` lists the full tool inventory; `help {"topic":"topics"}` lists available help topics; `help {"topic":"budgets"}` explains the recommended `max_chars` presets.
+
 ## Secrets (safe by default)
 
 Agent context windows are “sticky” — once a secret is printed, it tends to spread. Context Finder therefore uses a conservative denylist by default:

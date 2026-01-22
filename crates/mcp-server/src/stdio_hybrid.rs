@@ -46,34 +46,53 @@ fn sanitize_json_schema_value(schema: &mut Value) {
             map.remove("title");
             map.remove("description");
 
+            // Many function-calling implementations (and downstream validators) only support a
+            // restricted JSON Schema subset. In practice, these keywords can cause a complete
+            // tool-surface rejection, even though they are valid draft-07.
+            //
+            // Policy: fail-open on schema shape (runtime validation happens in the server).
+            map.remove("oneOf");
+            map.remove("anyOf");
+            map.remove("allOf");
+            map.remove("not");
+
             let nullable = matches!(map.get("nullable"), Some(Value::Bool(true)));
             if nullable {
+                // OpenAPI compatibility: drop `nullable` but do NOT encode it via union types.
+                // Optionality should be expressed through `required`, not `type: [T, null]`.
                 map.remove("nullable");
-
-                // Common OpenAPI-style null branch: `{ "const": null, "nullable": true }`.
-                if matches!(map.get("const"), Some(Value::Null)) && !map.contains_key("type") {
+                if matches!(map.get("const"), Some(Value::Null)) {
                     map.remove("const");
-                    map.insert("type".to_string(), Value::String("null".to_string()));
-                } else if let Some(type_value) = map.get_mut("type") {
-                    match type_value {
-                        Value::String(t) => {
-                            if t != "null" {
-                                *type_value = Value::Array(vec![
-                                    Value::String(t.clone()),
-                                    Value::String("null".to_string()),
-                                ]);
-                            }
+                }
+            }
+
+            // Normalize `type` away from unions (`["string","null"]`) which many clients reject.
+            if let Some(type_value) = map.get_mut("type") {
+                match type_value {
+                    Value::String(t) => {
+                        if t == "null" {
+                            map.remove("type");
                         }
-                        Value::Array(types) => {
-                            let has_null = types
-                                .iter()
-                                .any(|v| v.as_str().is_some_and(|s| s == "null"));
-                            if !has_null {
-                                types.push(Value::String("null".to_string()));
-                            }
-                        }
-                        _ => {}
                     }
+                    Value::Array(types) => {
+                        // Keep first non-null type.
+                        let mut chosen: Option<String> = None;
+                        for v in types.iter() {
+                            if let Some(s) = v.as_str() {
+                                if s != "null" {
+                                    chosen = Some(s.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(t) = chosen {
+                            *type_value = Value::String(t);
+                        } else {
+                            // Only null was present; drop type to fail-open.
+                            map.remove("type");
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -115,6 +134,40 @@ fn sanitize_tools_list_schema(message: &mut Value) {
     for tool in tools {
         if let Some(schema) = tool.get_mut("inputSchema") {
             sanitize_json_schema_value(schema);
+
+            fn has_ref_like(value: &Value) -> bool {
+                match value {
+                    Value::Object(map) => {
+                        if map.contains_key("$ref")
+                            || map.contains_key("definitions")
+                            || map.contains_key("$defs")
+                        {
+                            return true;
+                        }
+                        map.values().any(has_ref_like)
+                    }
+                    Value::Array(items) => items.iter().any(has_ref_like),
+                    _ => false,
+                }
+            }
+
+            // OpenCode validates that tool schemas have `type: "object"` at the root.
+            // MCP tool inputs are always JSON objects; strict clients reject union / non-object
+            // root schemas even if they are valid JSON Schema.
+            if let Value::Object(map) = schema {
+                map.insert("type".to_string(), Value::String("object".to_string()));
+                map.remove("$schema");
+            }
+
+            // Many providers reject schemas that rely on `$ref`/`definitions`.
+            // If we detect refs anywhere in the schema, replace it with a permissive object
+            // schema (server-side validation still applies).
+            if has_ref_like(schema) {
+                *schema = serde_json::json!({
+                    "type": "object",
+                    "additionalProperties": true
+                });
+            }
         }
     }
 }

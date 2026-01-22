@@ -435,7 +435,7 @@ Semantic context pack tool (`context_pack`; bounded output; supports path filter
   "include_docs": false,
   "related_mode": "focus",
   "response_mode": "facts",
-  "max_chars": 2000
+  "max_chars": 6000
 }
 ```
 

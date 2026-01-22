@@ -42,7 +42,7 @@ pub struct RepoOnboardingPackRequest {
     #[schemars(description = "Max UTF-8 chars per doc slice")]
     pub doc_max_chars: Option<usize>,
 
-    /// Maximum number of UTF-8 characters for the entire onboarding pack (default: 2000)
+    /// Maximum number of UTF-8 characters for the entire onboarding pack (default: 6000)
     #[schemars(description = "Maximum number of UTF-8 characters for the onboarding pack")]
     pub max_chars: Option<usize>,
 

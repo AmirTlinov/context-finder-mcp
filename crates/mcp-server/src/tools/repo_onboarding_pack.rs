@@ -14,7 +14,7 @@ use super::schemas::response_mode::ResponseMode;
 use super::ContextFinderService;
 
 const VERSION: u32 = 1;
-const DEFAULT_MAX_CHARS: usize = 2_000;
+const DEFAULT_MAX_CHARS: usize = 6_000;
 const MIN_MAX_CHARS: usize = 1_000;
 const MAX_MAX_CHARS: usize = 500_000;
 const DEFAULT_MAP_DEPTH: usize = 2;
@@ -243,7 +243,18 @@ pub(super) async fn compute_repo_onboarding_pack_result(
         .clamp(1, MAX_DOC_MAX_CHARS);
     let doc_max_chars = doc_max_chars.min((max_chars / 2).max(200));
 
-    let map = compute_map_result(root, root_display, map_depth, map_limit, 0).await?;
+    let mut map = compute_map_result(root, root_display, map_depth, map_limit, 0).await?;
+    // Repo onboarding is doc-first; keep the map payload light so even small `max_chars` budgets can
+    // fit at least one doc snippet.
+    map.total_files = None;
+    map.total_chunks = None;
+    map.total_lines = None;
+    for dir in &mut map.directories {
+        dir.files = None;
+        dir.chunks = None;
+        dir.coverage_pct = None;
+        dir.top_symbols = None;
+    }
 
     let has_corpus = ContextFinderService::load_chunk_corpus(root)
         .await

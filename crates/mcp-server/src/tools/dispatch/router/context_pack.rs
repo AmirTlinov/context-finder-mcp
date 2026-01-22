@@ -256,7 +256,7 @@ fn parse_inputs(request: &ContextPackRequest) -> ToolResult<ContextPackInputs> {
     }
 
     let limit = request.limit.unwrap_or(10).clamp(1, 50);
-    let max_chars = request.max_chars.unwrap_or(2_000).max(1_000);
+    let max_chars = request.max_chars.unwrap_or(6_000).max(1_000);
     let max_related_per_primary = request.max_related_per_primary.unwrap_or(3).clamp(0, 12);
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
     let trace = request.trace.unwrap_or(false) && response_mode == ResponseMode::Full;

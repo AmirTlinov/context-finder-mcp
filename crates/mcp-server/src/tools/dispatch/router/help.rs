@@ -1,8 +1,22 @@
 use super::super::{CallToolResult, Content, ContextFinderService, McpError};
+use crate::tools::catalog::TOOL_CATALOG;
 use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::context_legend::ContextLegend;
 use crate::tools::schemas::help::HelpRequest;
 use serde_json::json;
+
+const HELP_TOPICS: &[&str] = &[
+    "legend",
+    "golden_path",
+    "budgets",
+    "cheat",
+    "tools",
+    "topics",
+];
+
+fn render_topics_list() -> String {
+    HELP_TOPICS.join(", ")
+}
 
 /// Explain the `.context` envelope conventions.
 ///
@@ -36,14 +50,38 @@ pub(in crate::tools::dispatch) async fn help(
         );
     }
 
+    if topic.is_empty() || topic == "tools" || topic == "inventory" {
+        doc.push_blank();
+        doc.push_note("Tool inventory:");
+        for tool in TOOL_CATALOG {
+            doc.push_note(&format!("- {}: {}", tool.name, tool.summary));
+        }
+    }
+
+    if topic.is_empty() || topic == "topics" {
+        doc.push_blank();
+        doc.push_note(&format!("Available topics: {}", render_topics_list()));
+        doc.push_note("Example: help {\"topic\":\"tools\"}");
+        doc.push_note("Example: help {\"topic\":\"budgets\"}");
+    }
+
     if topic.is_empty() || topic == "golden_path" || topic == "flow" {
         doc.push_blank();
-        doc.push_note("Recommended flow (dense + deterministic): rg → cat.");
-        doc.push_note("Use read_pack when you want one-call onboarding/recall with cursors.");
-        doc.push_note(
-            "Use context_pack when you want semantic hits + related halo under a strict budget.",
-        );
-        doc.push_note("Use batch for multi-step workflows and `$ref` piping (JSON).");
+        doc.push_note("Day 0 onboarding: capabilities → atlas_pack → evidence_fetch.");
+        doc.push_note("Daily memory: read_pack (defaults).");
+        doc.push_note("Precise navigation: rg → cat (cursor-first).");
+        doc.push_note("One-shot question pack: context_pack (semantic hits + related halo).");
+        doc.push_note("Pipelines: batch v2 + $ref (multi-step in one call).");
+        doc.push_note("See help {\"topic\":\"budgets\"} for max_chars presets.");
+    }
+
+    if topic.is_empty() || topic == "budgets" || topic == "budget" {
+        doc.push_blank();
+        doc.push_note("Recommended max_chars presets:");
+        doc.push_note("~2000: tight-loop reads (cat/rg/ls/tree/text_search)");
+        doc.push_note("~6000: packs (repo_onboarding_pack/read_pack/context_pack/atlas_pack)");
+        doc.push_note("~20000: deep dives / big batches / CI troubleshooting");
+        doc.push_note("Tip: prefer smaller budgets + cursor continuation (more deterministic).");
     }
 
     if topic.is_empty() || topic == "cheat" || topic == "cheatsheet" || topic == "code" {
@@ -64,6 +102,11 @@ pub(in crate::tools::dispatch) async fn help(
     if !topic.is_empty()
         && topic != "legend"
         && topic != "format"
+        && topic != "budgets"
+        && topic != "budget"
+        && topic != "tools"
+        && topic != "inventory"
+        && topic != "topics"
         && topic != "golden_path"
         && topic != "flow"
         && topic != "cheat"
@@ -71,7 +114,10 @@ pub(in crate::tools::dispatch) async fn help(
         && topic != "code"
     {
         doc.push_blank();
-        doc.push_note(&format!("Unknown topic={topic}; showing default help."));
+        doc.push_note(&format!(
+            "Unknown topic={topic}; available topics: {}",
+            render_topics_list()
+        ));
     }
 
     let data = doc.finish();
@@ -93,11 +139,28 @@ pub(in crate::tools::dispatch) async fn help(
         obj.insert(
             "recommended_flow".to_string(),
             json!([
+                "capabilities → atlas_pack (start route)",
                 "rg → cat (deterministic navigation)",
                 "read_pack (one-call onboarding/recall)",
                 "context_pack (semantic hits + related halo)",
                 "batch (multi-step workflows, $ref piping)",
             ]),
+        );
+        obj.insert("topics".to_string(), json!(HELP_TOPICS));
+        obj.insert(
+            "recommended_budgets".to_string(),
+            json!({
+                "tight_loop": 2000,
+                "packs": 6000,
+                "deep_dive": 20000
+            }),
+        );
+        obj.insert(
+            "tools".to_string(),
+            json!(TOOL_CATALOG
+                .iter()
+                .map(|t| json!({ "name": t.name, "summary": t.summary }))
+                .collect::<Vec<_>>()),
         );
         obj.insert(
             "cheat_sheet".to_string(),

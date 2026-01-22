@@ -70,6 +70,11 @@ pub(in crate::tools::dispatch) async fn repo_onboarding_pack(
         doc.push_block_smart(&slice.content);
         doc.push_blank();
     }
+    if result.docs.is_empty() {
+        if let Some(reason) = result.docs_reason {
+            doc.push_note(&format!("docs_reason={reason:?}"));
+        }
+    }
     if result.budget.truncated && !result.omitted_doc_paths.is_empty() {
         doc.push_note("omitted_doc_paths (not included):");
         let max_list = 10usize;

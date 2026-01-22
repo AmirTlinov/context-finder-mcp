@@ -83,7 +83,7 @@ pub struct BatchRequest {
 
     /// Batch items to execute.
     #[schemars(description = "Batch items to execute.")]
-    #[serde(deserialize_with = "deserialize_batch_items")]
+    #[serde(default, deserialize_with = "deserialize_batch_items")]
     pub items: Vec<BatchItem>,
 }
 
