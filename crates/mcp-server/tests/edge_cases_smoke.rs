@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
+use context_vector_store::context_dir_for_project_root;
 use rmcp::{
     model::CallToolRequestParam,
     service::{RoleClient, RunningService, ServiceExt},
     transport::TokioChildProcess,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::time::Duration;
@@ -104,6 +106,17 @@ fn assert_error_code(result: &rmcp::model::CallToolResult, expected: &str) -> Re
     Ok(())
 }
 
+fn assert_not_internal_error(result: &rmcp::model::CallToolResult, tool: &str) -> Result<()> {
+    if result.is_error == Some(true) {
+        let text = tool_text(result)?;
+        assert!(
+            !text.contains("A: error: internal"),
+            "{tool} returned internal error:\n{text}"
+        );
+    }
+    Ok(())
+}
+
 fn run_git(root: &Path, args: &[&str]) -> Result<()> {
     let output = StdCommand::new("git")
         .current_dir(root)
@@ -123,6 +136,64 @@ fn run_git(root: &Path, args: &[&str]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn notebook_path_for_root(root: &Path) -> PathBuf {
+    context_dir_for_project_root(root)
+        .join("notebook")
+        .join("notebook_v1.json")
+}
+
+fn load_notebook_json(root: &Path) -> Result<Value> {
+    let path = notebook_path_for_root(root);
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("read notebook json {}", path.display()))?;
+    serde_json::from_str(&raw).context("parse notebook json")
+}
+
+fn notebook_anchor_value<'a>(notebook: &'a Value, id: &str) -> Result<&'a Value> {
+    notebook
+        .get("anchors")
+        .and_then(Value::as_array)
+        .and_then(|anchors| {
+            anchors
+                .iter()
+                .find(|a| a.get("id").and_then(Value::as_str) == Some(id))
+        })
+        .with_context(|| format!("anchor not found in notebook: {id}"))
+}
+
+fn strip_suggest_fp_tag(anchor: &mut Value) {
+    if let Some(tags) = anchor.get_mut("tags").and_then(Value::as_array_mut) {
+        tags.retain(|t| {
+            t.as_str()
+                .map(|s| !s.starts_with("cf_suggest_fp="))
+                .unwrap_or(true)
+        });
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+fn compute_repo_id_fs(root: &Path) -> String {
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    sha256_hex(canonical.to_string_lossy().as_bytes())
+}
+
+fn extract_backup_id(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let line = line.trim();
+        line.strip_prefix("N: backup_id=")
+            .map(str::trim)
+            .map(str::to_string)
+    })
 }
 
 #[tokio::test]
@@ -447,8 +518,7 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
         }),
     )
     .await;
-    let err = focus_bad_format
-        .expect_err("meaning_focus with invalid output_format should fail");
+    let err = focus_bad_format.expect_err("meaning_focus with invalid output_format should fail");
     let msg = format!("{err:#}");
     assert!(
         msg.contains("Invalid output_format 'md'"),
@@ -958,6 +1028,359 @@ async fn edge_cases_smoke_pack_covers_all_tools_minimally() -> Result<()> {
     )
     .await?;
     assert_ne!(runbook.is_error, Some(true), "runbook_pack should succeed");
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn notebook_smoke_pack_is_gentle_and_rollbackable() -> Result<()> {
+    let root = tempfile::tempdir().context("tempdir root")?;
+    let root_path = root.path();
+
+    // Minimal repo content so notebook_suggest has stable evidence targets.
+    std::fs::create_dir_all(root_path.join("src")).context("mkdir src")?;
+    std::fs::write(
+        root_path.join("src").join("lib.rs"),
+        "pub fn alpha() -> i32 { 1 }\n",
+    )
+    .context("write src/lib.rs")?;
+    std::fs::write(
+        root_path.join("src").join("main.rs"),
+        "fn main() {\n  println!(\"hi\");\n}\n",
+    )
+    .context("write src/main.rs")?;
+    std::fs::create_dir_all(root_path.join(".github").join("workflows"))
+        .context("mkdir .github/workflows")?;
+    std::fs::write(
+        root_path.join(".github").join("workflows").join("ci.yml"),
+        "name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n",
+    )
+    .context("write ci.yml")?;
+
+    let service = start_service(root_path).await?;
+
+    // 1) Use a handcrafted suggestion payload (deterministic + no dependency on structured_content).
+    let anchor_id = "entrypoint_main".to_string();
+    let repo_id = compute_repo_id_fs(root_path);
+    let suggestion = serde_json::json!({
+        "version": 1,
+        "repo_id": repo_id,
+        "query": "smoke",
+        "anchors": [
+            {
+                "id": anchor_id,
+                "kind": "entrypoint",
+                "label": "Entrypoint: main",
+                "evidence": [
+                    { "file": "src/main.rs", "start_line": 1, "end_line": 3, "source_hash": null }
+                ],
+                "locator": null,
+                "tags": []
+            }
+        ],
+        "runbooks": [
+            {
+                "id": "daily_portal",
+                "title": "Daily portal",
+                "sections": [
+                    { "kind": "anchors", "id": "entry", "title": "Entrypoints", "anchor_ids": [anchor_id], "include_evidence": true }
+                ],
+                "tags": []
+            }
+        ],
+        "budget": { "max_chars": 2000, "used_chars": 0, "truncated": false }
+    });
+
+    // 2) Create a manual (not managed) anchor with the same id.
+    let mut manual_anchor = suggestion["anchors"][0].clone();
+    strip_suggest_fp_tag(&mut manual_anchor);
+    if let Some(obj) = manual_anchor.as_object_mut() {
+        obj.insert(
+            "label".to_string(),
+            Value::String("manual anchor (do not overwrite)".to_string()),
+        );
+    }
+    let edit_manual = call_tool(
+        &service,
+        "notebook_edit",
+        serde_json::json!({
+            "version": 1,
+            "scope": "project",
+            "ops": [
+                { "op": "upsert_anchor", "anchor": manual_anchor }
+            ]
+        }),
+    )
+    .await?;
+    assert_ne!(
+        edit_manual.is_error,
+        Some(true),
+        "notebook_edit should succeed"
+    );
+
+    // 3) Safe preview should SKIP (not_managed).
+    let preview_not_managed = call_tool(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "preview",
+            "scope": "project",
+            "overwrite_policy": "safe",
+            "suggestion": suggestion,
+        }),
+    )
+    .await?;
+    assert_ne!(
+        preview_not_managed.is_error,
+        Some(true),
+        "notebook_apply_suggest preview should succeed"
+    );
+    let preview_text = tool_text(&preview_not_managed)?;
+    assert!(
+        preview_text.contains("changes (preview):"),
+        "expected preview change list, got:\n{preview_text}"
+    );
+    assert!(
+        preview_text.contains(&format!("anchor {anchor_id}: skip (not_managed)")),
+        "expected not_managed skip for anchor {anchor_id}, got:\n{preview_text}"
+    );
+
+    // 4) Force apply should overwrite and return a backup id.
+    let apply_force = call_tool(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "apply",
+            "scope": "project",
+            "overwrite_policy": "force",
+            "allow_truncated": false,
+            "suggestion": suggestion.clone(),
+        }),
+    )
+    .await?;
+    assert_ne!(
+        apply_force.is_error,
+        Some(true),
+        "notebook_apply_suggest apply(force) should succeed"
+    );
+    let backup_id =
+        extract_backup_id(tool_text(&apply_force)?).context("expected backup_id on apply")?;
+    assert!(!backup_id.trim().is_empty(), "backup_id must not be empty");
+
+    // 5) Manually edit the now-managed anchor label (simulate human edits).
+    let notebook_after_apply = load_notebook_json(root_path)?;
+    let mut edited_anchor = notebook_anchor_value(&notebook_after_apply, &anchor_id)?.clone();
+    if let Some(obj) = edited_anchor.as_object_mut() {
+        obj.insert(
+            "label".to_string(),
+            Value::String("MANUAL EDIT (should cause skip)".to_string()),
+        );
+    }
+    let edit_modified = call_tool(
+        &service,
+        "notebook_edit",
+        serde_json::json!({
+            "version": 1,
+            "scope": "project",
+            "ops": [
+                { "op": "upsert_anchor", "anchor": edited_anchor }
+            ]
+        }),
+    )
+    .await?;
+    assert_ne!(
+        edit_modified.is_error,
+        Some(true),
+        "notebook_edit (manual edit) should succeed"
+    );
+
+    // 6) Safe preview should SKIP (manual_modified).
+    let preview_manual_modified = call_tool(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "preview",
+            "scope": "project",
+            "overwrite_policy": "safe",
+            "suggestion": suggestion.clone(),
+        }),
+    )
+    .await?;
+    assert_ne!(
+        preview_manual_modified.is_error,
+        Some(true),
+        "notebook_apply_suggest preview should succeed"
+    );
+    let preview2_text = tool_text(&preview_manual_modified)?;
+    assert!(
+        preview2_text.contains(&format!("anchor {anchor_id}: skip (manual_modified)")),
+        "expected manual_modified skip for anchor {anchor_id}, got:\n{preview2_text}"
+    );
+
+    // 7) Rollback should restore the pre-force snapshot (manual anchor, no suggest fp tag).
+    let rollback = call_tool(
+        &service,
+        "notebook_apply_suggest",
+        serde_json::json!({
+            "version": 1,
+            "mode": "rollback",
+            "scope": "project",
+            "backup_id": backup_id,
+        }),
+    )
+    .await?;
+    assert_ne!(
+        rollback.is_error,
+        Some(true),
+        "notebook_apply_suggest rollback should succeed"
+    );
+
+    let notebook_after_rollback = load_notebook_json(root_path)?;
+    let restored = notebook_anchor_value(&notebook_after_rollback, &anchor_id)?;
+    let label = restored
+        .get("label")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        label.contains("manual anchor"),
+        "expected manual anchor label after rollback, got: {label}"
+    );
+    let tags: Vec<String> = restored
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|v| {
+            v.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        tags.iter().all(|t| !t.starts_with("cf_suggest_fp=")),
+        "expected no suggest fp tags after rollback, got: {tags:?}"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn weird_repos_smoke_pack_is_stable_and_bounded() -> Result<()> {
+    let base = tempfile::tempdir().context("tempdir base")?;
+    let base_path = base.path();
+
+    let dataset_repo = base_path.join("repo_dataset_heavy");
+    let polyglot_repo = base_path.join("repo_polyglot");
+    let nodocs_repo = base_path.join("repo_no_docs");
+
+    // dataset-heavy: lots of noise + one small code entrypoint.
+    std::fs::create_dir_all(dataset_repo.join("data")).context("mkdir dataset data")?;
+    let mut csv = String::new();
+    for i in 0..2000 {
+        csv.push_str(&format!("{i},value_{i}\n"));
+    }
+    std::fs::write(dataset_repo.join("data").join("train.csv"), csv).context("write train.csv")?;
+    std::fs::write(dataset_repo.join("data").join("blob.bin"), vec![0_u8; 8192])
+        .context("write blob.bin")?;
+    std::fs::create_dir_all(dataset_repo.join("src")).context("mkdir dataset src")?;
+    std::fs::write(
+        dataset_repo.join("src").join("main.py"),
+        "def main():\n  print('hi')\n\nif __name__ == '__main__':\n  main()\n",
+    )
+    .context("write dataset src/main.py")?;
+
+    // polyglot: multiple languages, minimal build markers.
+    std::fs::create_dir_all(polyglot_repo.join("src")).context("mkdir polyglot src")?;
+    std::fs::write(
+        polyglot_repo.join("src").join("main.rs"),
+        "fn main() { println!(\"hi\"); }\n",
+    )
+    .context("write polyglot main.rs")?;
+    std::fs::write(
+        polyglot_repo.join("src").join("index.ts"),
+        "export const answer: number = 42;\n",
+    )
+    .context("write polyglot index.ts")?;
+    std::fs::write(
+        polyglot_repo.join("src").join("app.py"),
+        "def run():\n  return 42\n",
+    )
+    .context("write polyglot app.py")?;
+    std::fs::write(
+        polyglot_repo.join("package.json"),
+        "{ \"name\": \"poly\" }\n",
+    )
+    .context("write package.json")?;
+
+    // no-docs: no README/CI hints; should still degrade gracefully.
+    std::fs::create_dir_all(nodocs_repo.join("core")).context("mkdir nodocs core")?;
+    std::fs::write(
+        nodocs_repo.join("core").join("logic.rs"),
+        "pub fn f() -> i32 { 1 }\n",
+    )
+    .context("write nodocs logic.rs")?;
+
+    let service = start_service(base_path).await?;
+
+    for (name, repo) in [
+        ("dataset-heavy", &dataset_repo),
+        ("polyglot", &polyglot_repo),
+        ("no-docs", &nodocs_repo),
+    ] {
+        let repo_str = repo.to_string_lossy().to_string();
+
+        let ls = call_tool(
+            &service,
+            "ls",
+            serde_json::json!({ "path": repo_str, "limit": 50, "max_chars": 3000, "response_mode": "facts" }),
+        )
+        .await?;
+        assert_not_internal_error(&ls, &format!("{name}: ls"))?;
+
+        let onboarding = call_tool(
+            &service,
+            "repo_onboarding_pack",
+            serde_json::json!({
+                "path": repo.to_string_lossy(),
+                "max_chars": 3000,
+                "response_mode": "facts",
+                "auto_index": false
+            }),
+        )
+        .await?;
+        assert_not_internal_error(&onboarding, &format!("{name}: repo_onboarding_pack"))?;
+
+        let read_pack = call_tool(
+            &service,
+            "read_pack",
+            serde_json::json!({
+                "path": repo.to_string_lossy(),
+                "intent": "onboarding",
+                "max_lines": 120,
+                "max_chars": 4000,
+                "response_mode": "facts"
+            }),
+        )
+        .await?;
+        assert_not_internal_error(&read_pack, &format!("{name}: read_pack"))?;
+
+        let meaning = call_tool(
+            &service,
+            "meaning_pack",
+            serde_json::json!({
+                "path": repo.to_string_lossy(),
+                "query": "how to run tests",
+                "max_chars": 4000,
+                "response_mode": "facts"
+            }),
+        )
+        .await?;
+        assert_not_internal_error(&meaning, &format!("{name}: meaning_pack"))?;
+    }
 
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
