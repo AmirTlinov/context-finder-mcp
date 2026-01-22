@@ -59,9 +59,13 @@ The default `response_mode` is designed to be low-noise:
 
 For tight-loop navigation/read tools (`cat`, `rg`, `ls`, `text_search`, `tree`), the default is typically `"minimal"` so answers are mostly *project content*.
 
+Note: `ls` lists directory entries (names only; like `ls -a` by default). If you need repo-wide file paths, use `find`.
+
 Note: In low-noise modes, `rg` defaults to `format: "plain"` (higher payload density). Set `format: "numbered"` if you want per-line number prefixes in the hunk content.
 
-Note: `rg` / `ls` / `text_search` treat the filesystem as the source of truth even when a corpus exists — corpora can be partial (scoped indexing, in-progress indexing), and tight-loop read tools must never silently miss files.
+Note: When a tight-loop tool returns an empty result (e.g. `rg` / `text_search` / `ls` / `tree`), it prints a single `next:` hint for the best fallback to avoid tool-call thrash.
+
+Note: `cat` / `ls` / `find` / `rg` / `text_search` treat the filesystem as the source of truth even when a corpus exists — corpora can be partial (scoped indexing, in-progress indexing), and tight-loop read tools must never silently miss files.
 
 Note: `text_search` is budget-first. Use `max_chars` to bound the response size; under tight budgets it returns a small number of matches (possibly with truncated match text) plus `next_cursor` for continuation.
 

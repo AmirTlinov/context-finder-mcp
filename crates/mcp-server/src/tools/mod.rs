@@ -16,6 +16,7 @@ mod external_memory;
 mod file_slice;
 mod grep_context;
 mod list_files;
+mod ls;
 mod map;
 mod meaning_diagram;
 mod meaning_focus;

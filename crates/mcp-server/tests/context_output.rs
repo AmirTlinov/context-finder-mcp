@@ -390,7 +390,7 @@ async fn cat_handles_long_paths_under_tight_budgets() -> Result<()> {
 }
 
 #[tokio::test]
-async fn ls_context_output_respects_max_chars_and_keeps_cursor() -> Result<()> {
+async fn find_context_output_respects_max_chars_and_keeps_cursor() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
@@ -418,7 +418,7 @@ async fn ls_context_output_respects_max_chars_and_keeps_cursor() -> Result<()> {
     let max_chars = 260usize;
     let text = call_tool_text(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file_pattern": "src/*",
@@ -431,7 +431,7 @@ async fn ls_context_output_respects_max_chars_and_keeps_cursor() -> Result<()> {
     assert_is_low_noise_context_doc(&text);
     anyhow::ensure!(
         text.chars().count() <= max_chars,
-        "expected ls `.context` output to respect max_chars (used_chars={}, max_chars={})",
+        "expected find `.context` output to respect max_chars (used_chars={}, max_chars={})",
         text.chars().count(),
         max_chars
     );

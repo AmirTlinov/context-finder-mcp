@@ -74,11 +74,11 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
     },
     ToolDescriptor {
         name: "ls",
-        summary: "Bounded file enumeration (ls-like, glob/substring filter).",
+        summary: "Directory listing (names-only, like `ls -a`, bounded + cursor).",
     },
     ToolDescriptor {
         name: "find",
-        summary: "Alias for `ls` (bounded file enumeration).",
+        summary: "Bounded file enumeration (find/rg --files-like, recursive paths).",
     },
     ToolDescriptor {
         name: "cat",

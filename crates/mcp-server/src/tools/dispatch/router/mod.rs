@@ -15,6 +15,7 @@ pub(super) mod grep_context;
 pub(super) mod help;
 pub(super) mod impact;
 pub(super) mod list_files;
+pub(super) mod ls;
 pub(super) mod map;
 pub(super) mod meaning_focus;
 pub(super) mod meaning_pack;

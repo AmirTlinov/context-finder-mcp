@@ -12,6 +12,7 @@ pub mod grep_context;
 pub mod help;
 pub mod impact;
 pub mod list_files;
+pub mod ls;
 pub mod map;
 pub mod meaning_focus;
 pub mod meaning_pack;

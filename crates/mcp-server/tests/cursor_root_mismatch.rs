@@ -106,7 +106,7 @@ async fn ls_cursor_root_mismatch_includes_details() -> Result<()> {
 
     let list1 = call_tool_allow_error(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "path": root1.path().to_string_lossy(),
             "file_pattern": "src/*.rs",
@@ -119,7 +119,7 @@ async fn ls_cursor_root_mismatch_includes_details() -> Result<()> {
     assert_ne!(
         list1.is_error,
         Some(true),
-        "expected ls on root1 to succeed"
+        "expected find on root1 to succeed"
     );
     assert!(
         list1.structured_content.is_none(),
@@ -130,16 +130,16 @@ async fn ls_cursor_root_mismatch_includes_details() -> Result<()> {
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("ls(root1) missing text output")?;
+        .context("find(root1) missing text output")?;
     let cursor = list1_text
         .lines()
         .find_map(|line| line.strip_prefix("M: ").map(str::trim))
         .map(str::to_string)
-        .context("ls(root1) missing M: cursor (expected pagination)")?;
+        .context("find(root1) missing M: cursor (expected pagination)")?;
 
     let list2 = call_tool_allow_error(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "path": root2.path().to_string_lossy(),
             "cursor": cursor,
@@ -153,12 +153,12 @@ async fn ls_cursor_root_mismatch_includes_details() -> Result<()> {
     assert_eq!(
         list2.is_error,
         Some(true),
-        "expected ls on root2 with root1 cursor to error"
+        "expected find on root2 with root1 cursor to error"
     );
 
     assert!(
         list2.structured_content.is_none(),
-        "ls should not return structured_content on error"
+        "find should not return structured_content on error"
     );
     let list2_text = list2
         .content
@@ -607,7 +607,7 @@ async fn ls_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Resu
 
     let res_root2 = call_tool_allow_error(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "path": root2.path().to_string_lossy(),
             "file_pattern": "src/*.rs",
@@ -620,13 +620,13 @@ async fn ls_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Resu
     assert_ne!(
         res_root2.is_error,
         Some(true),
-        "expected ls(root2) to succeed"
+        "expected find(root2) to succeed"
     );
     let cursor = extract_cursor_from_text(&res_root2)?;
 
     let res_root1 = call_tool_allow_error(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "path": root1.path().to_string_lossy(),
             "file_pattern": "src/*.rs",
@@ -639,12 +639,12 @@ async fn ls_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Resu
     assert_ne!(
         res_root1.is_error,
         Some(true),
-        "expected ls(root1) to succeed"
+        "expected find(root1) to succeed"
     );
 
     let res_foreign = call_tool_allow_error(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "cursor": cursor,
             "max_chars": 20_000,
@@ -655,7 +655,7 @@ async fn ls_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Resu
     assert_eq!(
         res_foreign.is_error,
         Some(true),
-        "expected ls cursor-only root switch to error"
+        "expected find cursor-only root switch to error"
     );
     let res_text = res_foreign
         .content

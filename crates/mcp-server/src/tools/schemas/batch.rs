@@ -16,8 +16,8 @@ pub enum BatchToolName {
     Tree,
     #[serde(alias = "file_slice")]
     Cat,
-    #[serde(alias = "list_files")]
     Ls,
+    #[serde(alias = "list_files")]
     Find,
     TextSearch,
     #[serde(alias = "grep_context")]

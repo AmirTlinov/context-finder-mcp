@@ -63,7 +63,7 @@ async fn batch_v2_resolves_refs_between_items() -> Result<()> {
         "path": root.to_string_lossy(),
         "max_chars": 20000,
         "items": [
-            { "id": "files", "tool": "ls", "input": { "file_pattern": "src/*", "limit": 10 } },
+            { "id": "files", "tool": "find", "input": { "file_pattern": "src/*", "limit": 10 } },
             { "id": "ctx", "tool": "rg", "input": { "pattern": "TARGET", "file": { "$ref": "#/items/files/data/files/0" }, "before": 0, "after": 0 } }
         ]
     });
@@ -158,7 +158,7 @@ async fn batch_v2_accepts_action_payload_aliases() -> Result<()> {
         .map(|t| t.text.as_str())
         .context("batch missing text output")?;
     assert!(
-        text.contains("item files: tool=ls status=ok"),
+        text.contains("item files: tool=find status=ok"),
         "expected files item to succeed"
     );
     assert!(
@@ -197,7 +197,7 @@ async fn batch_v2_respects_max_chars_budget() -> Result<()> {
         "path": root.to_string_lossy(),
         "max_chars": max_chars,
         "items": [
-            { "id": "files", "tool": "ls", "input": { "file_pattern": "src/*", "limit": 5 } }
+            { "id": "files", "tool": "find", "input": { "file_pattern": "src/*", "limit": 5 } }
         ]
     });
 
@@ -280,7 +280,10 @@ async fn batch_accepts_legacy_string_items_for_back_compat() -> Result<()> {
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
         .context("batch missing text output")?;
-    assert!(text.contains("tool=ls status=ok"), "expected ls to succeed");
+    assert!(
+        text.contains("tool=find status=ok"),
+        "expected find to succeed"
+    );
     assert!(text.contains("src/a.txt"), "expected src/a.txt in output");
 
     service.cancel().await.context("shutdown mcp service")?;

@@ -38,7 +38,7 @@ fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
 }
 
 #[tokio::test]
-async fn ls_uses_env_root_when_path_missing() -> Result<()> {
+async fn find_uses_env_root_when_path_missing() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let tmp = tempfile::tempdir().context("tempdir")?;
@@ -67,20 +67,20 @@ async fn ls_uses_env_root_when_path_missing() -> Result<()> {
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "ls".into(),
+            name: "find".into(),
             arguments: args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling ls")??;
+    .context("timeout calling find")??;
 
-    assert_ne!(result.is_error, Some(true), "ls returned error");
+    assert_ne!(result.is_error, Some(true), "find returned error");
     let text = result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("ls missing text output")?;
+        .context("find missing text output")?;
     assert!(
         text.contains("src/a.rs"),
         "expected src/a.rs in list_files output"
@@ -91,7 +91,7 @@ async fn ls_uses_env_root_when_path_missing() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "list_files created project context side effects"
+        "find created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

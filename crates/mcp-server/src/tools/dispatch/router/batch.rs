@@ -4,9 +4,9 @@ use super::super::{
     BatchBudget, BatchItemResult, BatchItemStatus, BatchRequest, BatchResult, BatchToolName,
     CallToolResult, CapabilitiesRequest, Content, ContextFinderService, ContextPackRequest,
     ContextRequest, DoctorRequest, EvidenceFetchRequest, ExplainRequest, FileSliceRequest,
-    GrepContextRequest, HelpRequest, ImpactRequest, ListFilesRequest, MapRequest, McpError,
-    MeaningFocusRequest, MeaningPackRequest, OverviewRequest, ResponseMode, SearchRequest,
-    TextSearchRequest, ToolMeta, TraceRequest, WorktreePackRequest,
+    GrepContextRequest, HelpRequest, ImpactRequest, ListFilesRequest, LsRequest, MapRequest,
+    McpError, MeaningFocusRequest, MeaningPackRequest, OverviewRequest, ResponseMode,
+    SearchRequest, TextSearchRequest, ToolMeta, TraceRequest, WorktreePackRequest,
 };
 use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::schemas::batch::BatchItem;
@@ -184,7 +184,7 @@ async fn dispatch_tool(
             Ok(req) => super::file_slice::file_slice(service, &req).await,
             Err(err) => Ok(invalid_request(format!("Invalid input for cat: {err}"))),
         },
-        BatchToolName::Ls => typed_call!(ListFilesRequest, super::list_files::list_files, "ls"),
+        BatchToolName::Ls => typed_call!(LsRequest, super::ls::ls, "ls"),
         BatchToolName::Find => {
             typed_call!(ListFilesRequest, super::list_files::list_files, "find")
         }

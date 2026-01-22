@@ -13,6 +13,7 @@ use super::file_slice::compute_file_slice_result;
 use super::grep_context::{compute_grep_context_result, GrepContextComputeOptions};
 pub(super) use super::list_files::finalize_list_files_budget;
 use super::list_files::{compute_list_files_result, decode_list_files_cursor};
+use super::ls::{compute_ls_result, decode_ls_cursor, finalize_ls_budget};
 use super::map::{compute_map_result, decode_map_cursor};
 use super::meaning_focus::compute_meaning_focus_result;
 use super::meaning_pack::compute_meaning_pack_result;
@@ -44,6 +45,7 @@ use super::schemas::impact::{ImpactRequest, ImpactResult, SymbolLocation, UsageI
 use super::schemas::list_files::ListFilesRequest;
 #[cfg(test)]
 use super::schemas::list_files::ListFilesTruncation;
+use super::schemas::ls::LsRequest;
 use super::schemas::map::MapRequest;
 use super::schemas::meaning_focus::MeaningFocusRequest;
 use super::schemas::meaning_pack::MeaningPackRequest;
@@ -3529,22 +3531,22 @@ impl ContextFinderService {
         ))
     }
 
-    /// List project file paths (ls-like).
+    /// List directory entries (names-only, like `ls -a`).
     #[tool(
-        description = "List project file paths (relative to project root). Safe replacement for `ls/find/rg --files`; supports glob/substring filtering and bounded output."
+        description = "List directory entries (names-only, like `ls -a`) within the project root. Bounded output with cursor pagination; safe replacement for shell `ls` in agent loops."
     )]
     pub async fn ls(
         &self,
-        Parameters(request): Parameters<ListFilesRequest>,
+        Parameters(request): Parameters<LsRequest>,
     ) -> Result<CallToolResult, McpError> {
         Ok(strip_structured_content(
-            router::list_files::list_files(self, request).await?,
+            router::ls::ls(self, request).await?,
         ))
     }
 
     /// List project file paths (find-like).
     #[tool(
-        description = "Alias for `ls`. List project file paths (relative to project root). Safe replacement for `find`/`ls` in agent loops; supports glob/substring filtering and bounded output."
+        description = "List project file paths (relative to project root), like `find`/`rg --files` but bounded + cursor-based. Use this when you need recursive paths; use `ls` for directory entries."
     )]
     pub async fn find(
         &self,

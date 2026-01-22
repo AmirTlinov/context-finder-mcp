@@ -507,7 +507,7 @@ async fn mcp_ls_lists_paths_and_is_bounded() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "temp project unexpectedly has a context dir before ls"
+        "temp project unexpectedly has a context dir before find"
     );
 
     let list_args = serde_json::json!({
@@ -519,24 +519,24 @@ async fn mcp_ls_lists_paths_and_is_bounded() -> Result<()> {
     let list_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "ls".into(),
+            name: "find".into(),
             arguments: list_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling ls")??;
+    .context("timeout calling find")??;
 
-    assert_ne!(list_result.is_error, Some(true), "ls returned error");
+    assert_ne!(list_result.is_error, Some(true), "find returned error");
     let list_text = list_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("ls missing text output")?;
+        .context("find missing text output")?;
     assert!(list_text.contains("src/main.rs"));
     assert!(
         !list_text.contains("\nM: "),
-        "did not expect truncation cursor for ls"
+        "did not expect truncation cursor for find"
     );
 
     let limited_args = serde_json::json!({
@@ -547,23 +547,23 @@ async fn mcp_ls_lists_paths_and_is_bounded() -> Result<()> {
     let limited_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "ls".into(),
+            name: "find".into(),
             arguments: limited_args.as_object().cloned(),
         }),
     )
     .await
-    .context("timeout calling ls (limited)")??;
+    .context("timeout calling find (limited)")??;
     assert_ne!(
         limited_result.is_error,
         Some(true),
-        "ls (limited) returned error"
+        "find (limited) returned error"
     );
     let limited_text = limited_result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .context("ls (limited) missing text output")?;
+        .context("find (limited) missing text output")?;
     assert!(
         limited_text.contains("\nM: "),
         "expected truncation cursor (M:)"
@@ -573,7 +573,7 @@ async fn mcp_ls_lists_paths_and_is_bounded() -> Result<()> {
         !context_dir.exists()
             && !root.join(".context").exists()
             && !root.join(".context-finder").exists(),
-        "ls created project context side effects"
+        "find created project context side effects"
     );
 
     service.cancel().await.context("shutdown mcp service")?;

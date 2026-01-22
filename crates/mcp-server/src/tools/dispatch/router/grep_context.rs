@@ -56,6 +56,10 @@ fn render_grep_context_context_doc(
     if response_mode != ResponseMode::Minimal {
         doc.push_root_fingerprint(result.meta.as_ref().and_then(|meta| meta.root_fingerprint));
     }
+    if result.hunks.is_empty() && !result.truncated {
+        doc.push_note("hint: no matches");
+        doc.push_note("next: text_search (substring fallback)");
+    }
     for hunk in &result.hunks {
         doc.push_ref_header(&hunk.file, hunk.start_line, Some("grep hunk"));
         doc.push_block_smart(&hunk.content);

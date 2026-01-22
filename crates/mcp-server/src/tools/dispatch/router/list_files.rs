@@ -56,7 +56,9 @@ pub(in crate::tools::dispatch) async fn list_files(
         {
             if let Ok(decoded) = decode_list_files_cursor(cursor) {
                 if decoded.v == CURSOR_VERSION
-                    && (decoded.tool == "ls" || decoded.tool == "list_files")
+                    && (decoded.tool == "find"
+                        || decoded.tool == "ls"
+                        || decoded.tool == "list_files")
                 {
                     if let Some(root) = decoded.root.as_deref().map(str::trim) {
                         if !root.is_empty() {
@@ -139,9 +141,11 @@ pub(in crate::tools::dispatch) async fn list_files(
                 ));
             }
         };
-        if decoded.v != CURSOR_VERSION || (decoded.tool != "ls" && decoded.tool != "list_files") {
+        if decoded.v != CURSOR_VERSION
+            || (decoded.tool != "find" && decoded.tool != "ls" && decoded.tool != "list_files")
+        {
             return Ok(invalid_cursor_with_meta(
-                "Invalid cursor: wrong tool (expected ls)",
+                "Invalid cursor: wrong tool (expected find)",
                 meta_for_output.clone(),
             ));
         }
@@ -189,13 +193,14 @@ pub(in crate::tools::dispatch) async fn list_files(
             let restart_allow_secrets = requested_allow_secrets.unwrap_or(decoded.allow_secrets);
             let mut next_actions: Vec<ToolNextAction> = Vec::new();
             next_actions.push(ToolNextAction {
-                tool: "ls".to_string(),
+                tool: "find".to_string(),
                 args: json!({ "path": root_display, "cursor": cursor_for_actions }),
-                reason: "Continue pagination using the cursor only (drop file_pattern override)."
-                    .to_string(),
+                reason:
+                    "Continue find pagination using the cursor only (drop file_pattern override)."
+                        .to_string(),
             });
             next_actions.push(ToolNextAction {
-                tool: "ls".to_string(),
+                tool: "find".to_string(),
                 args: json!({
                     "path": root_display,
                     "file_pattern": normalized_file_pattern,
@@ -203,7 +208,7 @@ pub(in crate::tools::dispatch) async fn list_files(
                     "max_chars": effective_max_chars,
                     "allow_secrets": restart_allow_secrets,
                 }),
-                reason: "Restart pagination without cursor using the new file_pattern.".to_string(),
+                reason: "Restart find without cursor using the new file_pattern.".to_string(),
             });
             return Ok(cursor_mismatch_with_meta_details(
                 "Cursor mismatch: request file_pattern differs from cursor",
@@ -238,14 +243,14 @@ pub(in crate::tools::dispatch) async fn list_files(
                     .or(decoded.file_pattern.clone());
                 let mut next_actions: Vec<ToolNextAction> = Vec::new();
                 next_actions.push(ToolNextAction {
-                    tool: "ls".to_string(),
+                    tool: "find".to_string(),
                     args: json!({ "path": root_display, "cursor": cursor_for_actions }),
                     reason:
-                        "Continue pagination using the cursor only (drop allow_secrets override)."
+                        "Continue find pagination using the cursor only (drop allow_secrets override)."
                             .to_string(),
                 });
                 next_actions.push(ToolNextAction {
-                    tool: "ls".to_string(),
+                    tool: "find".to_string(),
                     args: json!({
                         "path": root_display,
                         "file_pattern": restart_file_pattern,
@@ -253,8 +258,7 @@ pub(in crate::tools::dispatch) async fn list_files(
                         "max_chars": effective_max_chars,
                         "allow_secrets": allow_secrets,
                     }),
-                    reason: "Restart pagination without cursor using the new allow_secrets."
-                        .to_string(),
+                    reason: "Restart find without cursor using the new allow_secrets.".to_string(),
                 });
                 return Ok(cursor_mismatch_with_meta_details(
                         "Cursor mismatch: request allow_secrets differs from cursor",
@@ -349,7 +353,7 @@ pub(in crate::tools::dispatch) async fn list_files(
     if response_mode == ResponseMode::Full {
         if let Some(cursor) = result.next_cursor.clone() {
             result.next_actions = Some(vec![ToolNextAction {
-                tool: "ls".to_string(),
+                tool: "find".to_string(),
                 args: json!({
                     "path": root_display,
                     "file_pattern": effective_file_pattern,
@@ -358,7 +362,7 @@ pub(in crate::tools::dispatch) async fn list_files(
                     "allow_secrets": allow_secrets,
                     "cursor": cursor,
                 }),
-                reason: "Continue ls pagination with the next cursor.".to_string(),
+                reason: "Continue find pagination with the next cursor.".to_string(),
             }]);
         }
         if result.next_actions.is_none() && result.files.is_empty() {
@@ -370,18 +374,18 @@ pub(in crate::tools::dispatch) async fn list_files(
                     "depth": 2,
                     "limit": 50,
                 }),
-                reason: "Show a directory overview (ls lists files only).".to_string(),
+                reason: "Show a directory overview (find lists file paths only).".to_string(),
             });
             if effective_file_pattern.is_some() {
                 next_actions.push(ToolNextAction {
-                    tool: "ls".to_string(),
+                    tool: "find".to_string(),
                     args: json!({
                         "path": root_display,
                         "limit": limit,
                         "max_chars": max_chars,
                         "allow_secrets": allow_secrets,
                     }),
-                    reason: "Retry ls without file_pattern filtering.".to_string(),
+                    reason: "Retry find without file_pattern filtering.".to_string(),
                 });
             }
             result.next_actions = Some(next_actions);
@@ -398,9 +402,10 @@ pub(in crate::tools::dispatch) async fn list_files(
             doc.push_note("hint: output is truncated; retry with a larger max_chars");
         } else {
             doc.push_note("hint: no matching file paths");
+            doc.push_note("hint: find lists file paths only; for directories use ls/tree");
+            doc.push_note("next: ls or tree (directory overview)");
         }
-        doc.push_note("hint: ls lists files only; for directories use tree");
-        if !allow_secrets {
+        if !result.truncated && !allow_secrets {
             doc.push_note(
                 "hint: secret paths (.env, keys, *.pem) are hidden by default; pass allow_secrets=true if you explicitly need them",
             );
@@ -420,6 +425,6 @@ pub(in crate::tools::dispatch) async fn list_files(
         output,
         &result,
         meta_for_output,
-        "list_files",
+        "find",
     ))
 }

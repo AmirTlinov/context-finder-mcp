@@ -272,6 +272,10 @@ pub(in crate::tools::dispatch) async fn map(
     if response_mode != ResponseMode::Minimal {
         doc.push_root_fingerprint(meta_for_structured.root_fingerprint);
     }
+    if result.directories.is_empty() && !result.truncated {
+        doc.push_note("hint: no directories found");
+        doc.push_note("next: ls (list directory entries)");
+    }
     for dir in &result.directories {
         match (dir.files, dir.chunks) {
             (Some(files), Some(chunks)) => {

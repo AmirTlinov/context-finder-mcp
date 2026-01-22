@@ -240,7 +240,7 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
 
     let service = start_service(root1_path).await?;
 
-    // 1) Default root inference: first call without `path` should work and not leak secrets.
+    // 1) Default root inference: first call without `path` should work (ls is names-only).
     let ls_default = call_tool(
         &service,
         "ls",
@@ -253,19 +253,45 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
     .await?;
     assert_ne!(ls_default.is_error, Some(true), "ls should succeed");
     let ls_text = tool_text(&ls_default)?;
+    assert!(ls_text.contains("src"), "expected src directory in ls");
     assert!(
-        ls_text.contains("src/main.rs"),
-        "expected src/main.rs in ls"
+        ls_text.contains(".env"),
+        "expected .env to appear in ls by default (names-only)"
     );
     assert!(
-        !ls_text.contains(".env"),
-        "did not expect .env in ls by default"
+        !ls_text.contains("src/main.rs"),
+        "did not expect recursive file paths in ls output"
+    );
+
+    // 1c) UX: when `find` yields zero results, it should suggest directory tools (dirs vs files trap).
+    std::fs::create_dir_all(root1_path.join("dir_only").join("nested"))
+        .context("mkdir dir_only/nested")?;
+    let find_dir_only = call_tool(
+        &service,
+        "find",
+        serde_json::json!({
+            "file_pattern": "dir_only",
+            "limit": 50,
+            "max_chars": 2000,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        find_dir_only.is_error,
+        Some(true),
+        "find dir_only should succeed"
+    );
+    let ls_dir_text = tool_text(&find_dir_only)?;
+    assert!(
+        ls_dir_text.contains("next: ls") || ls_dir_text.contains("next: ls or tree"),
+        "expected find empty output to suggest ls/tree, got:\n{ls_dir_text}"
     );
 
     // 1b) Cursor rails: cursor-only continuation should work; mismatched params must fail-closed.
     let ls_src_page1 = call_tool(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "file_pattern": "src",
             "limit": 1,
@@ -277,31 +303,31 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
     assert_ne!(
         ls_src_page1.is_error,
         Some(true),
-        "ls src page1 should succeed"
+        "find src page1 should succeed"
     );
     let ls_src_cursor = extract_cursor(tool_text(&ls_src_page1)?)
-        .context("expected ls cursor for src pagination")?;
+        .context("expected find cursor for src pagination")?;
 
     let ls_src_page2 = call_tool(
         &service,
-        "ls",
+        "find",
         serde_json::json!({ "cursor": ls_src_cursor.clone() }),
     )
     .await
-    .context("ls cursor-only continuation failed")?;
+    .context("find cursor-only continuation failed")?;
     assert_ne!(
         ls_src_page2.is_error,
         Some(true),
-        "ls src page2 should succeed"
+        "find src page2 should succeed"
     );
     assert!(
         tool_text(&ls_src_page2)?.contains("src/main.rs"),
-        "expected src/main.rs on the second ls page"
+        "expected src/main.rs on the second find page"
     );
 
     let ls_mismatch_file_pattern = call_tool(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "cursor": ls_src_cursor.clone(),
             "file_pattern": "README",
@@ -312,7 +338,7 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
 
     let ls_mismatch_allow_secrets = call_tool(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "cursor": ls_src_cursor,
             "allow_secrets": true,

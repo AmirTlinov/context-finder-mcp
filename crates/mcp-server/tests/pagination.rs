@@ -118,7 +118,7 @@ async fn call_tool(
 }
 
 #[tokio::test]
-async fn ls_supports_cursor_pagination() -> Result<()> {
+async fn find_supports_cursor_pagination() -> Result<()> {
     let (tmp, service) = start_service().await?;
     let root = tmp.path();
 
@@ -139,7 +139,7 @@ async fn ls_supports_cursor_pagination() -> Result<()> {
         };
         let result = call_tool(
             &service,
-            "ls",
+            "find",
             serde_json::json!({
                 "path": root.to_string_lossy(),
                 "file_pattern": "src/*",
@@ -150,7 +150,7 @@ async fn ls_supports_cursor_pagination() -> Result<()> {
             }),
         )
         .await?;
-        assert_ne!(result.is_error, Some(true), "ls returned error");
+        assert_ne!(result.is_error, Some(true), "find returned error");
 
         let text = tool_text(&result)?;
         let files = extract_bare_lines(text);

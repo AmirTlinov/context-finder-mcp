@@ -127,7 +127,7 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
 
     let ls = call_tool_text(
         &service,
-        "ls",
+        "find",
         serde_json::json!({
             "path": root.to_string_lossy(),
             "file_pattern": "src/*",

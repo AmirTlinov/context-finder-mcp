@@ -90,11 +90,11 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
         .await
         .context("save corpus")?;
 
-    // ls should include src/main.rs even though corpus does not.
+    // find should include src/main.rs even though corpus does not.
     let list_result = tokio::time::timeout(
         Duration::from_secs(10),
         service.call_tool(CallToolRequestParam {
-            name: "ls".into(),
+            name: "find".into(),
             arguments: serde_json::json!({
                 "path": root.to_string_lossy(),
                 "limit": 50,
@@ -106,8 +106,8 @@ async fn read_tools_use_filesystem_even_when_corpus_is_partial() -> Result<()> {
         }),
     )
     .await
-    .context("timeout calling ls")??;
-    assert_ne!(list_result.is_error, Some(true), "ls returned error");
+    .context("timeout calling find")??;
+    assert_ne!(list_result.is_error, Some(true), "find returned error");
     assert!(
         list_result
             .content
