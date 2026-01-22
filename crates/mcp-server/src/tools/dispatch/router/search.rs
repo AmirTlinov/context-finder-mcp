@@ -198,7 +198,9 @@ pub(in crate::tools::dispatch) async fn search(
                     format!("search: {} hits", response.results.len())
                 };
                 doc.push_answer(&answer);
-                doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                if response_mode != ResponseMode::Minimal {
+                    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                }
                 if response_mode == ResponseMode::Full {
                     doc.push_note("diagnostic: semantic index unavailable; using lexical fallback");
                     doc.push_note(&format!("fallback_pattern: {fallback_pattern}"));
@@ -419,7 +421,9 @@ pub(in crate::tools::dispatch) async fn search(
     } else {
         doc.push_answer(&format!("search: {} hits", response.results.len()));
     }
-    doc.push_root_fingerprint(response.meta.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(response.meta.root_fingerprint);
+    }
     if response_mode == ResponseMode::Full {
         if let Some(reason) = semantic_disabled_reason.as_deref() {
             doc.push_note("semantic: disabled (embeddings unavailable; using fuzzy-only).");

@@ -351,7 +351,9 @@ pub(in crate::tools::dispatch) async fn overview(
                     "overview: best-effort"
                 };
                 doc.push_answer(answer);
-                doc.push_root_fingerprint(result.meta.root_fingerprint);
+                if response_mode != ResponseMode::Minimal {
+                    doc.push_root_fingerprint(result.meta.root_fingerprint);
+                }
                 if response_mode != ResponseMode::Minimal {
                     doc.push_note("semantic: unavailable (filesystem fallback)");
                 }
@@ -445,7 +447,9 @@ pub(in crate::tools::dispatch) async fn overview(
         "overview: {} (files={}, chunks={}, lines={})",
         result.project.name, result.project.files, result.project.chunks, result.project.lines
     ));
-    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(result.meta.root_fingerprint);
+    }
     if !result.layers.is_empty() {
         doc.push_note("layers:");
         for layer in &result.layers {

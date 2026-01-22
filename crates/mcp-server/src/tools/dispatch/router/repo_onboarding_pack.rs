@@ -56,7 +56,9 @@ pub(in crate::tools::dispatch) async fn repo_onboarding_pack(
         result.map.directories.len(),
         result.docs.len()
     ));
-    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    }
     doc.push_note("tree:");
     for dir in &result.map.directories {
         doc.push_line(&dir.path);

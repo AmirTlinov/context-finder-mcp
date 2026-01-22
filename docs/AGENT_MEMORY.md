@@ -16,7 +16,7 @@ If you still need `rg → open → grep → cat → repeat`, treat that as a pro
 2.5) optional `external_memory` — bounded, deduped “worklog memory” if available
    - `codex_cli`: project-scoped prompts/plans/changes extracted from your Codex CLI sessions (zero-config)
    - `branchmind`: structured decisions/evidence overlay when a project-scoped cache file is present
-3) `next_cursor` (when needed) — continue without re-sending parameters
+3) `next_cursor` (when needed) — continue without re-sending parameters (cursor-only continuation). If you pass a cursor plus conflicting parameters, the tool returns `cursor_mismatch` with `next_actions` ([contracts/command/v1/error.schema.json](../contracts/command/v1/error.schema.json)).
 
 ### Codex CLI overlay (`codex_cli`)
 
@@ -94,6 +94,8 @@ If you *explicitly* need to inspect secret files (debugging local env, investiga
 ```
 
 This flag is captured in cursors, so cursor-only continuation stays consistent and safe.
+If you need to change `allow_secrets` mid-stream, restart without a cursor (otherwise you will get
+`cursor_mismatch`).
 
 ## Day 0: first call in any repo
 

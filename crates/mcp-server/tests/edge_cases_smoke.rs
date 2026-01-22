@@ -207,7 +207,22 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
         "fn main() {\n  println!(\"hi\");\n}\n",
     )
     .context("write src/main.rs")?;
+    std::fs::write(
+        root1_path.join("src").join("lib.rs"),
+        "pub const LIB: &str = \"hi\";\n",
+    )
+    .context("write src/lib.rs")?;
     std::fs::write(root1_path.join("README.md"), "one\ntwo\nthree\n").context("write README.md")?;
+    std::fs::write(
+        root1_path.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    )
+    .context("write Cargo.toml")?;
+    std::fs::write(
+        root1_path.join("AGENTS.md"),
+        "AGENTS: test harness\n".repeat(400),
+    )
+    .context("write AGENTS.md")?;
     std::fs::write(root1_path.join(".env"), "SECRET=1\n").context("write .env")?;
 
     // Outside-root file for traversal checks.
@@ -247,6 +262,65 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
         "did not expect .env in ls by default"
     );
 
+    // 1b) Cursor rails: cursor-only continuation should work; mismatched params must fail-closed.
+    let ls_src_page1 = call_tool(
+        &service,
+        "ls",
+        serde_json::json!({
+            "file_pattern": "src",
+            "limit": 1,
+            "max_chars": 4000,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert_ne!(
+        ls_src_page1.is_error,
+        Some(true),
+        "ls src page1 should succeed"
+    );
+    let ls_src_cursor = extract_cursor(tool_text(&ls_src_page1)?)
+        .context("expected ls cursor for src pagination")?;
+
+    let ls_src_page2 = call_tool(
+        &service,
+        "ls",
+        serde_json::json!({ "cursor": ls_src_cursor.clone() }),
+    )
+    .await
+    .context("ls cursor-only continuation failed")?;
+    assert_ne!(
+        ls_src_page2.is_error,
+        Some(true),
+        "ls src page2 should succeed"
+    );
+    assert!(
+        tool_text(&ls_src_page2)?.contains("src/main.rs"),
+        "expected src/main.rs on the second ls page"
+    );
+
+    let ls_mismatch_file_pattern = call_tool(
+        &service,
+        "ls",
+        serde_json::json!({
+            "cursor": ls_src_cursor.clone(),
+            "file_pattern": "README",
+        }),
+    )
+    .await?;
+    assert_error_code(&ls_mismatch_file_pattern, "cursor_mismatch")?;
+
+    let ls_mismatch_allow_secrets = call_tool(
+        &service,
+        "ls",
+        serde_json::json!({
+            "cursor": ls_src_cursor,
+            "allow_secrets": true,
+        }),
+    )
+    .await?;
+    assert_error_code(&ls_mismatch_allow_secrets, "cursor_mismatch")?;
+
     // 2) `cat` basic read (no explicit path).
     let cat_main = call_tool(
         &service,
@@ -268,6 +342,10 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
     assert!(
         cat_text.contains("fn main()"),
         "expected file content in cat"
+    );
+    assert!(
+        !cat_text.contains("root_fingerprint="),
+        "expected minimal cat output to suppress root_fingerprint noise"
     );
 
     // 3) response_mode compat: `compact` should deserialize (alias for minimal).
@@ -377,13 +455,47 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
         );
     }
 
+    // 8) read_pack memory cursor should allow max_lines override (avoid strict cursor failures).
+    let memory_page1 = call_tool(
+        &service,
+        "read_pack",
+        serde_json::json!({
+            "intent": "memory",
+            "max_chars": 800,
+            "response_mode": "facts"
+        }),
+    )
+    .await?;
+    assert_ne!(
+        memory_page1.is_error,
+        Some(true),
+        "read_pack memory page1 should succeed"
+    );
+    let memory_cursor =
+        extract_cursor(tool_text(&memory_page1)?).context("expected memory cursor in read_pack")?;
+
+    let memory_page2 = call_tool(
+        &service,
+        "read_pack",
+        serde_json::json!({
+            "cursor": memory_cursor,
+            "max_lines": 200
+        }),
+    )
+    .await?;
+    assert_ne!(
+        memory_page2.is_error,
+        Some(true),
+        "read_pack memory cursor should accept max_lines override"
+    );
+
     // 8) `tree` should also hide secrets.
     let tree = call_tool(
         &service,
         "tree",
         serde_json::json!({
             "depth": 3,
-            "limit": 100,
+            "limit": 1,
             "max_chars": 4000,
             "response_mode": "facts",
         }),
@@ -391,9 +503,30 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
     .await?;
     assert_ne!(tree.is_error, Some(true), "tree should succeed");
     let tree_text = tool_text(&tree)?;
-    assert!(tree_text.contains("tree:"), "expected tree output header");
-    assert!(tree_text.contains("src"), "expected src in tree");
-    assert!(!tree_text.contains(".env"), "did not expect .env in tree");
+    assert!(
+        tree_text.contains("tree:"),
+        "expected tree output header, got:\n{tree_text}"
+    );
+    assert!(
+        tree_text.contains("src") || tree_text.contains("\n."),
+        "expected src or root summary in tree, got:\n{tree_text}"
+    );
+    assert!(
+        !tree_text.contains(".env"),
+        "did not expect .env in tree, got:\n{tree_text}"
+    );
+
+    let tree_cursor = extract_cursor(tree_text).context("expected tree cursor")?;
+    let tree_mismatch_depth = call_tool(
+        &service,
+        "tree",
+        serde_json::json!({
+            "cursor": tree_cursor,
+            "depth": 4,
+        }),
+    )
+    .await?;
+    assert_error_code(&tree_mismatch_depth, "cursor_mismatch")?;
 
     // 9) `rg` invalid regex should be invalid_request.
     let rg_invalid = call_tool(

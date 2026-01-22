@@ -45,7 +45,7 @@ pub(super) fn grep_context_content_budget(max_chars: usize, response_mode: Respo
 
 fn render_grep_context_context_doc(
     result: &GrepContextResult,
-    _response_mode: ResponseMode,
+    response_mode: ResponseMode,
 ) -> String {
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!(
@@ -53,7 +53,9 @@ fn render_grep_context_context_doc(
         result.hunks.len(),
         result.pattern
     ));
-    doc.push_root_fingerprint(result.meta.as_ref().and_then(|meta| meta.root_fingerprint));
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(result.meta.as_ref().and_then(|meta| meta.root_fingerprint));
+    }
     for hunk in &result.hunks {
         doc.push_ref_header(&hunk.file, hunk.start_line, Some("grep hunk"));
         doc.push_block_smart(&hunk.content);

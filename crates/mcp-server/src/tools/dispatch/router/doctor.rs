@@ -320,7 +320,9 @@ pub(in crate::tools::dispatch) async fn doctor(
         result.issues.len(),
         result.hints.len()
     ));
-    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(result.meta.root_fingerprint);
+    }
     if response_mode == ResponseMode::Full {
         doc.push_note(&format!("profile: {}", result.env.profile));
         doc.push_note(&format!(

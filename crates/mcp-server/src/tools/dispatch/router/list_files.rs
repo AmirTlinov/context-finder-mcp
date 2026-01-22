@@ -11,8 +11,9 @@ use serde_json::json;
 
 use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
-    attach_structured_content, internal_error_with_meta, invalid_cursor_with_meta,
-    invalid_cursor_with_meta_details, invalid_request_with_meta, meta_for_request,
+    attach_structured_content, cursor_mismatch_with_meta_details, internal_error_with_meta,
+    invalid_cursor_with_meta, invalid_cursor_with_meta_details, invalid_request_with_meta,
+    meta_for_request,
 };
 
 /// List project files within the project root (safe file enumeration for agents).
@@ -26,7 +27,6 @@ pub(in crate::tools::dispatch) async fn list_files(
     const MAX_MAX_CHARS: usize = 500_000;
 
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Minimal);
-    let mut cursor_ignored_note: Option<&'static str> = None;
 
     let requested_allow_secrets = request.allow_secrets;
     if let Some(cursor) = request.cursor.as_deref() {
@@ -120,88 +120,168 @@ pub(in crate::tools::dispatch) async fn list_files(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let (cursor_last_file, cursor_allow_secrets, cursor_limit, cursor_max_chars) =
-        if let Some(cursor) = request
-            .cursor
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            let decoded = match decode_list_files_cursor(cursor) {
-                Ok(v) => v,
-                Err(err) => {
-                    return Ok(invalid_cursor_with_meta(
-                        format!("Invalid cursor: {err}"),
-                        meta_for_output.clone(),
-                    ));
-                }
-            };
-            if decoded.v != CURSOR_VERSION || (decoded.tool != "ls" && decoded.tool != "list_files")
-            {
+    let mut cursor_file_pattern: Option<String> = None;
+    let (cursor_last_file, cursor_allow_secrets, cursor_limit, cursor_max_chars) = if let Some(
+        cursor,
+    ) = request
+        .cursor
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let cursor = cursor.to_string();
+        let decoded = match decode_list_files_cursor(&cursor) {
+            Ok(v) => v,
+            Err(err) => {
                 return Ok(invalid_cursor_with_meta(
-                    "Invalid cursor: wrong tool (expected ls)",
+                    format!("Invalid cursor: {err}"),
                     meta_for_output.clone(),
                 ));
             }
-            if let Some(hash) = decoded.root_hash {
-                if hash != cursor_fingerprint(&root_display) {
-                    let expected_root_fingerprint = meta_for_output
-                        .root_fingerprint
-                        .unwrap_or_else(|| root_fingerprint(&root_display));
-                    return Ok(invalid_cursor_with_meta_details(
-                        "Invalid cursor: different root",
-                        meta_for_output.clone(),
-                        json!({
-                            "expected_root_fingerprint": expected_root_fingerprint,
-                            "cursor_root_fingerprint": Some(hash),
-                        }),
-                    ));
-                }
-            } else if decoded.root.as_deref() != Some(&root_display) {
+        };
+        if decoded.v != CURSOR_VERSION || (decoded.tool != "ls" && decoded.tool != "list_files") {
+            return Ok(invalid_cursor_with_meta(
+                "Invalid cursor: wrong tool (expected ls)",
+                meta_for_output.clone(),
+            ));
+        }
+        if let Some(hash) = decoded.root_hash {
+            if hash != cursor_fingerprint(&root_display) {
                 let expected_root_fingerprint = meta_for_output
                     .root_fingerprint
                     .unwrap_or_else(|| root_fingerprint(&root_display));
-                let cursor_root_fingerprint = decoded.root.as_deref().map(root_fingerprint);
                 return Ok(invalid_cursor_with_meta_details(
                     "Invalid cursor: different root",
                     meta_for_output.clone(),
                     json!({
                         "expected_root_fingerprint": expected_root_fingerprint,
-                        "cursor_root_fingerprint": cursor_root_fingerprint,
+                        "cursor_root_fingerprint": Some(hash),
                     }),
                 ));
             }
-            if decoded.file_pattern != normalized_file_pattern {
-                // Pattern changes the file universe. Restart from the beginning.
-                cursor_ignored_note =
-                    Some("cursor ignored: different file_pattern (restarting pagination)");
-                (None, None, None, None)
-            } else if let Some(allow_secrets) = requested_allow_secrets {
-                if decoded.allow_secrets != allow_secrets {
-                    // The caller is explicitly changing allow_secrets; restart from the beginning.
-                    cursor_ignored_note =
-                        Some("cursor ignored: different allow_secrets (restarting pagination)");
-                    (None, None, None, None)
-                } else {
-                    (
-                        Some(decoded.last_file),
-                        Some(decoded.allow_secrets),
-                        Some(decoded.limit),
-                        Some(decoded.max_chars),
-                    )
-                }
-            } else {
-                (
-                    Some(decoded.last_file),
-                    Some(decoded.allow_secrets),
-                    Some(decoded.limit),
-                    Some(decoded.max_chars),
-                )
-            }
-        } else {
-            (None, None, None, None)
-        };
+        } else if decoded.root.as_deref() != Some(&root_display) {
+            let expected_root_fingerprint = meta_for_output
+                .root_fingerprint
+                .unwrap_or_else(|| root_fingerprint(&root_display));
+            let cursor_root_fingerprint = decoded.root.as_deref().map(root_fingerprint);
+            return Ok(invalid_cursor_with_meta_details(
+                "Invalid cursor: different root",
+                meta_for_output.clone(),
+                json!({
+                    "expected_root_fingerprint": expected_root_fingerprint,
+                    "cursor_root_fingerprint": cursor_root_fingerprint,
+                }),
+            ));
+        }
 
+        if normalized_file_pattern.is_some() && decoded.file_pattern != normalized_file_pattern {
+            let cursor_for_actions = compact_cursor_alias(service, cursor.clone()).await;
+            let effective_limit = request
+                .limit
+                .or(Some(decoded.limit).filter(|n| *n > 0))
+                .unwrap_or(DEFAULT_LIMIT)
+                .clamp(1, MAX_LIMIT);
+            let effective_max_chars = request
+                .max_chars
+                .or(Some(decoded.max_chars).filter(|n| *n > 0))
+                .unwrap_or(DEFAULT_MAX_CHARS)
+                .clamp(1, MAX_MAX_CHARS);
+            let restart_allow_secrets = requested_allow_secrets.unwrap_or(decoded.allow_secrets);
+            let mut next_actions: Vec<ToolNextAction> = Vec::new();
+            next_actions.push(ToolNextAction {
+                tool: "ls".to_string(),
+                args: json!({ "path": root_display, "cursor": cursor_for_actions }),
+                reason: "Continue pagination using the cursor only (drop file_pattern override)."
+                    .to_string(),
+            });
+            next_actions.push(ToolNextAction {
+                tool: "ls".to_string(),
+                args: json!({
+                    "path": root_display,
+                    "file_pattern": normalized_file_pattern,
+                    "limit": effective_limit,
+                    "max_chars": effective_max_chars,
+                    "allow_secrets": restart_allow_secrets,
+                }),
+                reason: "Restart pagination without cursor using the new file_pattern.".to_string(),
+            });
+            return Ok(cursor_mismatch_with_meta_details(
+                "Cursor mismatch: request file_pattern differs from cursor",
+                meta_for_output.clone(),
+                json!({
+                    "mismatch": "file_pattern",
+                    "cursor_file_pattern": decoded.file_pattern,
+                    "request_file_pattern": normalized_file_pattern,
+                }),
+                Some(
+                    "Repeat the call with cursor only, or drop cursor to restart with new options."
+                        .to_string(),
+                ),
+                next_actions,
+            ));
+        }
+        if let Some(allow_secrets) = requested_allow_secrets {
+            if decoded.allow_secrets != allow_secrets {
+                let cursor_for_actions = compact_cursor_alias(service, cursor.clone()).await;
+                let effective_limit = request
+                    .limit
+                    .or(Some(decoded.limit).filter(|n| *n > 0))
+                    .unwrap_or(DEFAULT_LIMIT)
+                    .clamp(1, MAX_LIMIT);
+                let effective_max_chars = request
+                    .max_chars
+                    .or(Some(decoded.max_chars).filter(|n| *n > 0))
+                    .unwrap_or(DEFAULT_MAX_CHARS)
+                    .clamp(1, MAX_MAX_CHARS);
+                let restart_file_pattern = normalized_file_pattern
+                    .clone()
+                    .or(decoded.file_pattern.clone());
+                let mut next_actions: Vec<ToolNextAction> = Vec::new();
+                next_actions.push(ToolNextAction {
+                    tool: "ls".to_string(),
+                    args: json!({ "path": root_display, "cursor": cursor_for_actions }),
+                    reason:
+                        "Continue pagination using the cursor only (drop allow_secrets override)."
+                            .to_string(),
+                });
+                next_actions.push(ToolNextAction {
+                    tool: "ls".to_string(),
+                    args: json!({
+                        "path": root_display,
+                        "file_pattern": restart_file_pattern,
+                        "limit": effective_limit,
+                        "max_chars": effective_max_chars,
+                        "allow_secrets": allow_secrets,
+                    }),
+                    reason: "Restart pagination without cursor using the new allow_secrets."
+                        .to_string(),
+                });
+                return Ok(cursor_mismatch_with_meta_details(
+                        "Cursor mismatch: request allow_secrets differs from cursor",
+                        meta_for_output.clone(),
+                        json!({
+                            "mismatch": "allow_secrets",
+                            "cursor_allow_secrets": decoded.allow_secrets,
+                            "request_allow_secrets": allow_secrets,
+                        }),
+                        Some("Repeat the call with cursor only, or drop cursor to restart with new options.".to_string()),
+                        next_actions,
+                    ));
+            }
+        }
+
+        cursor_file_pattern = decoded.file_pattern.clone();
+        (
+            Some(decoded.last_file),
+            Some(decoded.allow_secrets),
+            Some(decoded.limit),
+            Some(decoded.max_chars),
+        )
+    } else {
+        (None, None, None, None)
+    };
+
+    let effective_file_pattern = normalized_file_pattern.clone().or(cursor_file_pattern);
     let limit = request
         .limit
         .or(cursor_limit.filter(|n| *n > 0))
@@ -219,7 +299,7 @@ pub(in crate::tools::dispatch) async fn list_files(
     let mut result = match compute_list_files_result(
         &root,
         &root_display,
-        request.file_pattern.as_deref(),
+        effective_file_pattern.as_deref(),
         limit,
         max_chars,
         allow_secrets,
@@ -272,7 +352,7 @@ pub(in crate::tools::dispatch) async fn list_files(
                 tool: "ls".to_string(),
                 args: json!({
                     "path": root_display,
-                    "file_pattern": normalized_file_pattern,
+                    "file_pattern": effective_file_pattern,
                     "limit": limit,
                     "max_chars": max_chars,
                     "allow_secrets": allow_secrets,
@@ -281,13 +361,50 @@ pub(in crate::tools::dispatch) async fn list_files(
                 reason: "Continue ls pagination with the next cursor.".to_string(),
             }]);
         }
+        if result.next_actions.is_none() && result.files.is_empty() {
+            let mut next_actions: Vec<ToolNextAction> = Vec::new();
+            next_actions.push(ToolNextAction {
+                tool: "tree".to_string(),
+                args: json!({
+                    "path": root_display,
+                    "depth": 2,
+                    "limit": 50,
+                }),
+                reason: "Show a directory overview (ls lists files only).".to_string(),
+            });
+            if effective_file_pattern.is_some() {
+                next_actions.push(ToolNextAction {
+                    tool: "ls".to_string(),
+                    args: json!({
+                        "path": root_display,
+                        "limit": limit,
+                        "max_chars": max_chars,
+                        "allow_secrets": allow_secrets,
+                    }),
+                    reason: "Retry ls without file_pattern filtering.".to_string(),
+                });
+            }
+            result.next_actions = Some(next_actions);
+        }
     }
 
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!("{} files", result.files.len()));
-    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
-    if let Some(note) = cursor_ignored_note {
-        doc.push_note(note);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    }
+    if result.files.is_empty() {
+        if result.truncated {
+            doc.push_note("hint: output is truncated; retry with a larger max_chars");
+        } else {
+            doc.push_note("hint: no matching file paths");
+        }
+        doc.push_note("hint: ls lists files only; for directories use tree");
+        if !allow_secrets {
+            doc.push_note(
+                "hint: secret paths (.env, keys, *.pem) are hidden by default; pass allow_secrets=true if you explicitly need them",
+            );
+        }
     }
     for file in &result.files {
         doc.push_line(file);

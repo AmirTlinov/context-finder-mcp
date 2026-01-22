@@ -75,7 +75,9 @@ pub(in crate::tools::dispatch) async fn meaning_focus(
     if want_context {
         let mut doc = ContextDocBuilder::new();
         doc.push_answer("meaning_focus");
-        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+        if response_mode != ResponseMode::Minimal {
+            doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+        }
         doc.push_note("pack:");
         doc.push_block_smart(&result.pack);
         if result.budget.truncated {

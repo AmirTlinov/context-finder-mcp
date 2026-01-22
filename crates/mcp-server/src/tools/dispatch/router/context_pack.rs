@@ -707,7 +707,9 @@ async fn build_lexical_fallback_result(
         format!("context_pack: {} items", output.items.len())
     };
     doc.push_answer(&answer);
-    doc.push_root_fingerprint(output.meta.root_fingerprint);
+    if inputs.response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(output.meta.root_fingerprint);
+    }
     if inputs.response_mode == ResponseMode::Full {
         if let Some(note) = args.reason_note {
             doc.push_note(note);
@@ -1061,7 +1063,9 @@ pub(in crate::tools::dispatch) async fn context_pack(
 
             let mut doc = ContextDocBuilder::new();
             doc.push_answer(&format!("context_pack: {} items", output.items.len()));
-            doc.push_root_fingerprint(output.meta.root_fingerprint);
+            if inputs.response_mode != ResponseMode::Minimal {
+                doc.push_root_fingerprint(output.meta.root_fingerprint);
+            }
             if output.items.is_empty() && inputs.response_mode != ResponseMode::Minimal {
                 doc.push_note("no matches found");
             }
@@ -1127,7 +1131,9 @@ pub(in crate::tools::dispatch) async fn context_pack(
 
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!("context_pack: {} items", output.items.len()));
-    doc.push_root_fingerprint(output.meta.root_fingerprint);
+    if inputs.response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(output.meta.root_fingerprint);
+    }
     if output.items.is_empty() && inputs.response_mode != ResponseMode::Minimal {
         doc.push_note("no matches found");
     }

@@ -10,8 +10,9 @@ use serde_json::json;
 
 use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
-    attach_structured_content, internal_error_with_meta, invalid_cursor_with_meta,
-    invalid_cursor_with_meta_details, invalid_request_with_meta, meta_for_request,
+    attach_structured_content, cursor_mismatch_with_meta_details, internal_error_with_meta,
+    invalid_cursor_with_meta, invalid_cursor_with_meta_details, invalid_request_with_meta,
+    meta_for_request,
 };
 
 /// Get project structure overview
@@ -20,7 +21,6 @@ pub(in crate::tools::dispatch) async fn map(
     mut request: MapRequest,
 ) -> Result<CallToolResult, McpError> {
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Minimal);
-    let mut cursor_ignored_note: Option<&'static str> = None;
 
     if let Some(cursor) = request.cursor.as_deref() {
         match expand_cursor_alias(service, cursor).await {
@@ -169,10 +169,42 @@ pub(in crate::tools::dispatch) async fn map(
             ));
         }
         if decoded.depth != depth {
-            // Depth changes the aggregation shape. Treat this as a recoverable mismatch: ignore
-            // the cursor and restart from offset 0 (instead of failing the tool call).
-            cursor_ignored_note = Some("cursor ignored: different depth (restarting pagination)");
-            0usize
+            let cursor_for_actions = compact_cursor_alias(
+                service,
+                request
+                    .cursor
+                    .as_deref()
+                    .expect("cursor_payload implies cursor is present")
+                    .to_string(),
+            )
+            .await;
+            return Ok(cursor_mismatch_with_meta_details(
+                "Cursor mismatch: request depth differs from cursor",
+                meta_for_output.clone(),
+                json!({
+                    "mismatch": "depth",
+                    "cursor_depth": decoded.depth,
+                    "request_depth": depth,
+                }),
+                Some(
+                    "Repeat the call with cursor only, or drop cursor to restart with new options."
+                        .to_string(),
+                ),
+                vec![
+                    ToolNextAction {
+                        tool: "tree".to_string(),
+                        args: json!({ "path": root_display, "cursor": cursor_for_actions }),
+                        reason: "Continue pagination using the cursor only (drop depth override)."
+                            .to_string(),
+                    },
+                    ToolNextAction {
+                        tool: "tree".to_string(),
+                        args: json!({ "path": root_display, "depth": depth, "limit": limit }),
+                        reason: "Restart pagination without cursor using the new depth."
+                            .to_string(),
+                    },
+                ],
+            ));
         } else {
             decoded.offset
         }
@@ -237,9 +269,8 @@ pub(in crate::tools::dispatch) async fn map(
 
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!("tree: {} directories", result.directories.len()));
-    doc.push_root_fingerprint(meta_for_structured.root_fingerprint);
-    if let Some(note) = cursor_ignored_note {
-        doc.push_note(note);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(meta_for_structured.root_fingerprint);
     }
     for dir in &result.directories {
         match (dir.files, dir.chunks) {

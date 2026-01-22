@@ -174,11 +174,17 @@ pub(in crate::tools::dispatch) async fn file_slice(
     }
 
     let mut doc = ContextDocBuilder::new();
-    doc.push_answer(&format!(
-        "{} (lines {}–{})",
-        result.file, result.start_line, result.end_line
-    ));
-    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    if response_mode == ResponseMode::Minimal {
+        doc.push_answer(&format!("lines {}–{}", result.start_line, result.end_line));
+    } else {
+        doc.push_answer(&format!(
+            "{} (lines {}–{})",
+            result.file, result.start_line, result.end_line
+        ));
+    }
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    }
     doc.push_ref_header(&result.file, result.start_line, Some("file slice"));
     doc.push_block_smart(&result.content);
     if result.truncated {

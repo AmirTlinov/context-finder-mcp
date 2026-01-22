@@ -140,6 +140,25 @@ pub(super) fn invalid_cursor_with_meta_details(
     )
 }
 
+pub(super) fn cursor_mismatch_with_meta_details(
+    message: impl Into<String>,
+    meta: ToolMeta,
+    details: serde_json::Value,
+    hint: Option<String>,
+    next_actions: Vec<ToolNextAction>,
+) -> CallToolResult {
+    tool_error_envelope_with_meta(
+        ErrorEnvelope {
+            code: "cursor_mismatch".to_string(),
+            message: message.into(),
+            details: Some(details),
+            hint,
+            next_actions,
+        },
+        meta,
+    )
+}
+
 pub(super) fn invalid_request_with_meta(
     message: impl Into<String>,
     meta: ToolMeta,

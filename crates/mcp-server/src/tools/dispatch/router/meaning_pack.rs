@@ -72,7 +72,9 @@ pub(in crate::tools::dispatch) async fn meaning_pack(
     if want_context {
         let mut doc = ContextDocBuilder::new();
         doc.push_answer("meaning_pack");
-        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+        if response_mode != ResponseMode::Minimal {
+            doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+        }
         if response_mode == ResponseMode::Facts && root.join(".worktrees").is_dir() {
             doc.push_note(
                 "hint: worktrees detected; use atlas_pack/worktree_pack for branch overview",

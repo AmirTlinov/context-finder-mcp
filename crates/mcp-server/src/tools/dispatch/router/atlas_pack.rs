@@ -82,7 +82,9 @@ pub(in crate::tools::dispatch) async fn atlas_pack(
 
     let mut doc = ContextDocBuilder::new();
     doc.push_answer("atlas_pack");
-    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    }
 
     if response_mode != ResponseMode::Minimal {
         let identity = resolve_repo_identity(&root);

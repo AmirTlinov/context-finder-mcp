@@ -34,6 +34,11 @@ Error responses also include this note when a root is known, so provenance stays
 If a cursor continuation crosses roots, the `invalid_cursor` error includes details notes such as:
 `details.expected_root_fingerprint` and `details.cursor_root_fingerprint`.
 
+If a cursor continuation tries to change query-shaping parameters (e.g. `ls.file_pattern`,
+`ls.allow_secrets`, `tree.depth`), Context Finder **fails closed** with `cursor_mismatch` instead
+of silently restarting pagination. The error includes actionable `next_actions` (see
+[contracts/command/v1/error.schema.json](../contracts/command/v1/error.schema.json)).
+
 ## If semantic results look wrong
 
 Treat this as a **trust failure**, not “the model is dumb”.

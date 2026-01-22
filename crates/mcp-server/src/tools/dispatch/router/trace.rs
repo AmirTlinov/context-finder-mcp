@@ -103,7 +103,9 @@ pub(in crate::tools::dispatch) async fn trace(
                     "trace: best-effort"
                 };
                 doc.push_answer(answer);
-                doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                if response_mode != ResponseMode::Minimal {
+                    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                }
                 if response_mode == ResponseMode::Full {
                     doc.push_note("diagnostic: semantic index unavailable; using lexical anchors");
                 }
@@ -245,7 +247,9 @@ pub(in crate::tools::dispatch) async fn trace(
         "trace: found={} depth={}",
         result.found, result.depth
     ));
-    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(result.meta.root_fingerprint);
+    }
     for step in &result.path {
         doc.push_ref_header(&step.file, step.line, Some(step.symbol.as_str()));
         if let Some(rel) = step.relationship.as_deref() {

@@ -908,7 +908,9 @@ pub(in crate::tools::dispatch) async fn text_search(
             result.matches.len(),
             result.pattern
         ));
-        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+        if response_mode != ResponseMode::Minimal {
+            doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+        }
 
         // Agent-native packing: group matches by file so the output is mostly project payload,
         // not repeated `R:` headers. Preserve the first-seen file order for determinism.

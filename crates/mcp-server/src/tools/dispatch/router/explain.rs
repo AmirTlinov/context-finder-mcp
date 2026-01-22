@@ -283,7 +283,9 @@ pub(in crate::tools::dispatch) async fn explain(
                     "explain: best-effort"
                 };
                 doc.push_answer(answer);
-                doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                if response_mode != ResponseMode::Minimal {
+                    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                }
                 if response_mode == ResponseMode::Full {
                     doc.push_note("diagnostic: semantic index unavailable; using lexical fallback");
                 }
@@ -362,7 +364,9 @@ pub(in crate::tools::dispatch) async fn explain(
 
                         let mut doc = ContextDocBuilder::new();
                         doc.push_answer("explain: best-effort (filesystem fallback)");
-                        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                        if response_mode != ResponseMode::Minimal {
+                            doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                        }
                         if response_mode != ResponseMode::Minimal {
                             doc.push_note("fallback: grep_context (symbol not in graph)");
                         }
@@ -406,7 +410,9 @@ pub(in crate::tools::dispatch) async fn explain(
         "explain: {} {}:{}",
         result.symbol, result.file, result.line
     ));
-    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(result.meta.root_fingerprint);
+    }
     doc.push_ref_header(&result.file, result.line, Some(result.symbol.as_str()));
     doc.push_block_smart(&result.content);
     if response_mode == ResponseMode::Full {

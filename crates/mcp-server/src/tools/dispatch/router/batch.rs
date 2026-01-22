@@ -120,7 +120,7 @@ fn batch_item_status_label(status: BatchItemStatus) -> &'static str {
 fn render_batch_context_doc(
     output: &BatchResult,
     docs_by_id: &HashMap<String, String>,
-    _response_mode: ResponseMode,
+    response_mode: ResponseMode,
 ) -> String {
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!(
@@ -128,7 +128,9 @@ fn render_batch_context_doc(
         output.items.len(),
         output.budget.truncated
     ));
-    doc.push_root_fingerprint(output.meta.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(output.meta.root_fingerprint);
+    }
 
     for item in &output.items {
         doc.push_note(&format!(

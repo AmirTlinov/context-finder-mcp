@@ -4192,7 +4192,6 @@ async fn handle_memory_intent(
             || request.after.is_some()
             || request.case_sensitive.is_some()
             || request.start_line.is_some()
-            || request.max_lines.is_some()
             || request.prefer_code.is_some()
             || request.include_docs.is_some();
         if overrides {
@@ -7153,7 +7152,9 @@ fn render_read_pack_context_doc(result: &ReadPackResult, response_mode: Response
             read_pack_intent_label(result.intent)
         )),
     }
-    doc.push_root_fingerprint(result.meta.as_ref().and_then(|meta| meta.root_fingerprint));
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(result.meta.as_ref().and_then(|meta| meta.root_fingerprint));
+    }
 
     for section in &result.sections {
         let ReadPackSection::ProjectFacts { result: facts } = section else {

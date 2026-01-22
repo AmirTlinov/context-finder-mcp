@@ -55,7 +55,9 @@ pub(in crate::tools::dispatch) async fn evidence_fetch(
 
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!("evidence_fetch: items={}", result.items.len()));
-    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+    }
     for item in &result.items {
         doc.push_ref_header(
             &item.evidence.file,

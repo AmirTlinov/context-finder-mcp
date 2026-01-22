@@ -251,7 +251,9 @@ pub(in crate::tools::dispatch) async fn impact(
                     format!("impact: {} hits", result.total_usages)
                 };
                 doc.push_answer(&answer);
-                doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                if response_mode != ResponseMode::Minimal {
+                    doc.push_root_fingerprint(meta_for_output.root_fingerprint);
+                }
                 if response_mode == ResponseMode::Full {
                     doc.push_note("diagnostic: semantic index unavailable; using lexical fallback");
                 }
@@ -421,7 +423,9 @@ pub(in crate::tools::dispatch) async fn impact(
         "impact: {} usages={} files={} public_api={}",
         result.symbol, result.total_usages, result.files_affected, result.public_api
     ));
-    doc.push_root_fingerprint(result.meta.root_fingerprint);
+    if response_mode != ResponseMode::Minimal {
+        doc.push_root_fingerprint(result.meta.root_fingerprint);
+    }
     if let Some(def) = result.definition.as_ref() {
         doc.push_ref_header(&def.file, def.line, Some("definition"));
     }
