@@ -93,7 +93,9 @@ Primary code source:
 **Contracts:**
 
 - `proto/command.proto` (gRPC service with JSON passthrough + health)
-- `proto/contextfinder.proto` (typed gRPC surface; payload/config use `google.protobuf.Struct`)
+
+Note: a typed `ContextFinder` gRPC surface was intentionally removed (unshipped/unwired) to keep the
+product surface contract-aligned and avoid dead code.
 
 ### MCP tools
 
