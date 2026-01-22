@@ -180,7 +180,10 @@ async fn shared_backend_proxy_roundtrips_tool_calls() -> Result<()> {
             .and_then(|c| c.as_text())
             .map(|t| t.text.as_str())
             .context("missing cat text content")?;
-        assert!(text.contains("README.md"));
+        assert!(
+            !text.contains("\nR:"),
+            "expected cat default output to suppress ref header noise"
+        );
         assert!(text.contains("\nhello\n"));
         assert!(!text.contains("world"));
 

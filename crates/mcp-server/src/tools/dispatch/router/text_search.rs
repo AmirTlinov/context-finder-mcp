@@ -936,7 +936,11 @@ pub(in crate::tools::dispatch) async fn text_search(
 
         for (file, matches) in groups {
             let start_line = matches.first().map(|m| m.line).unwrap_or(1);
-            doc.push_ref_header(&file, start_line, Some("matches"));
+            if response_mode == ResponseMode::Minimal {
+                doc.push_line(&format!("-- {file} --"));
+            } else {
+                doc.push_ref_header(&file, start_line, Some("matches"));
+            }
             for m in matches {
                 doc.push_line(&format!("{}:{}: {}", m.line, m.column, m.text));
             }

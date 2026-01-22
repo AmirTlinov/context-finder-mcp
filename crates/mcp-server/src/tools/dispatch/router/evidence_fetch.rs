@@ -59,18 +59,25 @@ pub(in crate::tools::dispatch) async fn evidence_fetch(
         doc.push_root_fingerprint(meta_for_output.root_fingerprint);
     }
     for item in &result.items {
-        doc.push_ref_header(
-            &item.evidence.file,
-            item.evidence.start_line,
-            Some("evidence"),
-        );
-        if let Some(hash) = item.evidence.source_hash.as_deref() {
-            if !hash.trim().is_empty() {
-                doc.push_note(&format!("source_hash={hash}"));
+        if response_mode == ResponseMode::Minimal {
+            doc.push_line(&format!(
+                "-- {}:{}–{} --",
+                item.evidence.file, item.evidence.start_line, item.evidence.end_line
+            ));
+        } else {
+            doc.push_ref_header(
+                &item.evidence.file,
+                item.evidence.start_line,
+                Some("evidence"),
+            );
+            if let Some(hash) = item.evidence.source_hash.as_deref() {
+                if !hash.trim().is_empty() {
+                    doc.push_note(&format!("source_hash={hash}"));
+                }
             }
-        }
-        if item.stale {
-            doc.push_note("stale=true");
+            if item.stale {
+                doc.push_note("stale=true");
+            }
         }
         doc.push_block_smart(&item.content);
         doc.push_blank();

@@ -132,7 +132,10 @@ async fn cat_refuses_secret_by_default_but_allows_opt_in() -> Result<()> {
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
         .context("cat missing text content")?;
-    assert!(text.contains("R: .env:1 file slice"));
+    assert!(
+        !text.contains("\nR:"),
+        "expected cat minimal output to suppress ref header noise"
+    );
     assert!(text.contains("SECRET=1"));
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -185,7 +188,7 @@ async fn rg_refuses_secret_file_by_default_but_allows_opt_in() -> Result<()> {
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
         .context("rg missing text content")?;
-    assert!(text.contains("R: .env:1 grep hunk"));
+    assert!(text.contains("-- .env:1 --"));
     assert!(text.contains("SECRET=1"));
 
     service.cancel().await.context("shutdown mcp service")?;
@@ -219,11 +222,11 @@ async fn text_search_skips_secret_files_by_default_but_allows_opt_in() -> Result
         .map(|t| t.text.as_str())
         .context("text_search missing text content")?;
     assert!(
-        !text.contains("R: .env:"),
+        !text.contains("-- .env --"),
         "default text_search should not include .env matches"
     );
     assert!(
-        text.contains("R: safe.txt:1 matches"),
+        text.contains("-- safe.txt --"),
         "default text_search should include safe.txt match"
     );
 
@@ -247,7 +250,7 @@ async fn text_search_skips_secret_files_by_default_but_allows_opt_in() -> Result
         .map(|t| t.text.as_str())
         .context("text_search missing text content")?;
     assert!(
-        text.contains("R: .env:1 matches"),
+        text.contains("-- .env --"),
         "allow_secrets text_search should include .env matches"
     );
 

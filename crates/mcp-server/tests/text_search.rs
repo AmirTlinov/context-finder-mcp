@@ -101,7 +101,7 @@ async fn text_search_works_without_index_and_is_bounded() -> Result<()> {
         "missing pattern in answer"
     );
     assert!(
-        text.contains("R: src/main.rs:"),
+        text.contains("-- src/main.rs --"),
         "expected src/main.rs match in output"
     );
 
@@ -232,7 +232,7 @@ async fn text_search_respects_max_chars_and_supports_cursor_only_continuation() 
         "expected continuation to respect max_chars"
     );
     anyhow::ensure!(
-        text2.contains("R: src/main.rs:"),
+        text2.contains("-- src/main.rs --"),
         "expected continuation to return matches"
     );
 

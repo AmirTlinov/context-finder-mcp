@@ -362,8 +362,8 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
     assert_ne!(cat_main.is_error, Some(true), "cat should succeed");
     let cat_text = tool_text(&cat_main)?;
     assert!(
-        cat_text.contains("R: src/main.rs:1"),
-        "expected file ref in cat"
+        !cat_text.contains("\nR:"),
+        "expected minimal cat output to suppress ref header noise"
     );
     assert!(
         cat_text.contains("fn main()"),

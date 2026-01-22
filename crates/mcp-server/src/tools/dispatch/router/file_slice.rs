@@ -185,7 +185,9 @@ pub(in crate::tools::dispatch) async fn file_slice(
     if response_mode != ResponseMode::Minimal {
         doc.push_root_fingerprint(meta_for_output.root_fingerprint);
     }
-    doc.push_ref_header(&result.file, result.start_line, Some("file slice"));
+    if response_mode != ResponseMode::Minimal {
+        doc.push_ref_header(&result.file, result.start_line, Some("file slice"));
+    }
     doc.push_block_smart(&result.content);
     if result.truncated {
         if let Some(cursor) = result.next_cursor.as_deref() {

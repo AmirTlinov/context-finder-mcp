@@ -416,7 +416,10 @@ async fn mcp_cat_reads_bounded_lines_and_rejects_escape() -> Result<()> {
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
         .context("cat missing text output")?;
-    assert!(slice_text.contains("R: src/main.rs:2"));
+    assert!(
+        !slice_text.contains("\nR:"),
+        "expected cat default output to suppress ref header noise"
+    );
     assert!(slice_text.contains("line-2"));
     assert!(slice_text.contains("line-3"));
     assert!(

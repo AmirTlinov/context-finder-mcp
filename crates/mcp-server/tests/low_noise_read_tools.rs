@@ -190,3 +190,88 @@ async fn read_tools_facts_mode_is_low_noise() -> Result<()> {
     service.cancel().await.context("shutdown mcp service")?;
     Ok(())
 }
+
+#[tokio::test]
+async fn read_tools_minimal_mode_suppresses_helper_headers() -> Result<()> {
+    let (tmp, service) = start_service().await?;
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("README.md"), "hello\nworld\n").context("write README.md")?;
+    std::fs::write(root.join("src").join("a.txt"), "one\nTARGET two\nthree\n")
+        .context("write a.txt")?;
+    std::fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() { println!(\"needle\"); }\n",
+    )
+    .context("write main.rs")?;
+
+    let cat = call_tool_text(
+        &service,
+        "cat",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "file": "README.md",
+            "max_lines": 2,
+            "max_chars": 2048,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert!(cat.starts_with("[CONTENT]\n"));
+    assert!(
+        !cat.contains("root_fingerprint="),
+        "cat leaked root_fingerprint"
+    );
+    assert!(
+        !cat.contains("\nR:"),
+        "cat leaked ref headers in minimal mode"
+    );
+
+    let rg = call_tool_text(
+        &service,
+        "rg",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "pattern": "TARGET",
+            "file_pattern": "src/*",
+            "context": 1,
+            "max_chars": 4096,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert!(rg.starts_with("[CONTENT]\n"));
+    assert!(
+        !rg.contains("root_fingerprint="),
+        "rg leaked root_fingerprint"
+    );
+    assert!(
+        !rg.contains("\nR:"),
+        "rg leaked ref headers in minimal mode"
+    );
+
+    let text_search = call_tool_text(
+        &service,
+        "text_search",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "pattern": "needle",
+            "max_results": 5,
+            "response_mode": "minimal",
+        }),
+    )
+    .await?;
+    assert!(text_search.starts_with("[CONTENT]\n"));
+    assert!(
+        !text_search.contains("root_fingerprint="),
+        "text_search leaked root_fingerprint"
+    );
+    assert!(
+        !text_search.contains("\nR:"),
+        "text_search leaked ref headers in minimal mode"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
