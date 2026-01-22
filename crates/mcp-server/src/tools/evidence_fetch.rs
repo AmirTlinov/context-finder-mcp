@@ -44,7 +44,7 @@ pub(super) async fn compute_evidence_fetch_result(
         let rel = file.replace('\\', "/");
         if is_potential_secret_path(&rel) {
             return Err(anyhow!(
-                "Refusing to read potential secret path: {rel} (use file_slice with allow_secrets=true if you really mean it)"
+                "Refusing to read potential secret path: {rel} (use cat with allow_secrets=true if you really mean it)"
             ));
         }
 
@@ -81,7 +81,7 @@ pub(super) async fn compute_evidence_fetch_result(
             || file_lc.ends_with("compose.yaml");
         if is_compose && contains_potential_secret_assignment(&content) {
             return Err(anyhow!(
-                "Refusing to return potential secret snippet from {display_file} (use file_slice with allow_secrets=true if you really mean it)"
+                "Refusing to return potential secret snippet from {display_file} (use cat with allow_secrets=true if you really mean it)"
             ));
         }
 

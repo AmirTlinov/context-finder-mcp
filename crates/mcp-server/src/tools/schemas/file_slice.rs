@@ -61,7 +61,7 @@ pub struct FileSliceRequest {
     pub allow_secrets: Option<bool>,
 
     /// Opaque cursor token to continue a previous response. When provided, `start_line` is ignored.
-    #[schemars(description = "Opaque cursor token to continue a previous file_slice response")]
+    #[schemars(description = "Opaque cursor token to continue a previous cat response")]
     pub cursor: Option<String>,
 }
 

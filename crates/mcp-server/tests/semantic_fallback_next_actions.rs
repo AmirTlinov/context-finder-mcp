@@ -142,8 +142,8 @@ async fn search_full_mode_suggests_grep_context_when_semantic_disabled_and_no_hi
     );
 
     assert!(
-        text.contains("next: grep_context"),
-        "expected grep_context hint to be printed in text output: {text}"
+        text.contains("next: rg"),
+        "expected rg hint to be printed in text output: {text}"
     );
     assert!(
         !text.contains("args="),

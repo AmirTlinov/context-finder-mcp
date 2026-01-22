@@ -93,7 +93,7 @@ pub struct GrepContextRequest {
     pub allow_secrets: Option<bool>,
 
     /// Opaque cursor token to continue a previous response
-    #[schemars(description = "Opaque cursor token to continue a previous grep_context response")]
+    #[schemars(description = "Opaque cursor token to continue a previous rg response")]
     pub cursor: Option<String>,
 }
 

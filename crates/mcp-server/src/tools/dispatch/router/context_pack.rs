@@ -1074,9 +1074,7 @@ pub(in crate::tools::dispatch) async fn context_pack(
                     doc.push_note("semantic: disabled (embeddings unavailable; using fuzzy-only).");
                     doc.push_note(&format!("semantic_error: {reason}"));
                     if output.items.is_empty() {
-                        doc.push_note(
-                            "next: grep_context (semantic disabled; fallback to literal grep)",
-                        );
+                        doc.push_note("next: rg (semantic disabled; fallback to regex search)");
                     }
                 }
             }

@@ -6,7 +6,7 @@ impl ContextLegend {
     pub(crate) const TEXT: &'static str = "[LEGEND]\n\
 A: answer line (short summary).\n\
 R: reference anchor (file:line + optional label); snippet may follow.\n\
-If a reference has no snippet, fetch it with file_slice/read_pack.\n\
+If a reference has no snippet, fetch it with cat/read_pack.\n\
 M: continuation cursor (pass as `cursor`).\n\
 N: note/hint (may include score/role/relationship).\n\
 Snippets are verbatim project content (source of truth).\n\

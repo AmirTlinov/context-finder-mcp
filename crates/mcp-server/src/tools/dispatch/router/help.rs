@@ -38,7 +38,7 @@ pub(in crate::tools::dispatch) async fn help(
 
     if topic.is_empty() || topic == "golden_path" || topic == "flow" {
         doc.push_blank();
-        doc.push_note("Recommended flow (dense + deterministic): grep_context → file_slice.");
+        doc.push_note("Recommended flow (dense + deterministic): rg → cat.");
         doc.push_note("Use read_pack when you want one-call onboarding/recall with cursors.");
         doc.push_note(
             "Use context_pack when you want semantic hits + related halo under a strict budget.",
@@ -50,8 +50,8 @@ pub(in crate::tools::dispatch) async fn help(
         doc.push_blank();
         doc.push_note("Cheat-sheet (when searching code):");
         doc.push_note("Exact string → text_search (fast, bounded, filesystem-first).");
-        doc.push_note("Regex + surrounding context → grep_context (merged hunks).");
-        doc.push_note("Open the exact place you found → file_slice (line-bounded).");
+        doc.push_note("Regex + surrounding context → rg (merged hunks).");
+        doc.push_note("Open the exact place you found → cat (line-bounded).");
         doc.push_note(
             "Natural-language 'where is X done?' → search (quick) or context_pack (with related).",
         );

@@ -368,7 +368,7 @@ pub(in crate::tools::dispatch) async fn explain(
                             doc.push_root_fingerprint(meta_for_output.root_fingerprint);
                         }
                         if response_mode != ResponseMode::Minimal {
-                            doc.push_note("fallback: grep_context (symbol not in graph)");
+                            doc.push_note("fallback: rg (symbol not in graph)");
                         }
                         doc.push_ref_header(&result.file, result.line, Some(&result.symbol));
                         doc.push_block_smart(&result.content);
