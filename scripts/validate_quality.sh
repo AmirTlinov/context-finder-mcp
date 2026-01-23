@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 scripts/validate_contracts.sh
+bash scripts/structural_guardrails.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace

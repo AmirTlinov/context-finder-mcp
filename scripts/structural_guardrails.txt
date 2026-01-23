@@ -1,0 +1,11 @@
+# Anti-regression guardrails for large files.
+#
+# Format: <relative_path> <max_lines>
+#
+# Intention:
+# - Do NOT block the repo because of existing large files.
+# - Fail only when we make them worse (line count grows past the current baseline).
+# - As we refactor, reduce these numbers.
+
+crates/mcp-server/src/tools/dispatch/mod.rs 4826
+crates/mcp-server/src/tools/dispatch/read_pack/mod.rs 7077
