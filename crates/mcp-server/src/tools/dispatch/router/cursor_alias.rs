@@ -73,7 +73,7 @@ fn strip_alias_prefix_v2(cursor: &str) -> Option<(u64, [u8; CURSOR_ALIAS_SIG_BYT
     decode_store_id_v2(encoded)
 }
 
-pub(super) async fn expand_cursor_alias(
+pub(in crate::tools::dispatch) async fn expand_cursor_alias(
     service: &ContextFinderService,
     cursor: &str,
 ) -> Result<String, String> {
@@ -118,7 +118,10 @@ pub(super) async fn expand_cursor_alias(
     String::from_utf8(bytes).map_err(|_| "Invalid cursor: stored continuation invalid".to_string())
 }
 
-pub(super) async fn compact_cursor_alias(service: &ContextFinderService, cursor: String) -> String {
+pub(in crate::tools::dispatch) async fn compact_cursor_alias(
+    service: &ContextFinderService,
+    cursor: String,
+) -> String {
     let trimmed = cursor.trim();
     if trimmed.is_empty() {
         return cursor;

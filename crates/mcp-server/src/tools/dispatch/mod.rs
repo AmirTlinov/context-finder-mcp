@@ -32,9 +32,8 @@ use super::schemas::capabilities::CapabilitiesRequest;
 use super::schemas::context::{ContextHit, ContextRequest, ContextResult, RelatedCode};
 use super::schemas::context_pack::ContextPackRequest;
 use super::schemas::doctor::{
-    DoctorEnvResult, DoctorIndexDrift, DoctorIndexingObservability, DoctorModelStatus,
-    DoctorObservability, DoctorProjectResult, DoctorRequest, DoctorResult,
-    DoctorWarmIndexersObservability,
+    DoctorEnvResult, DoctorIndexDrift, DoctorIndexingObservability, DoctorObservability,
+    DoctorProjectResult, DoctorRequest, DoctorResult, DoctorWarmIndexersObservability,
 };
 use super::schemas::evidence_fetch::EvidenceFetchRequest;
 use super::schemas::explain::{ExplainRequest, ExplainResult};
@@ -104,10 +103,18 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{Mutex, Notify};
+
+mod budgets;
+use budgets::{mcp_default_budgets, AutoIndexPolicy};
+
+mod doctor_helpers;
+use doctor_helpers::{
+    load_corpus_chunk_ids, load_index_chunk_ids, load_model_statuses, sample_file_paths,
+};
 
 /// Context MCP Service
 #[derive(Clone)]
@@ -370,113 +377,6 @@ impl ContextFinderService {
     }
 }
 
-const DEFAULT_AUTO_INDEX_BUDGET_MS: u64 = 15_000;
-const MIN_AUTO_INDEX_BUDGET_MS: u64 = 100;
-const MAX_AUTO_INDEX_BUDGET_MS: u64 = 120_000;
-
-const MCP_DEFAULT_MAX_CHARS: usize = 2_000;
-// Onboarding tools are typically the first call in a fresh agent session; give them a bit more room
-// by default so the first page contains both a map and at least one doc snippet.
-const MCP_DEFAULT_ONBOARDING_MAX_CHARS: usize = 6_000;
-
-pub(in crate::tools::dispatch) fn mcp_default_budgets() -> context_protocol::DefaultBudgets {
-    context_protocol::DefaultBudgets {
-        max_chars: MCP_DEFAULT_MAX_CHARS,
-        read_pack_max_chars: MCP_DEFAULT_ONBOARDING_MAX_CHARS,
-        repo_onboarding_pack_max_chars: MCP_DEFAULT_ONBOARDING_MAX_CHARS,
-        context_pack_max_chars: MCP_DEFAULT_ONBOARDING_MAX_CHARS,
-        batch_max_chars: MCP_DEFAULT_MAX_CHARS,
-        cat_max_chars: MCP_DEFAULT_MAX_CHARS,
-        rg_max_chars: MCP_DEFAULT_MAX_CHARS,
-        ls_max_chars: MCP_DEFAULT_MAX_CHARS,
-        tree_max_chars: MCP_DEFAULT_MAX_CHARS,
-        file_slice_max_chars: MCP_DEFAULT_MAX_CHARS,
-        grep_context_max_chars: MCP_DEFAULT_MAX_CHARS,
-        list_files_max_chars: MCP_DEFAULT_MAX_CHARS,
-        auto_index_budget_ms: DEFAULT_AUTO_INDEX_BUDGET_MS,
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(in crate::tools::dispatch) struct AutoIndexPolicy {
-    enabled: bool,
-    budget_ms: u64,
-    allow_missing_index_rebuild: bool,
-    budget_is_default: bool,
-}
-
-impl AutoIndexPolicy {
-    fn with_budget_ms(
-        budget_ms: u64,
-        allow_missing_index_rebuild: bool,
-        budget_is_default: bool,
-    ) -> Self {
-        let budget_ms = budget_ms.clamp(MIN_AUTO_INDEX_BUDGET_MS, MAX_AUTO_INDEX_BUDGET_MS);
-        Self {
-            enabled: true,
-            budget_ms,
-            allow_missing_index_rebuild,
-            budget_is_default,
-        }
-    }
-
-    pub(in crate::tools::dispatch) fn from_request(
-        auto_index: Option<bool>,
-        auto_index_budget_ms: Option<u64>,
-    ) -> Self {
-        match auto_index {
-            Some(false) => Self {
-                enabled: false,
-                budget_ms: DEFAULT_AUTO_INDEX_BUDGET_MS,
-                allow_missing_index_rebuild: false,
-                budget_is_default: true,
-            },
-            Some(true) => {
-                let budget_is_default = auto_index_budget_ms.is_none();
-                Self::with_budget_ms(
-                    auto_index_budget_ms.unwrap_or(DEFAULT_AUTO_INDEX_BUDGET_MS),
-                    true,
-                    budget_is_default,
-                )
-            }
-            None => {
-                let mut policy = Self::semantic_default();
-                if let Some(budget_ms) = auto_index_budget_ms {
-                    policy =
-                        Self::with_budget_ms(budget_ms, policy.allow_missing_index_rebuild, false);
-                }
-                policy
-            }
-        }
-    }
-
-    /// Agent-native default: keep semantic tools fast and predictable.
-    ///
-    /// - If the index is missing, do not block the request on a full build; the background daemon
-    ///   warms indexes incrementally and the tool can fall back to lexical strategies.
-    /// - If the index exists but is stale, request a background refresh; tools fall back until the
-    ///   index catches up.
-    pub(in crate::tools::dispatch) fn semantic_default() -> Self {
-        // If we are running without a daemon (or in stub embedding mode), there is no background
-        // warmup path. In that environment, allow a bounded inline build so semantic tools can
-        // become usable without requiring an explicit `index` step.
-        let daemon_disabled = std::env::var("CONTEXT_FINDER_DISABLE_DAEMON")
-            .ok()
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let stub_embeddings = std::env::var("CONTEXT_EMBEDDING_MODE")
-            .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
-            .ok()
-            .is_some_and(|v| v.trim().eq_ignore_ascii_case("stub"));
-
-        Self::with_budget_ms(
-            DEFAULT_AUTO_INDEX_BUDGET_MS,
-            daemon_disabled || stub_embeddings,
-            true,
-        )
-    }
-}
-
 fn load_profile_from_env() -> SearchProfile {
     let profile_name = std::env::var("CONTEXT_PROFILE")
         .or_else(|_| std::env::var("CONTEXT_FINDER_PROFILE"))
@@ -704,7 +604,7 @@ impl ContextFinderService {
                             }
                         }
                     }
-                    budget_ms = budget_ms.clamp(MIN_AUTO_INDEX_BUDGET_MS, MAX_AUTO_INDEX_BUDGET_MS);
+                    budget_ms = budgets::clamp_auto_index_budget_ms(budget_ms);
 
                     let reindex = self.attempt_reindex(root, budget_ms).await;
                     if let Ok(refreshed) = gather_index_state(root, &self.profile).await {
@@ -3134,178 +3034,10 @@ async fn build_project_engine(
 }
 
 // ============================================================================
-// Tool Input/Output Schemas
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-struct ModelManifestFile {
-    models: Vec<ModelManifestModel>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelManifestModel {
-    id: String,
-    assets: Vec<ModelManifestAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelManifestAsset {
-    path: String,
-}
-
-fn validate_relative_model_asset_path(path: &Path) -> Result<()> {
-    let mut has_component = false;
-    for component in path.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir => {
-                anyhow::bail!("asset path must be relative");
-            }
-            Component::ParentDir => {
-                anyhow::bail!("asset path must not contain '..'");
-            }
-            Component::CurDir => {}
-            Component::Normal(_) => {
-                has_component = true;
-            }
-        }
-    }
-    if !has_component {
-        anyhow::bail!("asset path is empty");
-    }
-    Ok(())
-}
-
-fn safe_join_model_asset_path(model_dir: &Path, asset_path: &str) -> Result<PathBuf> {
-    let rel = Path::new(asset_path);
-    validate_relative_model_asset_path(rel)
-        .with_context(|| format!("Invalid model asset path '{asset_path}'"))?;
-    Ok(model_dir.join(rel))
-}
-
-#[cfg(test)]
-mod model_asset_path_tests {
-    use super::*;
-
-    #[test]
-    fn safe_join_rejects_traversal_and_absolute_paths() {
-        let base = Path::new("models");
-        assert!(safe_join_model_asset_path(base, "../escape").is_err());
-        assert!(safe_join_model_asset_path(base, "m1/../escape").is_err());
-        assert!(safe_join_model_asset_path(base, "").is_err());
-
-        #[cfg(unix)]
-        assert!(safe_join_model_asset_path(base, "/etc/passwd").is_err());
-    }
-
-    #[test]
-    fn safe_join_accepts_normal_relative_paths() {
-        let base = Path::new("models");
-        let path = safe_join_model_asset_path(base, "m1/model.onnx").expect("valid path");
-        assert!(path.starts_with(base));
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct IndexIdMapOnly {
-    #[serde(default)]
-    schema_version: Option<u32>,
-    #[serde(default)]
-    id_map: HashMap<usize, String>,
-}
-
-async fn load_model_statuses(model_dir: &Path) -> Result<(bool, Vec<DoctorModelStatus>)> {
-    let manifest_path = model_dir.join("manifest.json");
-    if !manifest_path.exists() {
-        return Ok((false, Vec::new()));
-    }
-
-    let bytes = tokio::fs::read(&manifest_path)
-        .await
-        .with_context(|| format!("Failed to read model manifest {}", manifest_path.display()))?;
-    let parsed: ModelManifestFile = serde_json::from_slice(&bytes)
-        .with_context(|| format!("Failed to parse model manifest {}", manifest_path.display()))?;
-
-    let mut statuses = Vec::new();
-    for model in parsed.models {
-        let mut missing = Vec::new();
-        for asset in model.assets {
-            let full = match safe_join_model_asset_path(model_dir, &asset.path) {
-                Ok(path) => path,
-                Err(err) => {
-                    missing.push(format!("invalid_path: {} ({err})", asset.path));
-                    continue;
-                }
-            };
-            if !full.exists() {
-                missing.push(asset.path);
-            }
-        }
-        let installed = missing.is_empty();
-        statuses.push(DoctorModelStatus {
-            id: model.id,
-            installed,
-            missing_assets: missing,
-        });
-    }
-    Ok((true, statuses))
-}
-
-async fn load_corpus_chunk_ids(corpus_path: &Path) -> Result<HashSet<String>> {
-    let corpus = ChunkCorpus::load(corpus_path).await?;
-    let mut ids = HashSet::new();
-    for chunks in corpus.files().values() {
-        for chunk in chunks {
-            ids.insert(format!(
-                "{}:{}:{}",
-                chunk.file_path, chunk.start_line, chunk.end_line
-            ));
-        }
-    }
-    Ok(ids)
-}
-
-async fn load_index_chunk_ids(index_path: &Path) -> Result<HashSet<String>> {
-    let bytes = tokio::fs::read(index_path)
-        .await
-        .with_context(|| format!("Failed to read index {}", index_path.display()))?;
-    let parsed: IndexIdMapOnly = serde_json::from_slice(&bytes)
-        .with_context(|| format!("Failed to parse index {}", index_path.display()))?;
-    // schema_version is tracked for diagnostics, but chunk id extraction relies on id_map values.
-    let _ = parsed.schema_version.unwrap_or(1);
-    Ok(parsed.id_map.into_values().collect())
-}
-
-fn chunk_id_file_path(chunk_id: &str) -> Option<String> {
-    let mut parts = chunk_id.rsplitn(3, ':');
-    let _end = parts.next()?;
-    let _start = parts.next()?;
-    Some(parts.next()?.to_string())
-}
-
-fn sample_file_paths<'a, I>(chunk_ids: I, limit: usize) -> Vec<String>
-where
-    I: Iterator<Item = &'a String>,
-{
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for id in chunk_ids {
-        if out.len() >= limit {
-            break;
-        }
-        let Some(file) = chunk_id_file_path(id) else {
-            continue;
-        };
-        if seen.insert(file.clone()) {
-            out.push(file);
-        }
-    }
-    out
-}
-
-// ============================================================================
 // Tool Implementations
 // ============================================================================
 
+mod read_pack;
 mod router;
 
 fn strip_structured_content(mut result: CallToolResult) -> CallToolResult {

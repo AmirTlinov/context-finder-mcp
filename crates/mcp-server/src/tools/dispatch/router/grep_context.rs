@@ -26,7 +26,10 @@ fn build_regex(pattern: &str, case_sensitive: bool) -> Result<regex::Regex, Stri
         .map_err(|err| format!("Invalid regex: {err}"))
 }
 
-pub(super) fn grep_context_content_budget(max_chars: usize, response_mode: ResponseMode) -> usize {
+pub(in crate::tools::dispatch) fn grep_context_content_budget(
+    max_chars: usize,
+    response_mode: ResponseMode,
+) -> usize {
     const MIN_CONTENT_CHARS: usize = 120;
     const MAX_RESERVE_CHARS: usize = 4_096;
 

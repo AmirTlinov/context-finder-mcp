@@ -54,11 +54,11 @@ fn render_details_notes(details: &serde_json::Value) -> Vec<String> {
     }
 }
 
-pub(super) fn tool_error_envelope(error: ErrorEnvelope) -> CallToolResult {
+pub(in crate::tools::dispatch) fn tool_error_envelope(error: ErrorEnvelope) -> CallToolResult {
     tool_error_envelope_with_meta(error, ToolMeta::default())
 }
 
-pub(super) fn tool_error_envelope_with_meta(
+pub(in crate::tools::dispatch) fn tool_error_envelope_with_meta(
     error: ErrorEnvelope,
     meta: ToolMeta,
 ) -> CallToolResult {
@@ -85,7 +85,10 @@ pub(super) fn tool_error_envelope_with_meta(
     result
 }
 
-pub(super) fn tool_error(code: &'static str, message: impl Into<String>) -> CallToolResult {
+pub(in crate::tools::dispatch) fn tool_error(
+    code: &'static str,
+    message: impl Into<String>,
+) -> CallToolResult {
     tool_error_envelope(ErrorEnvelope {
         code: code.to_string(),
         message: message.into(),
@@ -95,19 +98,19 @@ pub(super) fn tool_error(code: &'static str, message: impl Into<String>) -> Call
     })
 }
 
-pub(super) fn invalid_request(message: impl Into<String>) -> CallToolResult {
+pub(in crate::tools::dispatch) fn invalid_request(message: impl Into<String>) -> CallToolResult {
     tool_error("invalid_request", message)
 }
 
-pub(super) fn invalid_cursor(message: impl Into<String>) -> CallToolResult {
+pub(in crate::tools::dispatch) fn invalid_cursor(message: impl Into<String>) -> CallToolResult {
     tool_error("invalid_cursor", message)
 }
 
-pub(super) fn internal_error(message: impl Into<String>) -> CallToolResult {
+pub(in crate::tools::dispatch) fn internal_error(message: impl Into<String>) -> CallToolResult {
     tool_error("internal", message)
 }
 
-pub(super) fn invalid_cursor_with_meta(
+pub(in crate::tools::dispatch) fn invalid_cursor_with_meta(
     message: impl Into<String>,
     meta: ToolMeta,
 ) -> CallToolResult {
@@ -123,7 +126,7 @@ pub(super) fn invalid_cursor_with_meta(
     )
 }
 
-pub(super) fn invalid_cursor_with_meta_details(
+pub(in crate::tools::dispatch) fn invalid_cursor_with_meta_details(
     message: impl Into<String>,
     meta: ToolMeta,
     details: serde_json::Value,
@@ -140,7 +143,7 @@ pub(super) fn invalid_cursor_with_meta_details(
     )
 }
 
-pub(super) fn cursor_mismatch_with_meta_details(
+pub(in crate::tools::dispatch) fn cursor_mismatch_with_meta_details(
     message: impl Into<String>,
     meta: ToolMeta,
     details: serde_json::Value,
@@ -159,7 +162,7 @@ pub(super) fn cursor_mismatch_with_meta_details(
     )
 }
 
-pub(super) fn invalid_request_with_meta(
+pub(in crate::tools::dispatch) fn invalid_request_with_meta(
     message: impl Into<String>,
     meta: ToolMeta,
     hint: Option<String>,
@@ -177,7 +180,7 @@ pub(super) fn invalid_request_with_meta(
     )
 }
 
-pub(super) fn internal_error_with_meta(
+pub(in crate::tools::dispatch) fn internal_error_with_meta(
     message: impl Into<String>,
     meta: ToolMeta,
 ) -> CallToolResult {
@@ -193,7 +196,7 @@ pub(super) fn internal_error_with_meta(
     )
 }
 
-pub(super) fn attach_structured_content<T: Serialize>(
+pub(in crate::tools::dispatch) fn attach_structured_content<T: Serialize>(
     mut result: CallToolResult,
     payload: &T,
     meta: ToolMeta,
@@ -211,7 +214,7 @@ pub(super) fn attach_structured_content<T: Serialize>(
     }
 }
 
-pub(super) fn invalid_request_with(
+pub(in crate::tools::dispatch) fn invalid_request_with(
     message: impl Into<String>,
     hint: Option<String>,
     next_actions: Vec<ToolNextAction>,
@@ -225,7 +228,10 @@ pub(super) fn invalid_request_with(
     })
 }
 
-pub(super) fn attach_meta(mut result: CallToolResult, meta: ToolMeta) -> CallToolResult {
+pub(in crate::tools::dispatch) fn attach_meta(
+    mut result: CallToolResult,
+    meta: ToolMeta,
+) -> CallToolResult {
     let value = result.structured_content.get_or_insert_with(|| json!({}));
     if let Some(obj) = value.as_object_mut() {
         obj.insert("meta".to_string(), json!(meta.clone()));
@@ -256,7 +262,7 @@ pub(super) fn attach_meta(mut result: CallToolResult, meta: ToolMeta) -> CallToo
     result
 }
 
-pub(super) async fn meta_for_request(
+pub(in crate::tools::dispatch) async fn meta_for_request(
     service: &ContextFinderService,
     path: Option<&str>,
 ) -> ToolMeta {
