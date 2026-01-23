@@ -21,7 +21,6 @@ use context_indexer::{root_fingerprint, ToolMeta};
 use context_protocol::ToolNextAction;
 use context_search::QueryClassifier;
 use regex::RegexBuilder;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -32,15 +31,28 @@ use context::{build_context, ReadPackContext};
 
 mod anchor_scan;
 mod candidates;
+mod cursors;
 mod fs_scan;
 mod project_facts;
+mod recall;
 
 use anchor_scan::{best_anchor_line_for_kind, memory_best_start_line};
 use candidates::{
     collect_memory_file_candidates, collect_ops_file_candidates, config_candidate_score,
     is_disallowed_memory_file, ops_candidate_score, DEFAULT_MEMORY_FILE_CANDIDATES,
 };
+use cursors::{
+    normalize_optional_pattern, normalize_path_prefix_list, normalize_questions, normalize_topics,
+    snippet_kind_for_path, trim_chars, trim_utf8_bytes, trimmed_non_empty_str, CursorHeader,
+    ReadPackMemoryCursorV1, ReadPackRecallCursorStoredV1, ReadPackRecallCursorV1,
+    DEFAULT_RECALL_SNIPPETS_PER_QUESTION, MAX_RECALL_FILTER_PATHS, MAX_RECALL_FILTER_PATH_BYTES,
+    MAX_RECALL_SNIPPETS_PER_QUESTION,
+};
 use project_facts::compute_project_facts;
+use recall::{
+    extract_existing_file_ref, parse_path_token, recall_doc_candidate_score,
+    recall_structural_intent, OpsIntent, RecallStructuralIntent,
+};
 
 const VERSION: u32 = 1;
 const DEFAULT_MAX_CHARS: usize = 6_000;
@@ -57,20 +69,8 @@ const MAX_RECALL_INLINE_CURSOR_CHARS: usize = 1_200;
 
 type ToolResult<T> = std::result::Result<T, CallToolResult>;
 
-#[derive(Debug, Deserialize)]
-struct CursorHeader {
-    v: u32,
-    tool: String,
-    #[serde(default)]
-    mode: Option<String>,
-}
-
 fn call_error(code: &'static str, message: impl Into<String>) -> CallToolResult {
     tool_error(code, message)
-}
-
-fn trimmed_non_empty_str(input: Option<&str>) -> Option<&str> {
-    input.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn snippet_inner_max_chars(inner_max_chars: usize) -> usize {
@@ -2928,412 +2928,6 @@ async fn handle_memory_intent(
     }
 
     Ok(())
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-struct ReadPackMemoryCursorV1 {
-    v: u32,
-    tool: String,
-    mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    root_hash: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_chars: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_mode: Option<ResponseMode>,
-    next_candidate_index: usize,
-    entrypoint_done: bool,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-struct ReadPackRecallCursorV1 {
-    v: u32,
-    tool: String,
-    mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    root_hash: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_chars: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_mode: Option<ResponseMode>,
-    questions: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    topics: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    include_paths: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    exclude_paths: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    file_pattern: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    prefer_code: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    include_docs: Option<bool>,
-    #[serde(default)]
-    allow_secrets: bool,
-    next_question_index: usize,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-struct ReadPackRecallCursorStoredV1 {
-    v: u32,
-    tool: String,
-    mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    root_hash: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_chars: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_mode: Option<ResponseMode>,
-    store_id: u64,
-}
-
-const MAX_RECALL_QUESTIONS: usize = 12;
-const MAX_RECALL_QUESTION_CHARS: usize = 220;
-const MAX_RECALL_QUESTION_BYTES: usize = 384;
-const MAX_RECALL_TOPICS: usize = 8;
-const MAX_RECALL_TOPIC_CHARS: usize = 80;
-const MAX_RECALL_TOPIC_BYTES: usize = 192;
-const DEFAULT_RECALL_SNIPPETS_PER_QUESTION: usize = 3;
-const MAX_RECALL_SNIPPETS_PER_QUESTION: usize = 5;
-
-fn trim_chars(s: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for (idx, ch) in s.chars().enumerate() {
-        if idx >= max_chars {
-            break;
-        }
-        out.push(ch);
-    }
-    out.trim().to_string()
-}
-
-fn trim_utf8_bytes(s: &str, max_bytes: usize) -> String {
-    let trimmed = s.trim();
-    if trimmed.len() <= max_bytes {
-        return trimmed.to_string();
-    }
-
-    let mut end = max_bytes.min(trimmed.len());
-    while end > 0 && !trimmed.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    trimmed[..end].trim().to_string()
-}
-
-fn normalize_questions(request: &ReadPackRequest) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(questions) = request.questions.as_ref() {
-        for q in questions {
-            let q = q.trim();
-            if q.is_empty() {
-                continue;
-            }
-            let q = trim_chars(q, MAX_RECALL_QUESTION_CHARS);
-            out.push(trim_utf8_bytes(&q, MAX_RECALL_QUESTION_BYTES));
-            if out.len() >= MAX_RECALL_QUESTIONS {
-                break;
-            }
-        }
-    }
-
-    if out.is_empty() {
-        if let Some(ask) = trimmed_non_empty_str(request.ask.as_deref()) {
-            let lines: Vec<&str> = ask.lines().collect();
-            if lines.len() > 1 {
-                for line in lines {
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    let q = trim_chars(line, MAX_RECALL_QUESTION_CHARS);
-                    out.push(trim_utf8_bytes(&q, MAX_RECALL_QUESTION_BYTES));
-                    if out.len() >= MAX_RECALL_QUESTIONS {
-                        break;
-                    }
-                }
-            } else {
-                let q = trim_chars(ask, MAX_RECALL_QUESTION_CHARS);
-                out.push(trim_utf8_bytes(&q, MAX_RECALL_QUESTION_BYTES));
-            }
-        }
-    }
-
-    out
-}
-
-fn normalize_topics(request: &ReadPackRequest) -> Option<Vec<String>> {
-    let topics = request.topics.as_ref()?;
-
-    let mut out = Vec::new();
-    for topic in topics {
-        let topic = topic.trim();
-        if topic.is_empty() {
-            continue;
-        }
-        let topic = trim_chars(topic, MAX_RECALL_TOPIC_CHARS);
-        out.push(trim_utf8_bytes(&topic, MAX_RECALL_TOPIC_BYTES));
-        if out.len() >= MAX_RECALL_TOPICS {
-            break;
-        }
-    }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
-}
-
-const MAX_RECALL_FILTER_PATHS: usize = 16;
-const MAX_RECALL_FILTER_PATH_BYTES: usize = 120;
-
-fn normalize_path_prefix_list(raw: Option<&Vec<String>>) -> Vec<String> {
-    let Some(values) = raw else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for value in values {
-        let value = value.trim();
-        if value.is_empty() {
-            continue;
-        }
-        out.push(trim_utf8_bytes(value, MAX_RECALL_FILTER_PATH_BYTES));
-        if out.len() >= MAX_RECALL_FILTER_PATHS {
-            break;
-        }
-    }
-    out
-}
-
-fn normalize_optional_pattern(raw: Option<&str>) -> Option<String> {
-    trimmed_non_empty_str(raw).map(|value| trim_utf8_bytes(value, MAX_RECALL_FILTER_PATH_BYTES))
-}
-
-fn snippet_kind_for_path(path: &str) -> ReadPackSnippetKind {
-    let normalized = path.replace('\\', "/");
-    let file_name = Path::new(&normalized)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    if file_name.ends_with(".md")
-        || file_name.ends_with(".mdx")
-        || file_name.ends_with(".rst")
-        || file_name.ends_with(".adoc")
-        || file_name.ends_with(".txt")
-        || file_name.ends_with(".context")
-    {
-        return ReadPackSnippetKind::Doc;
-    }
-
-    if file_name.starts_with('.') {
-        return ReadPackSnippetKind::Config;
-    }
-
-    let ext = Path::new(&file_name)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if matches!(
-        ext.as_str(),
-        "toml" | "json" | "yaml" | "yml" | "ini" | "cfg" | "conf" | "properties" | "env"
-    ) {
-        return ReadPackSnippetKind::Config;
-    }
-
-    if file_name == "dockerfile"
-        || file_name == "docker-compose.yml"
-        || file_name == "docker-compose.yaml"
-        || file_name == "makefile"
-        || file_name == "justfile"
-    {
-        return ReadPackSnippetKind::Config;
-    }
-
-    ReadPackSnippetKind::Code
-}
-
-fn parse_path_token(token: &str) -> Option<(String, Option<usize>)> {
-    let token = token.trim_matches(|c: char| {
-        c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}')
-    });
-    let token = token.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '.' | '?'));
-    if token.is_empty() {
-        return None;
-    }
-
-    let token = token.replace('\\', "/");
-    let token = token.strip_prefix("./").unwrap_or(&token);
-    if token.starts_with('/') || token.contains("..") {
-        return None;
-    }
-
-    // Parse `path:line` if line is numeric.
-    if let Some((left, right)) = token.rsplit_once(':') {
-        if let Ok(line) = right.parse::<usize>() {
-            let left = left.trim();
-            if !left.is_empty() && !left.contains(':') {
-                return Some((left.to_string(), Some(line)));
-            }
-        }
-    }
-
-    Some((token.to_string(), None))
-}
-
-fn extract_existing_file_ref(
-    question: &str,
-    root: &Path,
-    allow_secrets: bool,
-) -> Option<(String, Option<usize>)> {
-    let mut best: Option<(String, Option<usize>)> = None;
-    for raw in question.split_whitespace() {
-        let Some((candidate, line)) = parse_path_token(raw) else {
-            continue;
-        };
-        if !allow_secrets && is_disallowed_memory_file(&candidate) {
-            continue;
-        }
-        let full = root.join(&candidate);
-        if full.is_file() {
-            best = Some((candidate, line));
-            break;
-        }
-    }
-    best
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OpsIntent {
-    TestAndGates,
-    Snapshots,
-    Run,
-    Build,
-    Deploy,
-    Setup,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RecallStructuralIntent {
-    ProjectIdentity,
-    EntryPoints,
-    Contracts,
-    Configuration,
-}
-
-fn recall_structural_intent(question: &str) -> Option<RecallStructuralIntent> {
-    let q = question.to_lowercase();
-
-    let is_identity = [
-        "what is this project",
-        "what is this repo",
-        "what is this",
-        "about this project",
-        "описание проекта",
-        "что это за проект",
-        "что это",
-        "о проекте",
-    ]
-    .iter()
-    .any(|needle| q.contains(needle));
-
-    if is_identity {
-        return Some(RecallStructuralIntent::ProjectIdentity);
-    }
-
-    let is_entrypoints = [
-        "entry point",
-        "entrypoint",
-        "entry points",
-        "точка входа",
-        "точки входа",
-        "main entry",
-        "main app entry",
-        "binaries",
-        "binary",
-        "bins",
-        "bin ",
-        "where is main",
-        "где main",
-    ]
-    .iter()
-    .any(|needle| q.contains(needle));
-
-    if is_entrypoints {
-        return Some(RecallStructuralIntent::EntryPoints);
-    }
-
-    let is_contracts = [
-        "contract",
-        "contracts",
-        "protocol",
-        "openapi",
-        "grpc",
-        "proto",
-        "schema",
-        "spec",
-        "контракт",
-        "контракты",
-        "протокол",
-        "спека",
-        "схема",
-    ]
-    .iter()
-    .any(|needle| q.contains(needle));
-
-    if is_contracts {
-        return Some(RecallStructuralIntent::Contracts);
-    }
-
-    let is_config = [
-        "configuration",
-        "config",
-        "settings",
-        "where is config",
-        "how is config",
-        ".env",
-        "yaml",
-        "toml",
-        "конфиг",
-        "настройк",
-        "где конфиг",
-    ]
-    .iter()
-    .any(|needle| q.contains(needle));
-
-    if is_config {
-        return Some(RecallStructuralIntent::Configuration);
-    }
-
-    None
-}
-
-fn recall_doc_candidate_score(rel: &str) -> i32 {
-    let normalized = rel.replace('\\', "/").to_ascii_lowercase();
-    match normalized.as_str() {
-        "readme.md" => 300,
-        "agents.md" => 290,
-        "docs/quick_start.md" => 280,
-        "docs/readme.md" => 275,
-        "development.md" => 270,
-        "contributing.md" => 260,
-        "architecture.md" => 255,
-        "docs/architecture.md" => 250,
-        "philosophy.md" => 240,
-        _ if normalized.ends_with("/readme.md") => 220,
-        _ if normalized.ends_with("/agents.md") => 210,
-        _ if normalized.ends_with("/docs/quick_start.md") => 205,
-        _ if normalized.ends_with(".md") => 120,
-        _ => 10,
-    }
 }
 
 fn entrypoint_candidate_score(rel: &str) -> i32 {

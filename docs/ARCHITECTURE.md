@@ -182,6 +182,7 @@ Internal layout (tool dispatch):
 - `crates/mcp-server/src/tools/dispatch/mod.rs` — tool wiring + `ContextFinderService` entrypoint.
 - `crates/mcp-server/src/tools/dispatch/router/` — per-tool request routing.
 - `crates/mcp-server/src/tools/dispatch/read_pack/` — `read_pack` implementation.
+- `crates/mcp-server/src/tools/dispatch/cursor_store/` — shared cursor alias store (LRU + best-effort persistence).
 - `crates/mcp-server/src/tools/dispatch/root/` — root resolution + per-connection `SessionDefaults`.
 - `crates/mcp-server/src/tools/dispatch/tests/` — dispatch-level regression tests.
 - `scripts/structural_guardrails.txt` — anti-regression line-count guardrails for oversized files.

@@ -8,5 +8,8 @@
 # - As we refactor, reduce these numbers.
 
 crates/mcp-server/src/tools/dispatch/mod.rs 3505
-crates/mcp-server/src/tools/dispatch/read_pack/mod.rs 7077
-crates/mcp-server/src/tools/dispatch/cursor_store.rs 417
+crates/mcp-server/src/tools/dispatch/read_pack/mod.rs 6670
+crates/mcp-server/src/tools/dispatch/read_pack/cursors.rs 247
+crates/mcp-server/src/tools/dispatch/read_pack/recall.rs 178
+crates/mcp-server/src/tools/dispatch/cursor_store/mod.rs 293
+crates/mcp-server/src/tools/dispatch/cursor_store/persist.rs 160
