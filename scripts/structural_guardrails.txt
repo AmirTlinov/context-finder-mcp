@@ -7,6 +7,6 @@
 # - Fail only when we make them worse (line count grows past the current baseline).
 # - As we refactor, reduce these numbers.
 
-crates/mcp-server/src/tools/dispatch/mod.rs 4420
+crates/mcp-server/src/tools/dispatch/mod.rs 3505
 crates/mcp-server/src/tools/dispatch/read_pack/mod.rs 7077
 crates/mcp-server/src/tools/dispatch/cursor_store.rs 417

@@ -64,7 +64,7 @@ pub(in crate::tools::dispatch) async fn ls(
                     if let Some(root) = decoded.root.as_deref().map(str::trim) {
                         if !root.is_empty() {
                             let session_root_display =
-                                { service.session.lock().await.root_display.clone() };
+                                { service.session.lock().await.root_display() };
                             if let Some(session_root_display) = session_root_display {
                                 if session_root_display != root {
                                     return Ok(invalid_cursor_with_meta(

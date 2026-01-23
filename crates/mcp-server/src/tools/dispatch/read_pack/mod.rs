@@ -2561,7 +2561,7 @@ async fn handle_memory_intent(
     // - never for secret paths,
     // - reserve a small, deterministic slice of the payload budget.
     let focus_file = if trimmed_non_empty_str(request.cursor.as_deref()).is_none() {
-        service.session.lock().await.focus_file.clone()
+        service.session.lock().await.focus_file()
     } else {
         None
     }
@@ -2681,7 +2681,7 @@ async fn handle_memory_intent(
         let allow_working_set_bias = trimmed_non_empty_str(request.cursor.as_deref()).is_none();
         let seen: HashSet<String> = if allow_working_set_bias {
             let session = service.session.lock().await;
-            session.seen_snippet_files_set.clone()
+            session.seen_snippet_files_set_snapshot()
         } else {
             HashSet::new()
         };
@@ -4813,7 +4813,7 @@ async fn handle_recall_intent(
         // Per-session working set: avoid repeating the same anchor files across multiple recall
         // calls in one agent session.
         let session = service.session.lock().await;
-        session.seen_snippet_files_set.clone()
+        session.seen_snippet_files_set_snapshot()
     };
     let mut processed = 0usize;
     let mut next_index = None;
@@ -5792,8 +5792,7 @@ pub(in crate::tools::dispatch) async fn read_pack(
                 if let Some(root) = value.get("root").and_then(Value::as_str) {
                     let cursor_root = root.trim();
                     if !cursor_root.is_empty() {
-                        let session_root_display =
-                            { service.session.lock().await.root_display.clone() };
+                        let session_root_display = { service.session.lock().await.root_display() };
                         if let Some(session_root_display) = session_root_display {
                             if session_root_display != cursor_root {
                                 let message = "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects."

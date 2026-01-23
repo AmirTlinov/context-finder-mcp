@@ -42,8 +42,6 @@ use super::schemas::grep_context::{GrepContextCursorV1, GrepContextRequest};
 use super::schemas::help::HelpRequest;
 use super::schemas::impact::{ImpactRequest, ImpactResult, SymbolLocation, UsageInfo};
 use super::schemas::list_files::ListFilesRequest;
-#[cfg(test)]
-use super::schemas::list_files::ListFilesTruncation;
 use super::schemas::ls::LsRequest;
 use super::schemas::map::MapRequest;
 use super::schemas::meaning_focus::MeaningFocusRequest;
@@ -115,6 +113,13 @@ use doctor_helpers::{
 
 mod cursor_store;
 use cursor_store::CursorStore;
+
+mod root;
+use root::{
+    canonicalize_root, canonicalize_root_path, collect_relative_hints, env_root_override,
+    find_project_root, hint_score_for_root, rel_path_string, resolve_root_from_absolute_hints,
+    root_path_from_mcp_uri, trimmed_non_empty, SessionDefaults,
+};
 
 /// Context MCP Service
 #[derive(Clone)]
@@ -229,7 +234,7 @@ impl ContextFinderService {
             }
 
             let mut session = self.session.lock().await;
-            if self.allow_cwd_root_fallback || session.initialized {
+            if self.allow_cwd_root_fallback || session.initialized() {
                 session.set_root(root.clone(), root_display.clone(), focus_file);
             }
             return Ok((root, root_display));
@@ -238,7 +243,7 @@ impl ContextFinderService {
         if let Some(root) = resolve_root_from_absolute_hints(hints) {
             let root_display = root.to_string_lossy().to_string();
             let mut session = self.session.lock().await;
-            if self.allow_cwd_root_fallback || session.initialized {
+            if self.allow_cwd_root_fallback || session.initialized() {
                 session.set_root(root.clone(), root_display.clone(), None);
             }
             return Ok((root, root_display));
@@ -256,7 +261,7 @@ impl ContextFinderService {
         {
             let session = self.session.lock().await;
             if let Some((root, root_display)) = session.clone_root() {
-                if self.allow_cwd_root_fallback || session.initialized {
+                if self.allow_cwd_root_fallback || session.initialized() {
                     return Ok((root, root_display));
                 }
             }
@@ -269,7 +274,7 @@ impl ContextFinderService {
         // state (when a transport is reused), or force clients to redundantly pass `path` even when
         // they support roots. Prefer a small bounded wait to let `roots/list` establish the
         // per-connection session root.
-        let roots_pending = { self.session.lock().await.roots_pending };
+        let roots_pending = { self.session.lock().await.roots_pending() };
         if roots_pending {
             let wait_ms = if self.allow_cwd_root_fallback {
                 150
@@ -288,14 +293,14 @@ impl ContextFinderService {
                 .map_err(|err| format!("Invalid path from {var}: {err}"))?;
             let root_display = root.to_string_lossy().to_string();
             let mut session = self.session.lock().await;
-            if self.allow_cwd_root_fallback || session.initialized {
+            if self.allow_cwd_root_fallback || session.initialized() {
                 session.set_root(root.clone(), root_display.clone(), None);
             }
             return Ok((root, root_display));
         }
 
         if !self.allow_cwd_root_fallback {
-            if self.session.lock().await.mcp_roots_ambiguous {
+            if self.session.lock().await.mcp_roots_ambiguous() {
                 return Err(
                     "Missing project root: multiple MCP workspace roots detected; pass `path` to disambiguate."
                         .to_string(),
@@ -314,7 +319,7 @@ impl ContextFinderService {
             canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
         let root_display = root.to_string_lossy().to_string();
         let mut session = self.session.lock().await;
-        if self.allow_cwd_root_fallback || session.initialized {
+        if self.allow_cwd_root_fallback || session.initialized() {
             session.set_root(root.clone(), root_display.clone(), None);
         }
         Ok((root, root_display))
@@ -475,7 +480,7 @@ impl ServerHandler for ContextFinderService {
                     let mut session = session.lock().await;
                     // Only set the session root if the tool call path did not already establish one.
                     // Explicit per-call `path` should win over workspace roots.
-                    if session.root.is_none() {
+                    if !session.has_root() {
                         match candidates.len() {
                             1 => {
                                 let root = candidates.remove(0);
@@ -485,12 +490,12 @@ impl ServerHandler for ContextFinderService {
                             n if n > 1 => {
                                 // Fail-closed: do not guess a root when the workspace is multi-root.
                                 // This prevents cross-project contamination in shared-backend mode.
-                                session.mcp_roots_ambiguous = true;
+                                session.set_mcp_roots_ambiguous(true);
                             }
                             _ => {}
                         }
                     }
-                    session.roots_pending = false;
+                    session.set_roots_pending(false);
                     drop(session);
                     roots_notify.notify_waiters();
                 });
@@ -1849,294 +1854,6 @@ impl ProjectFactsCache {
 
         self.order.retain(|key| self.entries.contains_key(key));
     }
-}
-
-#[derive(Default)]
-struct SessionDefaults {
-    /// Whether this connection completed an MCP `initialize` handshake in the current process.
-    ///
-    /// Some clients can reuse a shared-daemon transport across working directories and (buggily)
-    /// issue tool calls without re-initializing. In daemon mode we fail-closed: do not persist or
-    /// reuse session roots unless initialize has run.
-    initialized: bool,
-    root: Option<PathBuf>,
-    root_display: Option<String>,
-    focus_file: Option<String>,
-    roots_pending: bool,
-    /// Whether MCP `roots/list` returned multiple viable workspace roots and we refused to guess.
-    ///
-    /// In this state, callers must pass an explicit `path` (or an env override) to disambiguate.
-    mcp_roots_ambiguous: bool,
-    // Working-set: ephemeral, per-connection state (no disk). Used to avoid repeating the same
-    // anchors/snippets across multiple calls in one agent session.
-    seen_snippet_files: VecDeque<String>,
-    seen_snippet_files_set: HashSet<String>,
-}
-
-impl SessionDefaults {
-    fn clone_root(&self) -> Option<(PathBuf, String)> {
-        Some((self.root.clone()?, self.root_display.clone()?))
-    }
-
-    fn reset_for_initialize(&mut self, roots_pending: bool) {
-        self.initialized = true;
-        self.root = None;
-        self.root_display = None;
-        self.focus_file = None;
-        self.roots_pending = roots_pending;
-        self.mcp_roots_ambiguous = false;
-        self.clear_working_set();
-    }
-
-    fn set_root(&mut self, root: PathBuf, root_display: String, focus_file: Option<String>) {
-        let root_changed = match self.root.as_ref() {
-            Some(prev) => prev != &root,
-            None => true,
-        };
-        self.root = Some(root);
-        self.root_display = Some(root_display);
-        self.focus_file = focus_file;
-        self.mcp_roots_ambiguous = false;
-        if root_changed {
-            self.clear_working_set();
-        }
-    }
-
-    fn clear_working_set(&mut self) {
-        self.seen_snippet_files.clear();
-        self.seen_snippet_files_set.clear();
-    }
-
-    fn note_seen_snippet_file(&mut self, file: &str) {
-        const MAX_SEEN: usize = 160;
-
-        let trimmed = file.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        if !self.seen_snippet_files_set.insert(trimmed.to_string()) {
-            return;
-        }
-        self.seen_snippet_files.push_back(trimmed.to_string());
-        while self.seen_snippet_files.len() > MAX_SEEN {
-            if let Some(old) = self.seen_snippet_files.pop_front() {
-                self.seen_snippet_files_set.remove(&old);
-            }
-        }
-    }
-}
-
-fn trimmed_non_empty(input: Option<&str>) -> Option<&str> {
-    input.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn resolve_root_from_absolute_hints(hints: &[String]) -> Option<PathBuf> {
-    for hint in hints {
-        let trimmed = hint.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let path = Path::new(trimmed);
-        if !path.is_absolute() {
-            continue;
-        }
-        if let Ok(root) = canonicalize_root_path(path) {
-            return Some(root);
-        }
-    }
-    None
-}
-
-fn collect_relative_hints(hints: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    for hint in hints {
-        let trimmed = hint.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let trimmed = trimmed.replace('\\', "/");
-        if Path::new(&trimmed).is_absolute() {
-            continue;
-        }
-        if is_glob_hint(&trimmed) {
-            continue;
-        }
-        if !looks_like_path_hint(&trimmed) {
-            continue;
-        }
-        out.push(trimmed);
-        if out.len() >= 8 {
-            break;
-        }
-    }
-    out
-}
-
-fn hint_score_for_root(root: &Path, hints: &[String]) -> usize {
-    let mut score = 0usize;
-    for hint in hints {
-        if root.join(hint).exists() {
-            score = score.saturating_add(1);
-        }
-    }
-    score
-}
-
-fn is_glob_hint(value: &str) -> bool {
-    value.contains('*') || value.contains('?')
-}
-
-fn looks_like_path_hint(value: &str) -> bool {
-    value.contains('/') || value.starts_with('.') || value.contains('.')
-}
-
-fn env_root_override() -> Option<(String, String)> {
-    for key in [
-        "CONTEXT_ROOT",
-        "CONTEXT_PROJECT_ROOT",
-        "CONTEXT_FINDER_ROOT",
-        "CONTEXT_FINDER_PROJECT_ROOT",
-    ] {
-        if let Ok(value) = env::var(key) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return Some((key.to_string(), trimmed.to_string()));
-            }
-        }
-    }
-    None
-}
-
-fn canonicalize_root(raw: &str) -> Result<PathBuf, String> {
-    canonicalize_root_path(Path::new(raw))
-}
-
-fn canonicalize_root_path(path: &Path) -> Result<PathBuf, String> {
-    let canonical = path.canonicalize().map_err(|err| err.to_string())?;
-
-    // Agent-native UX: callers often pass a "current file" path as `path`.
-    // Treat that as a hint within the project and prefer the enclosing git root (when present),
-    // otherwise fall back to the file's parent directory.
-    let (base, is_file) = match std::fs::metadata(&canonical) {
-        Ok(meta) if meta.is_file() => (
-            canonical
-                .parent()
-                .map(PathBuf::from)
-                .ok_or_else(|| "Invalid path: file has no parent directory".to_string())?,
-            true,
-        ),
-        _ => (canonical, false),
-    };
-
-    if is_file {
-        if let Some(project_root) = find_project_root(&base) {
-            return Ok(project_root);
-        }
-    }
-
-    Ok(base)
-}
-
-fn rel_path_string(path: &Path) -> Option<String> {
-    let raw = path.to_string_lossy().to_string();
-    let normalized = raw.replace('\\', "/");
-    let trimmed = normalized.trim().trim_start_matches("./");
-    if trimmed.is_empty() || trimmed == "." {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn find_git_root(start: &Path) -> Option<PathBuf> {
-    start
-        .ancestors()
-        .find(|candidate| candidate.join(".git").exists())
-        .map(PathBuf::from)
-}
-
-fn find_project_root(start: &Path) -> Option<PathBuf> {
-    if let Some(root) = find_git_root(start) {
-        return Some(root);
-    }
-
-    const MARKERS: &[&str] = &[
-        "AGENTS.md",
-        "Cargo.toml",
-        "package.json",
-        "pyproject.toml",
-        "go.mod",
-        "pom.xml",
-        "build.gradle",
-        "build.gradle.kts",
-        "CMakeLists.txt",
-        "Makefile",
-    ];
-
-    start
-        .ancestors()
-        .find(|candidate| MARKERS.iter().any(|marker| candidate.join(marker).exists()))
-        .map(PathBuf::from)
-}
-
-fn root_path_from_mcp_uri(uri: &str) -> Option<PathBuf> {
-    let uri = uri.trim();
-    if uri.is_empty() {
-        return None;
-    }
-
-    // Only local file:// URIs are meaningful for a filesystem-indexing MCP server.
-    let rest = uri.strip_prefix("file://")?;
-    let decoded = percent_decode_utf8(rest)?;
-
-    // file:///abs/path  -> "/abs/path"
-    // file://localhost/abs/path -> "/abs/path"
-    let decoded = decoded.strip_prefix("localhost").unwrap_or(&decoded);
-    if !decoded.starts_with('/') {
-        return None;
-    }
-
-    #[cfg(not(windows))]
-    let path = decoded.to_string();
-
-    // Windows file URIs are often "file:///C:/path" (leading slash before drive).
-    #[cfg(windows)]
-    let path = {
-        let mut path = decoded.to_string();
-        if path.len() >= 3
-            && path.as_bytes()[0] == b'/'
-            && path.as_bytes()[2] == b':'
-            && path.as_bytes()[1].is_ascii_alphabetic()
-        {
-            path = path[1..].to_string();
-        }
-        path
-    };
-
-    Some(PathBuf::from(path))
-}
-
-fn percent_decode_utf8(input: &str) -> Option<String> {
-    let bytes = input.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0usize;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                let hi = *bytes.get(i + 1)?;
-                let lo = *bytes.get(i + 2)?;
-                let hi = (hi as char).to_digit(16)? as u8;
-                let lo = (lo as char).to_digit(16)? as u8;
-                out.push((hi << 4) | lo);
-                i += 3;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8(out).ok()
 }
 
 struct EngineCache {
@@ -3785,636 +3502,4 @@ fn estimate_item_chars(item: &ContextPackItem) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use context_code_chunker::ChunkMetadata;
-    use context_search::{EnrichedResult, RelatedContext};
-    use context_vector_store::SearchResult;
-    use tempfile::tempdir;
-    use tokio::time::Duration;
-
-    #[test]
-    fn word_boundary_match_hits_only_whole_identifier() {
-        assert!(ContextFinderService::find_word_boundary("fn new() {}", "new").is_some());
-        assert!(ContextFinderService::find_word_boundary("renew", "new").is_none());
-        assert!(ContextFinderService::find_word_boundary("news", "new").is_none());
-        assert!(ContextFinderService::find_word_boundary("new_", "new").is_none());
-        assert!(ContextFinderService::find_word_boundary(" new ", "new").is_some());
-    }
-
-    #[test]
-    fn text_usages_compute_line_and_respect_exclusion() {
-        let chunk = context_code_chunker::CodeChunk::new(
-            "a.rs".to_string(),
-            10,
-            20,
-            "fn caller() {\n  touch_daemon_best_effort();\n}\n".to_string(),
-            ChunkMetadata::default()
-                .symbol_name("caller")
-                .chunk_type(context_code_chunker::ChunkType::Function),
-        );
-
-        let usages = ContextFinderService::find_text_usages(
-            std::slice::from_ref(&chunk),
-            "touch_daemon_best_effort",
-            None,
-            10,
-        );
-        assert_eq!(usages.len(), 1);
-        assert_eq!(usages[0].file, "a.rs");
-        assert_eq!(usages[0].line, 11);
-        assert_eq!(usages[0].symbol, "caller");
-        assert_eq!(usages[0].relationship, "TextMatch");
-
-        let exclude = format!(
-            "{}:{}:{}",
-            chunk.file_path, chunk.start_line, chunk.end_line
-        );
-        let excluded = ContextFinderService::find_text_usages(
-            &[chunk],
-            "touch_daemon_best_effort",
-            Some(&exclude),
-            10,
-        );
-        assert!(excluded.is_empty());
-    }
-
-    #[tokio::test]
-    async fn resolve_root_waits_for_initialize_roots_list() {
-        let dir = tempdir().expect("temp dir");
-        let canonical_root = dir.path().canonicalize().expect("canonical root");
-        let canonical_root_clone = canonical_root.clone();
-        let canonical_display = canonical_root.to_string_lossy().to_string();
-
-        let service = ContextFinderService::new_daemon();
-        {
-            let mut session = service.session.lock().await;
-            session.reset_for_initialize(true);
-        }
-
-        let session_arc = service.session.clone();
-        let notify = service.roots_notify.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            let mut session = session_arc.lock().await;
-            session.root = Some(canonical_root_clone);
-            session.root_display = Some(canonical_display);
-            session.roots_pending = false;
-            drop(session);
-            notify.notify_waiters();
-        });
-
-        let (root, _) = service
-            .resolve_root_no_daemon_touch(None)
-            .await
-            .expect("root must resolve after roots/list");
-        assert_eq!(root, canonical_root);
-    }
-
-    #[tokio::test]
-    async fn daemon_does_not_reuse_or_persist_root_without_initialize() {
-        let dir = tempdir().expect("temp dir");
-        let canonical_root = dir.path().canonicalize().expect("canonical root");
-        let root_str = canonical_root.to_string_lossy().to_string();
-
-        let service = ContextFinderService::new_daemon();
-
-        let (resolved, _) = service
-            .resolve_root_no_daemon_touch(Some(&root_str))
-            .await
-            .expect("root must resolve with explicit path");
-        assert_eq!(resolved, canonical_root);
-
-        let err = service
-            .resolve_root_no_daemon_touch(None)
-            .await
-            .expect_err("expected missing root without initialize");
-        assert!(
-            err.contains("Missing project root"),
-            "expected error to mention missing project root"
-        );
-
-        {
-            let mut session = service.session.lock().await;
-            session.reset_for_initialize(false);
-        }
-
-        let (resolved, _) = service
-            .resolve_root_no_daemon_touch(Some(&root_str))
-            .await
-            .expect("root must resolve after initialize");
-        assert_eq!(resolved, canonical_root);
-
-        let (resolved, _) = service
-            .resolve_root_no_daemon_touch(None)
-            .await
-            .expect("expected sticky root after initialize");
-        assert_eq!(resolved, canonical_root);
-    }
-
-    #[tokio::test]
-    async fn daemon_refuses_cross_project_root_inference_from_relative_hints() {
-        let root_a = tempdir().expect("temp root_a");
-        std::fs::create_dir_all(root_a.path().join("src")).expect("mkdir src");
-        std::fs::write(root_a.path().join("src").join("main.rs"), "fn main() {}\n")
-            .expect("write src/main.rs");
-        let root_a = root_a.path().canonicalize().expect("canonical root_a");
-
-        // Simulate another connection having recently touched a different root.
-        let svc_a = ContextFinderService::new_daemon().clone_for_connection();
-        svc_a.state.engine_handle(&root_a).await;
-
-        // New connection with no explicit path should fail-closed, rather than guessing a root
-        // from shared (cross-session) recent_roots based on relative file hints.
-        let svc_b = svc_a.clone_for_connection();
-        let err = svc_b
-            .resolve_root_with_hints_no_daemon_touch(None, &["src/main.rs".to_string()])
-            .await
-            .expect_err("expected daemon to refuse root inference from relative hints");
-        assert!(
-            err.contains("Missing project root"),
-            "expected missing-root error, got: {err}"
-        );
-    }
-
-    #[test]
-    fn context_pack_prefers_more_primary_items_under_tight_budgets() {
-        let make_chunk =
-            |file: &str, start: usize, end: usize, symbol: &str, content_len: usize| {
-                let content = "x".repeat(content_len);
-                context_code_chunker::CodeChunk::new(
-                    file.to_string(),
-                    start,
-                    end,
-                    content,
-                    ChunkMetadata::default()
-                        .symbol_name(symbol)
-                        .chunk_type(context_code_chunker::ChunkType::Function),
-                )
-            };
-
-        let primary = |file: &str, id: &str, symbol: &str| SearchResult {
-            chunk: make_chunk(file, 1, 10, symbol, 40),
-            score: 1.0,
-            id: id.to_string(),
-        };
-
-        let related = |file: &str, symbol: &str| RelatedContext {
-            chunk: make_chunk(file, 1, 200, symbol, 1_000),
-            relationship_path: vec!["Calls".to_string()],
-            distance: 1,
-            relevance_score: 0.5,
-        };
-
-        let enriched = vec![
-            EnrichedResult {
-                primary: primary("src/a.rs", "src/a.rs:1:10", "a"),
-                related: vec![related("src/a_related.rs", "a_related")],
-                total_lines: 10,
-                strategy: context_graph::AssemblyStrategy::Direct,
-            },
-            EnrichedResult {
-                primary: primary("src/b.rs", "src/b.rs:1:10", "b"),
-                related: vec![related("src/b_related.rs", "b_related")],
-                total_lines: 10,
-                strategy: context_graph::AssemblyStrategy::Direct,
-            },
-            EnrichedResult {
-                primary: primary("src/c.rs", "src/c.rs:1:10", "c"),
-                related: vec![related("src/c_related.rs", "c_related")],
-                total_lines: 10,
-                strategy: context_graph::AssemblyStrategy::Direct,
-            },
-        ];
-
-        let profile = SearchProfile::general();
-        let max_chars = 900;
-        let (items, budget) = pack_enriched_results(
-            &profile,
-            enriched,
-            max_chars,
-            3,
-            &[],
-            &[],
-            None,
-            RelatedMode::Explore,
-            &[],
-        );
-
-        let primary_count = items.iter().filter(|i| i.role == "primary").count();
-        assert_eq!(primary_count, 3, "expected all primaries to fit");
-        assert!(
-            items.iter().take(3).all(|i| i.role == "primary"),
-            "expected primaries to be emitted before related items"
-        );
-        assert!(
-            budget.used_chars <= max_chars,
-            "expected budget.used_chars <= max_chars"
-        );
-        assert!(
-            budget.truncated,
-            "expected related items to trigger truncation under tight max_chars"
-        );
-    }
-
-    #[test]
-    fn context_pack_never_returns_zero_items_when_first_chunk_is_huge() {
-        let chunk = context_code_chunker::CodeChunk::new(
-            "src/big.rs".to_string(),
-            1,
-            999,
-            "x".repeat(10_000),
-            ChunkMetadata::default()
-                .symbol_name("huge")
-                .chunk_type(context_code_chunker::ChunkType::Function),
-        );
-
-        let enriched = vec![EnrichedResult {
-            primary: SearchResult {
-                chunk,
-                score: 1.0,
-                id: "src/big.rs:1:999".to_string(),
-            },
-            related: vec![],
-            total_lines: 999,
-            strategy: context_graph::AssemblyStrategy::Direct,
-        }];
-
-        let profile = SearchProfile::general();
-        let max_chars = 1_000;
-        let (items, budget) = pack_enriched_results(
-            &profile,
-            enriched,
-            max_chars,
-            0,
-            &[],
-            &[],
-            None,
-            RelatedMode::Explore,
-            &[],
-        );
-
-        assert_eq!(items.len(), 1, "expected an anchor item");
-        assert_eq!(items[0].role, "primary");
-        assert!(
-            !items[0].content.is_empty(),
-            "anchor content should be non-empty"
-        );
-        assert!(
-            budget.truncated,
-            "expected truncation when first chunk exceeds max_chars"
-        );
-    }
-
-    #[tokio::test]
-    async fn map_works_without_index_and_has_no_side_effects() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let root_display = root.to_string_lossy().to_string();
-
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(
-            root.join("src").join("main.rs"),
-            "fn main() { println!(\"hi\"); }\n",
-        )
-        .unwrap();
-
-        std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(root.join("docs").join("README.md"), "# Hello\n").unwrap();
-
-        let context_dir = context_vector_store::context_dir_for_project_root(root);
-        assert!(
-            !context_dir.exists()
-                && !root.join(".context").exists()
-                && !root.join(".context-finder").exists()
-        );
-
-        let result = compute_map_result(root, &root_display, 1, 20, 0)
-            .await
-            .unwrap();
-        assert_eq!(result.total_files, Some(2));
-        assert!(result.total_chunks.unwrap_or(0) > 0);
-        assert!(result.directories.iter().any(|d| d.path == "src"));
-        assert!(result.directories.iter().any(|d| d.path == "docs"));
-        assert!(!result.truncated);
-        assert!(result.next_cursor.is_none());
-
-        // `map` must not create indexes/corpus.
-        assert!(
-            !context_dir.exists()
-                && !root.join(".context").exists()
-                && !root.join(".context-finder").exists()
-        );
-    }
-
-    #[tokio::test]
-    async fn list_files_works_without_index_and_is_bounded() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-        let root_display = root.to_string_lossy().to_string();
-
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
-
-        std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(root.join("docs").join("README.md"), "# Hello\n").unwrap();
-
-        std::fs::write(root.join("README.md"), "Root\n").unwrap();
-
-        let context_dir = context_vector_store::context_dir_for_project_root(root);
-        assert!(
-            !context_dir.exists()
-                && !root.join(".context").exists()
-                && !root.join(".context-finder").exists()
-        );
-
-        let result = compute_list_files_result(root, &root_display, None, 50, 20_000, false, None)
-            .await
-            .unwrap();
-        assert_eq!(result.source.as_deref(), Some("filesystem"));
-        assert!(result.files.contains(&"src/main.rs".to_string()));
-        assert!(result.files.contains(&"docs/README.md".to_string()));
-        assert!(result.files.contains(&"README.md".to_string()));
-        assert!(!result.truncated);
-        assert!(result.next_cursor.is_none());
-
-        let filtered =
-            compute_list_files_result(root, &root_display, Some("docs"), 50, 20_000, false, None)
-                .await
-                .unwrap();
-        assert_eq!(filtered.files, vec!["docs/README.md".to_string()]);
-        assert!(!filtered.truncated);
-        assert!(filtered.next_cursor.is_none());
-
-        let globbed =
-            compute_list_files_result(root, &root_display, Some("src/*"), 50, 20_000, false, None)
-                .await
-                .unwrap();
-        assert_eq!(globbed.files, vec!["src/main.rs".to_string()]);
-        assert!(!globbed.truncated);
-        assert!(globbed.next_cursor.is_none());
-
-        let limited = compute_list_files_result(root, &root_display, None, 1, 20_000, false, None)
-            .await
-            .unwrap();
-        assert!(limited.truncated);
-        assert_eq!(limited.truncation, Some(ListFilesTruncation::MaxItems));
-        assert_eq!(limited.files.len(), 1);
-        assert!(limited.next_cursor.is_some());
-
-        let tiny = compute_list_files_result(root, &root_display, None, 50, 3, false, None)
-            .await
-            .unwrap();
-        assert!(tiny.truncated);
-        assert_eq!(tiny.truncation, Some(ListFilesTruncation::MaxChars));
-        assert!(tiny.next_cursor.is_some());
-
-        assert!(
-            !context_dir.exists()
-                && !root.join(".context").exists()
-                && !root.join(".context-finder").exists()
-        );
-    }
-
-    #[test]
-    fn batch_prepare_item_input_injects_max_chars_for_ls() {
-        let input = serde_json::json!({});
-        let prepared = prepare_item_input(input, Some("/root"), BatchToolName::Ls, 5_000);
-
-        let obj = prepared.as_object().expect("prepared input must be object");
-        assert_eq!(obj.get("path").and_then(|v| v.as_str()), Some("/root"));
-        assert!(
-            obj.get("max_chars").is_some(),
-            "expected max_chars to be injected for ls"
-        );
-    }
-
-    #[test]
-    fn batch_prepare_item_input_injects_max_chars_for_rg() {
-        let input = serde_json::json!({});
-        let prepared = prepare_item_input(input, Some("/root"), BatchToolName::Rg, 5_000);
-
-        let obj = prepared.as_object().expect("prepared input must be object");
-        assert_eq!(obj.get("path").and_then(|v| v.as_str()), Some("/root"));
-        assert!(
-            obj.get("max_chars").is_some(),
-            "expected max_chars to be injected for rg"
-        );
-    }
-
-    #[tokio::test]
-    async fn doctor_manifest_parsing_reports_missing_assets() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let model_dir = tmp.path().join("models");
-        std::fs::create_dir_all(&model_dir).unwrap();
-
-        std::fs::write(
-            model_dir.join("manifest.json"),
-            r#"{"schema_version":1,"models":[{"id":"m1","assets":[{"path":"m1/model.onnx"}]}]}"#,
-        )
-        .unwrap();
-
-        let (exists, models) = load_model_statuses(&model_dir).await.unwrap();
-        assert!(exists);
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0].id, "m1");
-        assert!(!models[0].installed);
-        assert_eq!(models[0].missing_assets, vec!["m1/model.onnx"]);
-    }
-
-    #[tokio::test]
-    async fn doctor_drift_helpers_detect_missing_and_extra_chunks() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let corpus_path = tmp.path().join("corpus.json");
-        let index_path = tmp.path().join("index.json");
-
-        let mut corpus = ChunkCorpus::new();
-        corpus.set_file_chunks(
-            "a.rs".to_string(),
-            vec![context_code_chunker::CodeChunk::new(
-                "a.rs".to_string(),
-                1,
-                2,
-                "alpha".to_string(),
-                ChunkMetadata::default(),
-            )],
-        );
-        corpus.set_file_chunks(
-            "c.rs".to_string(),
-            vec![context_code_chunker::CodeChunk::new(
-                "c.rs".to_string(),
-                10,
-                12,
-                "gamma".to_string(),
-                ChunkMetadata::default(),
-            )],
-        );
-        corpus.save(&corpus_path).await.unwrap();
-
-        // Index contains one correct chunk id (a.rs:1:2) and one extra (b.rs:1:1),
-        // while missing c.rs:10:12.
-        std::fs::write(
-            &index_path,
-            r#"{"schema_version":3,"dimension":384,"next_id":2,"id_map":{"0":"a.rs:1:2","1":"b.rs:1:1"},"vectors":{}}"#,
-        )
-        .unwrap();
-
-        let corpus_ids = load_corpus_chunk_ids(&corpus_path).await.unwrap();
-        let index_ids = load_index_chunk_ids(&index_path).await.unwrap();
-
-        assert_eq!(corpus_ids.len(), 2);
-        assert_eq!(index_ids.len(), 2);
-        assert_eq!(corpus_ids.difference(&index_ids).count(), 1);
-        assert_eq!(index_ids.difference(&corpus_ids).count(), 1);
-    }
-
-    fn mk_chunk(
-        file_path: &str,
-        start_line: usize,
-        content: &str,
-    ) -> context_code_chunker::CodeChunk {
-        context_code_chunker::CodeChunk::new(
-            file_path.to_string(),
-            start_line,
-            start_line + content.lines().count().saturating_sub(1),
-            content.to_string(),
-            ChunkMetadata::default(),
-        )
-    }
-
-    #[test]
-    fn prepare_excludes_docs_when_disabled() {
-        let primary_code = SearchResult {
-            id: "src/main.rs:1:1".to_string(),
-            chunk: mk_chunk("src/main.rs", 1, "fn main() {}"),
-            score: 0.9,
-        };
-        let primary_docs = SearchResult {
-            id: "docs/readme.md:1:1".to_string(),
-            chunk: mk_chunk("docs/readme.md", 1, "# docs"),
-            score: 1.0,
-        };
-
-        let related_docs = RelatedContext {
-            chunk: mk_chunk("docs/guide.md", 1, "# guide"),
-            relationship_path: vec!["Calls".to_string()],
-            distance: 1,
-            relevance_score: 0.5,
-        };
-        let related_code = RelatedContext {
-            chunk: mk_chunk("src/lib.rs", 10, "pub fn f() {}"),
-            relationship_path: vec!["Calls".to_string()],
-            distance: 1,
-            relevance_score: 0.6,
-        };
-
-        let enriched = vec![
-            EnrichedResult {
-                primary: primary_docs,
-                related: Vec::new(),
-                total_lines: 1,
-                strategy: context_graph::AssemblyStrategy::Extended,
-            },
-            EnrichedResult {
-                primary: primary_code,
-                related: vec![related_docs, related_code],
-                total_lines: 1,
-                strategy: context_graph::AssemblyStrategy::Extended,
-            },
-        ];
-
-        let prepared = prepare_context_pack_enriched(enriched, 10, false, false);
-        let files: Vec<&str> = prepared
-            .iter()
-            .map(|er| er.primary.chunk.file_path.as_str())
-            .collect();
-        assert_eq!(files, vec!["src/main.rs"]);
-
-        let related_files: Vec<&str> = prepared[0]
-            .related
-            .iter()
-            .map(|rc| rc.chunk.file_path.as_str())
-            .collect();
-        assert_eq!(related_files, vec!["src/lib.rs"]);
-    }
-
-    #[test]
-    fn prepare_prefers_code_over_docs_when_enabled() {
-        let primary_code = SearchResult {
-            id: "src/main.rs:1:1".to_string(),
-            chunk: mk_chunk("src/main.rs", 1, "fn main() {}"),
-            score: 0.9,
-        };
-        let primary_docs = SearchResult {
-            id: "docs/readme.md:1:1".to_string(),
-            chunk: mk_chunk("docs/readme.md", 1, "# docs"),
-            score: 1.0,
-        };
-
-        let enriched = vec![
-            EnrichedResult {
-                primary: primary_docs,
-                related: Vec::new(),
-                total_lines: 1,
-                strategy: context_graph::AssemblyStrategy::Extended,
-            },
-            EnrichedResult {
-                primary: primary_code,
-                related: Vec::new(),
-                total_lines: 1,
-                strategy: context_graph::AssemblyStrategy::Extended,
-            },
-        ];
-
-        let prepared = prepare_context_pack_enriched(enriched, 10, true, true);
-        let files: Vec<&str> = prepared
-            .iter()
-            .map(|er| er.primary.chunk.file_path.as_str())
-            .collect();
-        assert_eq!(files, vec!["src/main.rs", "docs/readme.md"]);
-    }
-
-    #[test]
-    fn focus_related_prefers_query_hits_over_raw_relevance() {
-        let related_miss = RelatedContext {
-            chunk: mk_chunk("src/miss.rs", 1, "fn unrelated() {}"),
-            relationship_path: vec!["Calls".to_string()],
-            distance: 1,
-            relevance_score: 100.0,
-        };
-        let related_hit = RelatedContext {
-            chunk: mk_chunk("src/hit.rs", 1, "fn target() {}"),
-            relationship_path: vec!["Calls".to_string()],
-            distance: 1,
-            relevance_score: 0.1,
-        };
-
-        let query_tokens = vec!["target".to_string()];
-        let prepared = prepare_related_contexts(
-            vec![related_miss, related_hit],
-            RelatedMode::Focus,
-            &query_tokens,
-        );
-        assert_eq!(prepared[0].chunk.file_path, "src/hit.rs");
-    }
-
-    #[test]
-    fn canonicalize_root_prefers_git_root_for_file_hint() {
-        let dir = tempdir().expect("temp dir");
-        std::fs::create_dir(dir.path().join(".git")).expect("create .git");
-
-        let nested = dir.path().join("sub").join("inner");
-        std::fs::create_dir_all(&nested).expect("create nested dir");
-        let file = nested.join("main.rs");
-        std::fs::write(&file, "fn main() {}\n").expect("write file");
-
-        let resolved = canonicalize_root_path(&file).expect("canonicalize root");
-        assert_eq!(resolved, dir.path().canonicalize().expect("canonical root"));
-    }
-
-    #[test]
-    fn root_path_from_mcp_uri_parses_file_uri() {
-        let out = root_path_from_mcp_uri("file:///tmp/foo%20bar").expect("parse file uri");
-        assert_eq!(out, PathBuf::from("/tmp/foo bar"));
-    }
-}
+mod tests;

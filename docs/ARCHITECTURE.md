@@ -177,6 +177,15 @@ Transport:
 
 For the tool list and examples, see `README.md`.
 
+Internal layout (tool dispatch):
+
+- `crates/mcp-server/src/tools/dispatch/mod.rs` — tool wiring + `ContextFinderService` entrypoint.
+- `crates/mcp-server/src/tools/dispatch/router/` — per-tool request routing.
+- `crates/mcp-server/src/tools/dispatch/read_pack/` — `read_pack` implementation.
+- `crates/mcp-server/src/tools/dispatch/root/` — root resolution + per-connection `SessionDefaults`.
+- `crates/mcp-server/src/tools/dispatch/tests/` — dispatch-level regression tests.
+- `scripts/structural_guardrails.txt` — anti-regression line-count guardrails for oversized files.
+
 ## On-disk layout (per project)
 
 ```
