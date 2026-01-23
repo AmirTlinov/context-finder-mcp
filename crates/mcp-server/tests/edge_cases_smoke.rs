@@ -648,6 +648,19 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
         "expected meaning_pack answer line"
     );
 
+    // 13b) UX: missing required fields should include a hint with an example.
+    let meaning_missing_query = call_tool(&service, "meaning_pack", serde_json::json!({})).await;
+    let err = meaning_missing_query.expect_err("meaning_pack missing query should fail");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("missing field `query`"),
+        "expected missing query error, got:\n{msg}"
+    );
+    assert!(
+        msg.contains("Example:") && msg.contains("\"query\""),
+        "expected example hint, got:\n{msg}"
+    );
+
     // 14) `meaning_focus` should accept a focus target and stay bounded.
     let focus = call_tool(
         &service,
@@ -663,6 +676,26 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
     assert!(
         tool_text(&focus)?.contains("A: meaning_focus"),
         "expected meaning_focus answer line"
+    );
+
+    // 14a) UX: missing required focus should include a hint (and reuse common `path` mistakes).
+    let focus_missing = call_tool(
+        &service,
+        "meaning_focus",
+        serde_json::json!({
+            "path": "src/agent",
+        }),
+    )
+    .await;
+    let err = focus_missing.expect_err("meaning_focus missing focus should fail");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("missing field `focus`"),
+        "expected missing focus error, got:\n{msg}"
+    );
+    assert!(
+        msg.contains("Example:") && msg.contains("\"focus\"") && msg.contains("src/agent"),
+        "expected example hint for focus, got:\n{msg}"
     );
 
     // 14b) UX: invalid output_format should explain allowed values.

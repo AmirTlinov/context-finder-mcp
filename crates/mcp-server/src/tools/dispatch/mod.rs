@@ -90,7 +90,6 @@ use context_vector_store::{
     current_model_id, ChunkCorpus, DocumentKind, GraphNodeDoc, GraphNodeStore, GraphNodeStoreMeta,
     QueryKind, VectorIndex,
 };
-use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::service::{RequestContext, RoleServer};
@@ -105,6 +104,7 @@ use tokio::sync::{Mutex, Notify};
 
 mod budgets;
 use budgets::{mcp_default_budgets, AutoIndexPolicy};
+mod tool_router_hints;
 
 mod doctor_helpers;
 use doctor_helpers::{
@@ -127,7 +127,7 @@ pub struct ContextFinderService {
     /// Search profile
     profile: SearchProfile,
     /// Tool router
-    tool_router: ToolRouter<Self>,
+    tool_router: tool_router_hints::ToolRouterWithParamHints<Self>,
     /// Shared cache state (per-process)
     state: Arc<ServiceState>,
     /// Per-connection session defaults (do not share across multi-agent sessions).
@@ -158,7 +158,7 @@ impl ContextFinderService {
     fn new_with_policy(allow_cwd_root_fallback: bool) -> Self {
         Self {
             profile: load_profile_from_env(),
-            tool_router: Self::tool_router(),
+            tool_router: tool_router_hints::ToolRouterWithParamHints::new(Self::tool_router()),
             state: Arc::new(ServiceState::new()),
             session: Arc::new(Mutex::new(SessionDefaults::default())),
             roots_notify: Arc::new(Notify::new()),
