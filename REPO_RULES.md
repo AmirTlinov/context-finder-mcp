@@ -35,7 +35,8 @@ If you need the full “daily driver” checklist, see `docs/QUALITY_CHARTER.md`
 
 - Never commit model assets under `models/**`.
 - Never commit local caches:
-  - `.agents/mcp/context/.context/` (preferred cache dir)
+  - `.agents/mcp/.context/` (preferred cache dir)
+  - legacy `.agents/mcp/context/.context/`, `.context/`, `.context-finder/`
   - legacy `.context/`, `.context-finder/`
   - `.fastembed_cache/`, `.deps/`, etc.
 

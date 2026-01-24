@@ -10,7 +10,7 @@ use super::ToolNextAction;
 pub struct LsRequest {
     /// Project directory path
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). Note: `path` sets the project root; to list a subdirectory, prefer `dir` (and in established sessions, ls treats a relative `path` as `dir` when `dir` is omitted)."
     )]
     pub path: Option<String>,
 

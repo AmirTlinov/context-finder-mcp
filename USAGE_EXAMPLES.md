@@ -7,11 +7,11 @@ This document focuses on agent-friendly workflows. In MCP mode, **indexing is au
 ### 1) Build/install
 
 ```bash
-cargo build --release
+cargo install --path crates/mcp-server --locked
 cargo install --path crates/cli --locked
 
 # (optional) local alias instead of install
-alias context-finder='./target/release/context-finder'
+alias context='./target/release/context'
 ```
 
 ### 2) Models (offline, `./models`)
@@ -19,9 +19,9 @@ alias context-finder='./target/release/context-finder'
 Models are downloaded once into `./models/` from `models/manifest.json` and are not committed to git.
 
 ```bash
-# run from repo root (or use --model-dir / CONTEXT_FINDER_MODEL_DIR)
-context-finder install-models
-context-finder doctor --json
+# run from repo root (or use --model-dir / CONTEXT_MODEL_DIR; legacy: CONTEXT_FINDER_MODEL_DIR)
+context install-models
+context doctor --json
 ```
 
 v1 roster (model_id):
@@ -31,22 +31,22 @@ v1 roster (model_id):
 - `nomic-embed-text-v1` — long-context doc queries (768d, max_len=8192)
 - `embeddinggemma-300m` — "promptable" conceptual queries (768d)
 
-Execution policy: GPU-only by default. CPU fallback only with `CONTEXT_FINDER_ALLOW_CPU=1`.
+Execution policy: GPU-only by default. CPU fallback only with `CONTEXT_ALLOW_CPU=1` (legacy: `CONTEXT_FINDER_ALLOW_CPU=1`).
 
 ## Indexing
 
 ```bash
 # Index the current project using the active profile + embedding model
-context-finder index . --json
+context index . --json
 
 # Force full reindex (ignore incremental cache)
-context-finder index . --force --json
+context index . --force --json
 
 # Multi-model: index all expert models referenced by the profile
-context-finder index . --experts --json
+context index . --experts --json
 
 # Add specific models on top (comma-separated)
-context-finder index . --experts --models embeddinggemma-300m --json
+context index . --experts --models embeddinggemma-300m --json
 ```
 
 ## Search and context for agents
@@ -54,7 +54,7 @@ context-finder index . --experts --models embeddinggemma-300m --json
 ### 1) Best default: bounded `context-pack`
 
 ```bash
-context-finder context-pack "index schema version" --path . --max-chars 20000 --json --quiet
+context context-pack "index schema version" --path . --max-chars 20000 --json --quiet
 ```
 
 Note: `ContextPackOutput` may include `meta.index_state` (best-effort index freshness snapshot).
@@ -63,12 +63,12 @@ Tuning knobs for agent workflows:
 
 ```bash
 # Implementation-first (code-first), exclude docs, reduce halo noise
-context-finder context-pack "apexd" --path . \
+context context-pack "apexd" --path . \
   --prefer-code --exclude-docs --related-mode focus \
   --max-chars 20000 --json --quiet
 
 # Docs-first (keep markdown, broader exploration)
-context-finder context-pack "ARCHITECTURE.md" --path . \
+context context-pack "ARCHITECTURE.md" --path . \
   --prefer-docs --related-mode explore \
   --max-chars 20000 --json --quiet
 ```
@@ -78,40 +78,40 @@ Default profile is `quality` (balanced). For maximum speed: `--profile fast`. Fo
 ### 2) Exploration: `context` (semantic + graph)
 
 ```bash
-context-finder context "StreamingIndexer health" --path . --strategy deep --show-graph --json --quiet
+context context "StreamingIndexer health" --path . --strategy deep --show-graph --json --quiet
 ```
 
 ### 3) Fast search: `search`
 
 ```bash
-context-finder search "embedding templates" --path . -n 10 --with-graph --json --quiet
+context search "embedding templates" --path . -n 10 --with-graph --json --quiet
 ```
 
 ## Project navigation
 
 ```bash
 # Structure overview (directories/coverage/top symbols)
-context-finder map . -d 2 --json --quiet
+context map . -d 2 --json --quiet
 
 # Symbols in a file (fast index-backed glob mode)
-context-finder list-symbols . --file "crates/cli/src/lib.rs" --json --quiet
+context list-symbols . --file "crates/cli/src/lib.rs" --json --quiet
 ```
 
 ## Quality evaluation (golden datasets)
 
 ```bash
 # Evaluate MRR/recall/latency/bytes + artifacts
-context-finder eval . --dataset datasets/golden_smoke.json --cache-mode warm \
-  --out-json .agents/mcp/context/eval.smoke.json \
-  --out-md .agents/mcp/context/eval.smoke.md \
+context eval . --dataset datasets/golden_smoke.json --cache-mode warm \
+  --out-json .agents/mcp/.context/eval.smoke.json \
+  --out-md .agents/mcp/.context/eval.smoke.md \
   --json
 
 # A/B comparison across profiles/model sets
-context-finder eval-compare . --dataset datasets/golden_smoke.json \
+context eval-compare . --dataset datasets/golden_smoke.json \
   --a-profile general --b-profile general \
   --a-models bge-small --b-models embeddinggemma-300m \
-  --out-json .agents/mcp/context/eval.compare.json \
-  --out-md .agents/mcp/context/eval.compare.md \
+  --out-json .agents/mcp/.context/eval.compare.json \
+  --out-md .agents/mcp/.context/eval.compare.md \
   --json
 ```
 
@@ -122,7 +122,7 @@ context-finder eval-compare . --dataset datasets/golden_smoke.json \
 Use `batch` when an agent needs multiple pieces of information but you still want **one bounded JSON response**.
 
 ```bash
-context-finder command --json '{
+context command --json '{
   "action":"batch",
   "options":{"stale_policy":"auto","max_reindex_ms":1500},
   "payload":{
@@ -140,7 +140,7 @@ context-finder command --json '{
 `$ref` dependencies between items (id-based JSON Pointer into prior item results):
 
 ```bash
-context-finder command --json '{
+context command --json '{
   "action":"batch",
   "payload":{
     "project":".",
@@ -173,7 +173,7 @@ import subprocess
 def context_pack(query: str, project: str = ".", max_chars: int = 20000) -> dict:
     proc = subprocess.run(
         [
-            "context-finder",
+            "context",
             "context-pack",
             query,
             "--path",
@@ -203,7 +203,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 async function search(query: string, project = ".", limit = 10) {
-  const { stdout } = await execFileAsync("context-finder", [
+  const { stdout } = await execFileAsync("context", [
     "search",
     query,
     "--path",

@@ -70,7 +70,7 @@ We prefer objective evaluation over anecdotes:
 
 - golden datasets (`datasets/…`) with MRR/recall/latency/bytes,
 - A/B comparisons (`eval-compare`, `compare_search`),
-- health snapshots for indexing (`/health`, `.agents/mcp/context/.context/health.json`).
+- health snapshots for indexing (`/health`, `.agents/mcp/.context/health.json`).
 
 ### 5) Offline-first, explicit dependencies
 

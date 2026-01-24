@@ -16,6 +16,10 @@ If you still need `rg → open → grep → cat → repeat`, treat that as a pro
 2.5) optional `external_memory` — bounded, deduped “worklog memory” if available
    - `codex_cli`: project-scoped prompts/plans/changes extracted from your Codex CLI sessions (zero-config)
    - `branchmind`: structured decisions/evidence overlay when a project-scoped cache file is present
+
+Related tooling note: MCP `search`/`context` responses now include a compact `doc_context` header
+with the most relevant project documentation snippet when the query matches docs, so intent and
+invariants travel with the code hits (no extra calls needed).
 3) `next_cursor` (when needed) — continue without re-sending parameters (cursor-only continuation). If you pass a cursor plus conflicting parameters, the tool returns `cursor_mismatch` with `next_actions` ([contracts/command/v1/error.schema.json](../contracts/command/v1/error.schema.json)).
 
 ### Codex CLI overlay (`codex_cli`)
@@ -78,6 +82,8 @@ The Command API (CLI/HTTP/gRPC) returns structured JSON payloads (best for stric
 For MCP tools, the agent-facing `content` is always a packed `.context` **plain text** document: a `[CONTENT]` stream. The legend (`[LEGEND]`) is available via the `help` tool when you need it.
 
 The goal is payload density: responses should be **almost entirely project content** (facts + snippets), with minimal tool chatter.
+
+Note: `search` / `context` now prepend lightweight metadata notes before each code block (e.g. `N: meta`, `N: tags`, `N: imports`) and include trimmed doc comments when available (`N: doc` + block). This is always on to improve agent understanding.
 
 MCP tool output is intentionally `.context` text only (agent-native). For machine-readable output (automation / batching / `$ref` workflows), use the Command API.
 
@@ -247,3 +253,8 @@ Treat the MCP schema as the canonical reference for exact fields:
 - `read_pack`: `crates/mcp-server/src/tools/schemas/read_pack.rs`
 - `cat`: `crates/mcp-server/src/tools/schemas/file_slice.rs`
 - `rg`: `crates/mcp-server/src/tools/schemas/grep_context.rs`
+
+Notes:
+
+- Prefer `cat` inputs as `{ "file": "...", "start_line": N, "max_lines": M }`.
+- Back-compat aliases are supported (`line_start`/`line_end`, and legacy `path` as a file path when `file` is omitted).

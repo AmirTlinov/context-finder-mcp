@@ -22,15 +22,14 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Format
-        run: cargo fmt --all -- --check
+      - name: Validate contracts
+        run: scripts/validate_contracts.sh
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Structural guardrails
+        run: bash scripts/structural_guardrails.sh
 
-      - name: Test
-        run: cargo test --workspace
+      - name: Quality (full gate)
+        run: bash scripts/validate_quality.sh
 
       - name: Build (release)
         run: cargo build --workspace --release
-

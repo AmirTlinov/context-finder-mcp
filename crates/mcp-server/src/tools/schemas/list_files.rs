@@ -9,7 +9,7 @@ use super::ToolNextAction;
 pub struct ListFilesRequest {
     /// Project directory path
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). DX: when a session root is already set and `file_pattern` is omitted, a relative `path` is treated as `file_pattern`."
     )]
     pub path: Option<String>,
 

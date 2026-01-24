@@ -16,6 +16,14 @@ pub(crate) const TOOL_CATALOG: &[ToolDescriptor] = &[
         summary: "Explain the `.context` legend (A/R/N/M) and best practices.",
     },
     ToolDescriptor {
+        name: "root_get",
+        summary: "Session root + workspace roots status (multi-root + cross-project safety).",
+    },
+    ToolDescriptor {
+        name: "root_set",
+        summary: "Explicitly set per-connection session root (switch projects intentionally).",
+    },
+    ToolDescriptor {
         name: "repo_onboarding_pack",
         summary: "Map + key docs + next_actions (best first call).",
     },

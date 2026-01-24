@@ -18,6 +18,7 @@ use super::error::{
     attach_structured_content, internal_error_with_meta, invalid_cursor_with_meta,
     invalid_cursor_with_meta_details, invalid_request_with_meta, meta_for_request,
 };
+use std::path::Path;
 
 fn build_regex(pattern: &str, case_sensitive: bool) -> Result<regex::Regex, String> {
     RegexBuilder::new(pattern)
@@ -353,7 +354,7 @@ pub(in crate::tools::dispatch) async fn grep_context(
                             if let Some(session_root_display) = session_root_display {
                                 if session_root_display != root {
                                     return Ok(invalid_cursor_with_meta(
-                                        "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects.",
+                                        "Invalid cursor: cursor refers to a different project root than the current session; call `root_set` to switch projects (or pass `path`).",
                                         ToolMeta {
                                             root_fingerprint: Some(root_fingerprint(
                                                 &session_root_display,
@@ -366,6 +367,84 @@ pub(in crate::tools::dispatch) async fn grep_context(
                             request.path = Some(root.to_string());
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // DX convenience: callers often pass `path` as a *subdirectory within the project* (e.g.
+    // `{ "path": "src", "pattern": "foo" }`). In Context, `path` sets the project root.
+    //
+    // When the session already has a root, treat a relative `path` with no `file`/`file_pattern`
+    // and no cursor as a `file_pattern` hint instead of switching the session root.
+    let cursor_missing = request
+        .cursor
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none();
+    let file_missing = request
+        .file
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none();
+    let file_pattern_missing = request
+        .file_pattern
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none();
+    if cursor_missing && file_missing && file_pattern_missing {
+        if let Some(raw_path) = request
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let session_root = { service.session.lock().await.clone_root().map(|(r, _)| r) };
+            if let Some(session_root) = session_root.as_ref() {
+                let raw = Path::new(raw_path);
+                if raw.is_absolute() {
+                    if let Ok(canonical) = raw.canonicalize() {
+                        if canonical.starts_with(session_root) {
+                            if let Ok(rel) = canonical.strip_prefix(session_root) {
+                                if let Some(rel) =
+                                    crate::tools::dispatch::root::rel_path_string(rel)
+                                {
+                                    let is_file = std::fs::metadata(&canonical)
+                                        .ok()
+                                        .map(|meta| meta.is_file())
+                                        .unwrap_or(false);
+                                    if is_file {
+                                        request.file = Some(rel);
+                                    } else {
+                                        let mut pattern = rel;
+                                        if !pattern.ends_with('/') {
+                                            pattern.push('/');
+                                        }
+                                        request.file_pattern = Some(pattern);
+                                    }
+                                    request.path = None;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let candidate = session_root.join(raw_path);
+                    let meta = std::fs::metadata(&candidate).ok();
+                    let is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
+                    let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                    if is_file {
+                        request.file = Some(raw_path.to_string());
+                    } else {
+                        let mut pattern = raw_path.to_string();
+                        if is_dir && !pattern.ends_with('/') {
+                            pattern.push('/');
+                        }
+                        request.file_pattern = Some(pattern);
+                    }
+                    request.path = None;
                 }
             }
         }

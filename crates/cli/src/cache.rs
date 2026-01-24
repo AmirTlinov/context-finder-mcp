@@ -30,7 +30,7 @@ impl CacheConfig {
     #[allow(dead_code)]
     pub fn with_defaults() -> Self {
         Self {
-            dir: PathBuf::from(".agents/mcp/context/.context/cache"),
+            dir: PathBuf::from(".agents/mcp/.context/cache"),
             ttl: Duration::from_secs(86_400),
             backend: CacheBackend::Memory,
             capacity: 32,

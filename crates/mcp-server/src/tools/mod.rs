@@ -6,11 +6,13 @@
 mod atlas_pack;
 mod batch;
 pub(crate) mod catalog;
+mod chunk_summary;
 mod context_doc;
 mod context_legend;
 mod cpv1;
 mod cursor;
 mod dispatch;
+mod doc_context;
 mod evidence_fetch;
 mod external_memory;
 mod file_slice;

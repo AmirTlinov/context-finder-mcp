@@ -312,7 +312,7 @@ This enables O(changed_files) updates and avoids full rescans.
 
 ### 6.3) Storage
 
-Use the existing on-disk index location (`.agents/mcp/context/.context/`), add:
+Use the existing on-disk index location (`.agents/mcp/.context/`), add:
 
 - a meaning shard store (by file + source_hash)
 - indices (symbol → node ids, path → file ids)

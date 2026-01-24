@@ -137,9 +137,11 @@ fn build_directory_infos(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn populate_map_from_filesystem(
     root: &Path,
     depth: usize,
+    scope_prefix: Option<&str>,
     tree_files: &mut HashMap<String, HashSet<String>>,
     tree_chunks: &mut HashMap<String, usize>,
     tree_symbols: &mut HashMap<String, Vec<String>>,
@@ -156,6 +158,11 @@ async fn populate_map_from_filesystem(
         };
         if is_potential_secret_path(&rel_path) {
             continue;
+        }
+        if let Some(prefix) = scope_prefix {
+            if !rel_path.starts_with(prefix) {
+                continue;
+            }
         }
 
         let key = directory_key(&rel_path, depth);
@@ -202,7 +209,12 @@ pub(super) async fn compute_map_result(
     depth: usize,
     limit: usize,
     offset: usize,
+    scope_prefix: Option<&str>,
 ) -> Result<MapResult> {
+    let scope_prefix = scope_prefix
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "." && *s != "./");
+
     // Aggregate by directory
     let mut tree_files: HashMap<String, HashSet<String>> = HashMap::new();
     let mut tree_chunks: HashMap<String, usize> = HashMap::new();
@@ -214,6 +226,11 @@ pub(super) async fn compute_map_result(
         for (file, chunks) in corpus.files() {
             if is_potential_secret_path(file) {
                 continue;
+            }
+            if let Some(prefix) = scope_prefix {
+                if !file.starts_with(prefix) {
+                    continue;
+                }
             }
             let key = directory_key(file, depth);
             tree_files.entry(key).or_default().insert(file.clone());
@@ -233,6 +250,7 @@ pub(super) async fn compute_map_result(
         populate_map_from_filesystem(
             root,
             depth,
+            scope_prefix,
             &mut tree_files,
             &mut tree_chunks,
             &mut tree_symbols,
@@ -264,6 +282,7 @@ pub(super) async fn compute_map_result(
             tool: "tree".to_string(),
             root: Some(root_display.to_string()),
             root_hash: Some(cursor_fingerprint(root_display)),
+            scope: scope_prefix.map(|s| s.to_string()),
             depth,
             limit,
             offset: end,

@@ -9,6 +9,10 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 
 ### Added
 
+- Install DX: added `scripts/install.sh` to install the MCP server (`context-mcp`) and CLI (`context`)
+  in one step (minimizes setup friction).
+- Root hygiene: new `root_get` / `root_set` MCP tools to introspect and explicitly switch the
+  per-connection session root (multi-root disambiguation, cross-project safety).
 - Meaning mode: `meaning_pack` and `meaning_focus` now provide actionable `next_actions` hints
   in MCP `.context` output when `response_mode=full` (keeps defaults low-noise).
 - Meaning eval: expanded the stub smoke dataset with additional repo archetypes
@@ -24,6 +28,14 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   (`contracts/eval/v1/zoo_report.schema.json`).
 - Eval zoo: added a local runner + compare scripts (`scripts/eval_zoo_local.sh`,
   `scripts/eval_zoo_compare.py`) for trend tracking across heterogeneous repos.
+
+### Changed
+
+- MCP `search`/`context` output now includes lightweight metadata notes and trimmed doc comments per
+  hit (type/scope/imports/tags + doc block) to improve agent context density.
+- MCP `search`/`context` now prepend a compact `doc_context` header (top-ranked project doc snippet)
+  when the query matches project documentation, keeping intent and invariants visible in the same
+  response.
 - Atlas eval: added CI-gated tests for `atlas_pack` meaning determinism and noise suppression.
 - Worktree atlas: new `worktree_pack` tool lists git worktrees/branches and summarizes active work
 - Agent notebook: new `notebook_pack` / `notebook_edit` tools for durable, evidence-backed anchors
@@ -39,6 +51,11 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 
 ### Changed
 
+- Shared-backend safety: proxy root binding is now **roots-first** (prefers MCP `roots/list` when
+  supported; avoids guessing from a potentially stale process cwd) and fails closed on repeated
+  `initialize` without roots to prevent cross-project contamination.
+- Root hygiene: multi-root workspaces can now be auto-disambiguated from file/dir hints (and, when
+  unique, from a relative `path`) without requiring manual `root_set` on every call.
 - Meaning degradation: under extreme budgets, contract-focused queries now preserve higher-signal
   contract evidence (OpenAPI/Proto/JSON Schema) rather than README-like contract index docs.
 - Meaning degradation: under tight budgets, the CP shrink policy preserves multiple

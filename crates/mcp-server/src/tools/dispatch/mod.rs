@@ -60,6 +60,7 @@ use super::schemas::read_pack::{
 };
 use super::schemas::repo_onboarding_pack::RepoOnboardingPackRequest;
 use super::schemas::response_mode::ResponseMode;
+use super::schemas::root::{RootGetRequest, RootGetResult, RootSetRequest, RootSetResult};
 use super::schemas::runbook_pack::RunbookPackRequest;
 pub(super) use super::schemas::search::{SearchRequest, SearchResponse, SearchResult};
 use super::schemas::text_search::{
@@ -96,7 +97,6 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -116,9 +116,7 @@ use cursor_store::CursorStore;
 
 mod root;
 use root::{
-    canonicalize_root, canonicalize_root_path, collect_relative_hints, env_root_override,
-    find_project_root, hint_score_for_root, rel_path_string, resolve_root_from_absolute_hints,
-    root_path_from_mcp_uri, trimmed_non_empty, SessionDefaults,
+    canonicalize_root_path, root_path_from_mcp_uri, workspace_roots_preview, SessionDefaults,
 };
 
 /// Context MCP Service
@@ -177,209 +175,7 @@ impl ContextFinderService {
         }
     }
 
-    pub(super) async fn resolve_root(
-        &self,
-        raw_path: Option<&str>,
-    ) -> Result<(PathBuf, String), String> {
-        self.resolve_root_with_hints(raw_path, &[]).await
-    }
-
-    pub(super) async fn resolve_root_with_hints(
-        &self,
-        raw_path: Option<&str>,
-        hints: &[String],
-    ) -> Result<(PathBuf, String), String> {
-        let (root, root_display) = self.resolve_root_impl_with_hints(raw_path, hints).await?;
-        self.touch_daemon_best_effort(&root);
-        Ok((root, root_display))
-    }
-
-    pub(super) async fn resolve_root_no_daemon_touch(
-        &self,
-        raw_path: Option<&str>,
-    ) -> Result<(PathBuf, String), String> {
-        self.resolve_root_with_hints_no_daemon_touch(raw_path, &[])
-            .await
-    }
-
-    pub(super) async fn resolve_root_with_hints_no_daemon_touch(
-        &self,
-        raw_path: Option<&str>,
-        hints: &[String],
-    ) -> Result<(PathBuf, String), String> {
-        self.resolve_root_impl_with_hints(raw_path, hints).await
-    }
-
-    async fn resolve_root_impl_with_hints(
-        &self,
-        raw_path: Option<&str>,
-        hints: &[String],
-    ) -> Result<(PathBuf, String), String> {
-        if let Some(raw) = trimmed_non_empty(raw_path) {
-            let root = canonicalize_root(raw).map_err(|err| format!("Invalid path: {err}"))?;
-            let root_display = root.to_string_lossy().to_string();
-
-            // Agent-native UX: callers often pass a "current file" path as `path`. Preserve the
-            // relative file hint (when possible) so `read_pack intent=memory` can surface the
-            // current working file without requiring extra parameters.
-            let mut focus_file: Option<String> = None;
-            if let Ok(canonical) = Path::new(raw).canonicalize() {
-                if let Ok(meta) = std::fs::metadata(&canonical) {
-                    if meta.is_file() {
-                        if let Ok(rel) = canonical.strip_prefix(&root) {
-                            focus_file = rel_path_string(rel);
-                        }
-                    }
-                }
-            }
-
-            let mut session = self.session.lock().await;
-            if self.allow_cwd_root_fallback || session.initialized() {
-                session.set_root(root.clone(), root_display.clone(), focus_file);
-            }
-            return Ok((root, root_display));
-        }
-
-        if let Some(root) = resolve_root_from_absolute_hints(hints) {
-            let root_display = root.to_string_lossy().to_string();
-            let mut session = self.session.lock().await;
-            if self.allow_cwd_root_fallback || session.initialized() {
-                session.set_root(root.clone(), root_display.clone(), None);
-            }
-            return Ok((root, root_display));
-        }
-
-        let relative_hints = collect_relative_hints(hints);
-        if self.allow_cwd_root_fallback && !relative_hints.is_empty() {
-            if let Some((root, root_display)) =
-                self.resolve_root_from_relative_hints(&relative_hints).await
-            {
-                return Ok((root, root_display));
-            }
-        }
-
-        {
-            let session = self.session.lock().await;
-            if let Some((root, root_display)) = session.clone_root() {
-                if self.allow_cwd_root_fallback || session.initialized() {
-                    return Ok((root, root_display));
-                }
-            }
-        }
-
-        // Race guard: MCP roots are populated asynchronously after initialize. Some clients send
-        // the first tool call immediately after initialize, before `roots/list` completes.
-        //
-        // In shared daemon mode, failing fast can accidentally route the call using stale session
-        // state (when a transport is reused), or force clients to redundantly pass `path` even when
-        // they support roots. Prefer a small bounded wait to let `roots/list` establish the
-        // per-connection session root.
-        let roots_pending = { self.session.lock().await.roots_pending() };
-        if roots_pending {
-            let wait_ms = if self.allow_cwd_root_fallback {
-                150
-            } else {
-                900
-            };
-            let notify = self.roots_notify.clone();
-            let _ = tokio::time::timeout(Duration::from_millis(wait_ms), notify.notified()).await;
-            if let Some((root, root_display)) = self.session.lock().await.clone_root() {
-                return Ok((root, root_display));
-            }
-        }
-
-        if let Some((var, value)) = env_root_override() {
-            let root = canonicalize_root(&value)
-                .map_err(|err| format!("Invalid path from {var}: {err}"))?;
-            let root_display = root.to_string_lossy().to_string();
-            let mut session = self.session.lock().await;
-            if self.allow_cwd_root_fallback || session.initialized() {
-                session.set_root(root.clone(), root_display.clone(), None);
-            }
-            return Ok((root, root_display));
-        }
-
-        if !self.allow_cwd_root_fallback {
-            if self.session.lock().await.mcp_roots_ambiguous() {
-                return Err(
-                    "Missing project root: multiple MCP workspace roots detected; pass `path` to disambiguate."
-                        .to_string(),
-                );
-            }
-            return Err(
-                "Missing project root: pass `path` (recommended) or enable MCP roots, or set CONTEXT_ROOT/CONTEXT_PROJECT_ROOT."
-                    .to_string(),
-            );
-        }
-
-        let cwd = env::current_dir()
-            .map_err(|err| format!("Failed to determine current directory: {err}"))?;
-        let candidate = find_project_root(&cwd).unwrap_or(cwd);
-        let root =
-            canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
-        let root_display = root.to_string_lossy().to_string();
-        let mut session = self.session.lock().await;
-        if self.allow_cwd_root_fallback || session.initialized() {
-            session.set_root(root.clone(), root_display.clone(), None);
-        }
-        Ok((root, root_display))
-    }
-
-    async fn resolve_root_from_relative_hints(
-        &self,
-        hints: &[String],
-    ) -> Option<(PathBuf, String)> {
-        let session_root = self.session.lock().await.clone_root();
-        let mut roots: Vec<PathBuf> = Vec::new();
-        if let Some((root, _)) = session_root.as_ref() {
-            roots.push(root.clone());
-        }
-        for root in self.state.recent_roots().await {
-            if !roots.iter().any(|known| known == &root) {
-                roots.push(root);
-            }
-        }
-        if roots.is_empty() {
-            return None;
-        }
-
-        let mut best_score = 0usize;
-        let mut best_roots: Vec<PathBuf> = Vec::new();
-        for root in &roots {
-            let score = hint_score_for_root(root, hints);
-            if score == 0 {
-                continue;
-            }
-            if score > best_score {
-                best_score = score;
-                best_roots.clear();
-            }
-            if score == best_score {
-                best_roots.push(root.clone());
-            }
-        }
-
-        if best_score == 0 || best_roots.is_empty() {
-            return None;
-        }
-
-        let chosen = if best_roots.len() == 1 {
-            best_roots.remove(0)
-        } else if let Some((root, _)) = session_root {
-            if best_roots.iter().any(|candidate| candidate == &root) {
-                root
-            } else {
-                return None;
-            }
-        } else {
-            return None;
-        };
-
-        let root_display = chosen.to_string_lossy().to_string();
-        let mut session = self.session.lock().await;
-        session.set_root(chosen.clone(), root_display.clone(), None);
-        Some((chosen, root_display))
-    }
+    // Root resolution methods are implemented in `crates/mcp-server/src/tools/dispatch/root/service.rs`.
 }
 
 fn load_profile_from_env() -> SearchProfile {
@@ -478,9 +274,18 @@ impl ServerHandler for ContextFinderService {
                     candidates.dedup();
 
                     let mut session = session.lock().await;
-                    // Only set the session root if the tool call path did not already establish one.
-                    // Explicit per-call `path` should win over workspace roots.
-                    if !session.has_root() {
+                    session.set_mcp_workspace_roots(candidates.clone());
+
+                    // Workspace roots are the authoritative boundary when the client declares
+                    // roots support.
+                    if let Some((existing_root, existing_display)) = session.clone_root() {
+                        if !session.root_allowed_by_workspace(&existing_root) {
+                            let roots_preview = workspace_roots_preview(&candidates);
+                            session.set_root_mismatch_error(format!(
+                                "Missing project root: session root '{existing_display}' is outside MCP workspace roots [{roots_preview}]. Call `root_set` (recommended) or pass an explicit `path` within the workspace, or restart the session."
+                            ));
+                        }
+                    } else {
                         match candidates.len() {
                             1 => {
                                 let root = candidates.remove(0);
@@ -2381,6 +2186,32 @@ impl ContextFinderService {
     ) -> Result<CallToolResult, McpError> {
         Ok(strip_structured_content(
             router::help::help(self, request).await?,
+        ))
+    }
+
+    /// Session root status (per-connection) + workspace roots (when available).
+    #[tool(
+        description = "Get the current per-connection session root and MCP workspace roots (if available). Useful for multi-root workspaces and avoiding cross-project mixups."
+    )]
+    pub async fn root_get(
+        &self,
+        Parameters(request): Parameters<RootGetRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::root::root_get(self, request).await?,
+        ))
+    }
+
+    /// Explicitly set the per-connection session root.
+    #[tool(
+        description = "Explicitly set the per-connection session root. Use this to switch projects intentionally within one MCP session (or to disambiguate multi-root workspaces)."
+    )]
+    pub async fn root_set(
+        &self,
+        Parameters(request): Parameters<RootSetRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(strip_structured_content(
+            router::root::root_set(self, request).await?,
         ))
     }
 

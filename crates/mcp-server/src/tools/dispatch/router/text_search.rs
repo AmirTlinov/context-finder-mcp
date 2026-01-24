@@ -589,7 +589,7 @@ pub(in crate::tools::dispatch) async fn text_search(
                             if let Some(session_root_display) = session_root_display {
                                 if session_root_display != root {
                                     return Ok(invalid_cursor_with_meta(
-                                        "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects.",
+                                        "Invalid cursor: cursor refers to a different project root than the current session; call `root_set` to switch projects (or pass `path`).",
                                         ToolMeta {
                                             root_fingerprint: Some(root_fingerprint(
                                                 &session_root_display,
@@ -602,6 +602,64 @@ pub(in crate::tools::dispatch) async fn text_search(
                             request.path = Some(root.to_string());
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // DX convenience: callers often pass `path` as a *subdirectory within the project* (e.g.
+    // `{ "path": "src", "pattern": "TODO" }`) expecting the tool to be scoped. In Context, `path`
+    // sets the project root; scoping should use `file_pattern`.
+    //
+    // When the session already has a root, treat a relative `path` with no `file_pattern` and no
+    // cursor as a `file_pattern` hint instead of switching the session root.
+    let cursor_missing = request
+        .cursor
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none();
+    let file_pattern_missing = trimmed_non_empty_str(request.file_pattern.as_deref()).is_none();
+    if cursor_missing && file_pattern_missing {
+        if let Some(raw_path) =
+            trimmed_non_empty_str(request.path.as_deref()).filter(|s| *s != "." && *s != "./")
+        {
+            let session_root = { service.session.lock().await.clone_root().map(|(r, _)| r) };
+            if let Some(session_root) = session_root.as_ref() {
+                let raw = Path::new(raw_path);
+                if raw.is_absolute() {
+                    if let Ok(canonical) = raw.canonicalize() {
+                        if canonical.starts_with(session_root) {
+                            if let Ok(rel) = canonical.strip_prefix(session_root) {
+                                if let Some(rel) =
+                                    crate::tools::dispatch::root::rel_path_string(rel)
+                                {
+                                    let mut pattern = rel;
+                                    let is_dir = std::fs::metadata(&canonical)
+                                        .ok()
+                                        .map(|meta| meta.is_dir())
+                                        .unwrap_or(false);
+                                    if is_dir && !pattern.ends_with('/') {
+                                        pattern.push('/');
+                                    }
+                                    request.file_pattern = Some(pattern);
+                                    request.path = None;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let candidate = session_root.join(raw_path);
+                    let is_dir = std::fs::metadata(&candidate)
+                        .ok()
+                        .map(|meta| meta.is_dir())
+                        .unwrap_or(false);
+                    let mut pattern = raw_path.to_string();
+                    if is_dir && !pattern.ends_with('/') {
+                        pattern.push('/');
+                    }
+                    request.file_pattern = Some(pattern);
+                    request.path = None;
                 }
             }
         }

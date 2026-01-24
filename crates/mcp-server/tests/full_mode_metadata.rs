@@ -156,6 +156,132 @@ pub fn beta() {
 }
 
 #[tokio::test]
+async fn search_full_mode_includes_doc_context_header() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("README.md"), "Alpha overview.\n").context("write README.md")?;
+    std::fs::write(
+        root.join("src").join("lib.rs"),
+        r#"
+pub fn alpha() {
+    println!("alpha");
+}
+"#,
+    )
+    .context("write src/lib.rs")?;
+
+    let text = call_tool_text(
+        &service,
+        "search",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "query": "alpha overview",
+            "limit": 5,
+            "response_mode": "full",
+        }),
+    )
+    .await?;
+
+    anyhow::ensure!(
+        text.contains("N: doc_context:"),
+        "expected full-mode search to include doc_context header"
+    );
+    anyhow::ensure!(
+        text.contains("README.md"),
+        "expected doc_context to include README.md"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn context_full_mode_includes_doc_context_header() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("README.md"), "Alpha overview.\n").context("write README.md")?;
+    std::fs::write(
+        root.join("src").join("lib.rs"),
+        r#"
+pub fn alpha() {
+    println!("alpha");
+}
+"#,
+    )
+    .context("write src/lib.rs")?;
+
+    let text = call_tool_text(
+        &service,
+        "context",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "query": "alpha overview",
+            "limit": 5,
+            "response_mode": "full",
+        }),
+    )
+    .await?;
+
+    anyhow::ensure!(
+        text.contains("N: doc_context:"),
+        "expected full-mode context to include doc_context header"
+    );
+    anyhow::ensure!(
+        text.contains("README.md"),
+        "expected doc_context to include README.md"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn search_full_mode_skips_doc_context_when_filtered() -> Result<()> {
+    let service = start_mcp_server().await?;
+
+    let tmp = tempfile::tempdir().context("tempdir")?;
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).context("mkdir src")?;
+    std::fs::write(root.join("README.md"), "Alpha overview.\n").context("write README.md")?;
+    std::fs::write(
+        root.join("src").join("lib.rs"),
+        r#"
+pub fn alpha() {
+    println!("alpha");
+}
+"#,
+    )
+    .context("write src/lib.rs")?;
+
+    let text = call_tool_text(
+        &service,
+        "search",
+        serde_json::json!({
+            "path": root.to_string_lossy(),
+            "query": "alpha",
+            "limit": 5,
+            "include_paths": ["src"],
+            "response_mode": "full",
+        }),
+    )
+    .await?;
+
+    anyhow::ensure!(
+        !text.contains("N: doc_context:"),
+        "expected doc_context to respect include_paths filters"
+    );
+
+    service.cancel().await.context("shutdown mcp service")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn context_pack_full_mode_includes_root_fingerprint_in_meta() -> Result<()> {
     let service = start_mcp_server().await?;
 

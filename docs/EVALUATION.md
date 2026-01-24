@@ -64,7 +64,7 @@ Datasets are JSON files with schema version `1`:
 
 Datasets are used by:
 
-- CLI: `context-finder eval` and `context-finder eval-compare`
+- CLI: `context eval` and `context eval-compare` (alias: `context-finder`)
 
 #### Philosophy
 

@@ -7,7 +7,7 @@ scripts/validate_contracts.sh
 bash scripts/structural_guardrails.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
+CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 
 tmp_json="$(mktemp)"
 tmp_repo="$(mktemp -d)"
@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Make the eval step hermetic: do not depend on existing per-repo state under
-# `.agents/mcp/context/.context` or legacy `.context*` dirs from prior local runs.
+# `.agents/mcp/.context` or legacy `.context*` dirs from prior local runs.
 tar \
   --exclude='./target' \
   --exclude='./.git' \
@@ -30,10 +30,10 @@ tar \
   --exclude='./.deps' \
   -cf - . | tar -C "${tmp_repo}" -xf -
 
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- index "${tmp_repo}" \
+CONTEXT_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- index "${tmp_repo}" \
   --force --json --quiet >/dev/null
 
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- eval "${tmp_repo}" \
+CONTEXT_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- eval "${tmp_repo}" \
   --dataset "${tmp_repo}/datasets/golden_stub_smoke.json" \
   --json --quiet > "${tmp_json}"
 

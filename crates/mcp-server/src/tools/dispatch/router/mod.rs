@@ -26,9 +26,13 @@ pub(super) mod notebook_suggest;
 pub(super) mod overview;
 pub(super) mod read_pack;
 pub(super) mod repo_onboarding_pack;
+pub(super) mod root;
 pub(super) mod runbook_pack;
 pub(super) mod search;
 pub(super) mod semantic_fallback;
 pub(super) mod text_search;
 pub(super) mod trace;
 pub(super) mod worktree_pack;
+
+#[cfg(test)]
+mod path_disambiguation_tests;

@@ -143,6 +143,6 @@ These are mandatory for any change that affects external behavior:
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace`
-- Eval smoke on golden datasets (see `context-finder eval` in `docs/QUICK_START.md`)
+- Eval smoke on golden datasets (see `context eval` in `docs/QUICK_START.md`)
 
 Breaking behavior changes require a new contract version line under `contracts/**/v(N+1)/`.

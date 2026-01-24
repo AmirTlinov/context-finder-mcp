@@ -6,9 +6,9 @@ use super::response_mode::ResponseMode;
 use super::ToolNextAction;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MapRequest {
-    /// Project directory path (defaults to session root; fallback: env/git/cwd)
+    /// Project directory path (defaults to session root; fallback: env (non-daemon: cwd))
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). DX: when a session root is already set, a relative `path` is treated as an in-project scope hint (filter) rather than switching the project root. Use `root_set` for explicit project switching."
     )]
     pub path: Option<String>,
 
@@ -40,6 +40,9 @@ pub(in crate::tools) struct MapCursorV1 {
     pub(in crate::tools) root: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::tools) root_hash: Option<u64>,
+    /// Optional in-project scope prefix for pagination (relative path; directory prefix).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::tools) scope: Option<String>,
     pub(in crate::tools) depth: usize,
     /// Default page size for cursor-only continuation (0 means unspecified / legacy cursor).
     #[serde(default)]

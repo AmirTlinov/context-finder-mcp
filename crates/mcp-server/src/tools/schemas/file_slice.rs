@@ -10,7 +10,7 @@ use super::ToolNextAction;
 pub struct FileSliceRequest {
     /// Project directory path
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). DX: when a session root is already set and `file` is omitted, a relative `path` is treated as `file`."
     )]
     pub path: Option<String>,
 
@@ -23,12 +23,22 @@ pub struct FileSliceRequest {
     /// First line to include (1-based, default: 1). Alias: offset
     #[schemars(description = "First line to include (1-based). Alias: offset")]
     #[serde(alias = "offset")]
+    #[serde(alias = "line_start")]
     pub start_line: Option<usize>,
 
     /// Maximum number of lines to return (default: 200). Alias: limit
     #[schemars(description = "Maximum number of lines to return (bounded). Alias: limit")]
     #[serde(alias = "limit")]
     pub max_lines: Option<usize>,
+
+    /// Last line to include (1-based, inclusive). Alias: line_end.
+    ///
+    /// When provided (and not continuing via `cursor`), overrides `max_lines`.
+    #[schemars(
+        description = "Last line to include (1-based, inclusive). Alias: line_end. Overrides max_lines when provided and cursor is not."
+    )]
+    #[serde(alias = "line_end")]
+    pub end_line: Option<usize>,
 
     /// Hard `max_chars` budget for the `.context` response (including envelope).
     ///

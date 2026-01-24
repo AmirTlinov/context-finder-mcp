@@ -263,6 +263,54 @@ async fn edge_cases_smoke_pack_is_low_noise_and_fail_closed() -> Result<()> {
         "did not expect recursive file paths in ls output"
     );
 
+    // 1b) DX: once the session root is established, `ls` should treat a relative `path` as a
+    // directory hint (common caller expectation) rather than switching the session root.
+    std::fs::create_dir_all(root1_path.join("mcp_servers")).context("mkdir mcp_servers")?;
+    std::fs::write(
+        root1_path.join("mcp_servers").join("only_in_subdir.txt"),
+        "hi\n",
+    )
+    .context("write mcp_servers/only_in_subdir.txt")?;
+    let ls_dir_alias = call_tool(
+        &service,
+        "ls",
+        serde_json::json!({
+            "path": "mcp_servers",
+            "limit": 50,
+            "max_chars": 4000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(ls_dir_alias.is_error, Some(true), "ls should succeed");
+    let ls_dir_text = tool_text(&ls_dir_alias)?;
+    assert!(
+        ls_dir_text.contains("only_in_subdir.txt"),
+        "expected file in ls output for path-as-dir alias"
+    );
+
+    // Ensure the session root was not switched to the subdirectory.
+    let ls_root_again = call_tool(
+        &service,
+        "ls",
+        serde_json::json!({
+            "limit": 50,
+            "max_chars": 4000,
+            "response_mode": "facts",
+        }),
+    )
+    .await?;
+    assert_ne!(ls_root_again.is_error, Some(true), "ls should succeed");
+    let ls_root_text = tool_text(&ls_root_again)?;
+    assert!(
+        ls_root_text.contains("mcp_servers"),
+        "expected mcp_servers directory in root ls output"
+    );
+    assert!(
+        !ls_root_text.contains("only_in_subdir.txt"),
+        "did not expect subdir-only file in root ls output"
+    );
+
     // 1c) UX: when `find` yields zero results, it should suggest directory tools (dirs vs files trap).
     std::fs::create_dir_all(root1_path.join("dir_only").join("nested"))
         .context("mkdir dir_only/nested")?;

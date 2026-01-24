@@ -239,7 +239,7 @@ fn load_profile(root: &Path, profile_name: &str) -> Result<SearchProfile> {
     }
 
     anyhow::bail!(
-        "Profile '{}' not found. Expected .agents/mcp/context/.context/profiles/{}.json|toml",
+        "Profile '{}' not found. Expected .agents/mcp/.context/profiles/{}.json|toml",
         profile_name,
         profile_name
     )

@@ -7,7 +7,7 @@ use tokio::fs;
 
 const MAX_FAILURES: usize = 5;
 
-/// Snapshot persisted to `.agents/mcp/context/.context/health.json` (preferred; legacy `.context/…`
+/// Snapshot persisted to `.agents/mcp/.context/health.json` (preferred; legacy `.context/…`
 /// and `.context-finder/…` are supported) so other processes can report the last successful
 /// indexing run.
 #[derive(Debug, Clone, Serialize, Deserialize)]

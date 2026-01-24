@@ -24,6 +24,7 @@ pub mod overview;
 pub mod read_pack;
 pub mod repo_onboarding_pack;
 pub mod response_mode;
+pub mod root;
 pub mod runbook_pack;
 pub mod search;
 pub mod text_search;

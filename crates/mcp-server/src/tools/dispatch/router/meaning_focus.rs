@@ -6,13 +6,63 @@ use crate::tools::context_doc::ContextDocBuilder;
 use crate::tools::cpv1::cpv1_coverage;
 use crate::tools::schemas::meaning_focus::MeaningFocusOutputFormat;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use std::path::Path;
 
 use super::error::{attach_structured_content, invalid_request_with_meta, meta_for_request};
+
+pub(super) fn disambiguate_meaning_focus_path_as_focus_prefix_if_root_set(
+    session_root: Option<&Path>,
+    request: &mut MeaningFocusRequest,
+) -> bool {
+    let Some(session_root) = session_root else {
+        return false;
+    };
+    let Some(raw_path) = request.path.as_deref() else {
+        return false;
+    };
+
+    let raw_path = raw_path.trim();
+    if raw_path.is_empty() {
+        return false;
+    }
+
+    if Path::new(raw_path).is_absolute() {
+        return false;
+    }
+
+    let focus = request.focus.trim();
+    if focus.is_empty() {
+        return false;
+    }
+
+    let prefix = raw_path
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    let focus = focus
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string();
+    let combined = if prefix.is_empty() {
+        focus
+    } else {
+        format!("{prefix}/{focus}")
+    };
+
+    let candidate = session_root.join(&combined);
+    if !candidate.exists() {
+        return false;
+    }
+
+    request.focus = combined;
+    request.path = None;
+    true
+}
 
 /// Meaning-first focus (semantic zoom): scoped CP + evidence pointers.
 pub(in crate::tools::dispatch) async fn meaning_focus(
     service: &ContextFinderService,
-    request: MeaningFocusRequest,
+    mut request: MeaningFocusRequest,
 ) -> Result<CallToolResult, McpError> {
     let output_format = request
         .output_format
@@ -27,6 +77,12 @@ pub(in crate::tools::dispatch) async fn meaning_focus(
     );
 
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
+    let session_root = { service.session.lock().await.clone_root().map(|(r, _)| r) };
+    let _ = disambiguate_meaning_focus_path_as_focus_prefix_if_root_set(
+        session_root.as_deref(),
+        &mut request,
+    );
+
     let (root, root_display) = match service
         .resolve_root_no_daemon_touch(request.path.as_deref())
         .await

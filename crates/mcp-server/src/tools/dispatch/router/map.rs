@@ -7,6 +7,7 @@ use crate::tools::cursor::cursor_fingerprint;
 use crate::tools::schemas::ToolNextAction;
 use context_indexer::root_fingerprint;
 use serde_json::json;
+use std::path::Path;
 
 use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
@@ -21,6 +22,89 @@ pub(in crate::tools::dispatch) async fn map(
     mut request: MapRequest,
 ) -> Result<CallToolResult, McpError> {
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Minimal);
+
+    // DX convenience: callers often pass `path` as a *subdirectory within the project* (e.g.
+    // `{ \"path\": \"src\" }`). In Context, `path` sets the project root.
+    //
+    // When a session root is already established, treat a relative `path` (or an absolute path
+    // inside the session root) as an in-project scope filter instead of switching the session
+    // root. Use `root_set` for explicit project switching.
+    let mut scope_prefix: Option<String> = None;
+    if let Some(raw_path) = request
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let session_root = { service.session.lock().await.clone_root().map(|(r, _)| r) };
+        if let Some(session_root) = session_root.as_ref() {
+            let raw = Path::new(raw_path);
+            if raw.is_absolute() {
+                if let Ok(canonical) = raw.canonicalize() {
+                    if canonical.starts_with(session_root) {
+                        if let Ok(rel) = canonical.strip_prefix(session_root) {
+                            if let Some(mut rel) =
+                                crate::tools::dispatch::root::rel_path_string(rel)
+                            {
+                                let is_file = std::fs::metadata(&canonical)
+                                    .ok()
+                                    .map(|meta| meta.is_file())
+                                    .unwrap_or(false);
+                                if is_file {
+                                    if let Some(parent) = Path::new(&rel).parent() {
+                                        if let Some(parent) =
+                                            crate::tools::dispatch::root::rel_path_string(parent)
+                                        {
+                                            rel = parent;
+                                        } else {
+                                            rel.clear();
+                                        }
+                                    } else {
+                                        rel.clear();
+                                    }
+                                }
+                                if !rel.is_empty() {
+                                    if !rel.ends_with('/') {
+                                        rel.push('/');
+                                    }
+                                    scope_prefix = Some(rel);
+                                }
+                                request.path = None;
+                            }
+                        }
+                    }
+                }
+            } else {
+                let normalized = raw_path.trim_start_matches("./");
+                if normalized == "." || normalized.is_empty() {
+                    request.path = None;
+                } else {
+                    let candidate = session_root.join(normalized);
+                    let meta = std::fs::metadata(&candidate).ok();
+                    let is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
+                    let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                    if is_file {
+                        if let Some(parent) = Path::new(normalized).parent() {
+                            scope_prefix = crate::tools::dispatch::root::rel_path_string(parent)
+                                .map(|mut rel| {
+                                    if !rel.ends_with('/') {
+                                        rel.push('/');
+                                    }
+                                    rel
+                                });
+                        }
+                    } else {
+                        let mut rel = normalized.to_string();
+                        if is_dir && !rel.ends_with('/') {
+                            rel.push('/');
+                        }
+                        scope_prefix = Some(rel);
+                    }
+                    request.path = None;
+                }
+            }
+        }
+    }
 
     if let Some(cursor) = request.cursor.as_deref() {
         match expand_cursor_alias(service, cursor).await {
@@ -72,7 +156,7 @@ pub(in crate::tools::dispatch) async fn map(
                         if let Some(session_root_display) = session_root_display {
                             if session_root_display != root {
                                 return Ok(invalid_cursor_with_meta(
-                                    "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects.",
+                                    "Invalid cursor: cursor refers to a different project root than the current session; call `root_set` to switch projects (or pass `path`).",
                                     ToolMeta {
                                         root_fingerprint: Some(root_fingerprint(
                                             &session_root_display,
@@ -87,6 +171,14 @@ pub(in crate::tools::dispatch) async fn map(
                 }
             }
         }
+    }
+    if scope_prefix.is_none() {
+        scope_prefix = cursor_payload
+            .as_ref()
+            .and_then(|cursor| cursor.scope.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
     }
 
     let (root, root_display) = match service
@@ -167,6 +259,54 @@ pub(in crate::tools::dispatch) async fn map(
                 }),
             ));
         }
+        let cursor_scope = decoded
+            .scope
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let request_scope = scope_prefix
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if cursor_scope != request_scope {
+            let cursor_for_actions = compact_cursor_alias(
+                service,
+                request
+                    .cursor
+                    .as_deref()
+                    .expect("cursor_payload implies cursor is present")
+                    .to_string(),
+            )
+            .await;
+            let restart_path = scope_prefix.clone().unwrap_or_else(|| root_display.clone());
+            return Ok(cursor_mismatch_with_meta_details(
+                "Cursor mismatch: request scope differs from cursor",
+                meta_for_output.clone(),
+                json!({
+                    "mismatch": "scope",
+                    "cursor_scope": cursor_scope,
+                    "request_scope": request_scope,
+                }),
+                Some(
+                    "Repeat the call with cursor only, or drop cursor to restart with new options."
+                        .to_string(),
+                ),
+                vec![
+                    ToolNextAction {
+                        tool: "tree".to_string(),
+                        args: json!({ "path": root_display, "cursor": cursor_for_actions }),
+                        reason: "Continue pagination using the cursor only (drop scope override)."
+                            .to_string(),
+                    },
+                    ToolNextAction {
+                        tool: "tree".to_string(),
+                        args: json!({ "path": restart_path, "depth": depth, "limit": limit }),
+                        reason: "Restart pagination without cursor using the new scope."
+                            .to_string(),
+                    },
+                ],
+            ));
+        }
         if decoded.depth != depth {
             let cursor_for_actions = compact_cursor_alias(
                 service,
@@ -198,7 +338,11 @@ pub(in crate::tools::dispatch) async fn map(
                     },
                     ToolNextAction {
                         tool: "tree".to_string(),
-                        args: json!({ "path": root_display, "depth": depth, "limit": limit }),
+                        args: json!({
+                            "path": scope_prefix.clone().unwrap_or_else(|| root_display.clone()),
+                            "depth": depth,
+                            "limit": limit
+                        }),
                         reason: "Restart pagination without cursor using the new depth."
                             .to_string(),
                     },
@@ -211,7 +355,16 @@ pub(in crate::tools::dispatch) async fn map(
         0usize
     };
 
-    let mut result = match compute_map_result(&root, &root_display, depth, limit, offset).await {
+    let mut result = match compute_map_result(
+        &root,
+        &root_display,
+        depth,
+        limit,
+        offset,
+        scope_prefix.as_deref(),
+    )
+    .await
+    {
         Ok(result) => result,
         Err(err) => {
             return Ok(internal_error_with_meta(
@@ -268,8 +421,11 @@ pub(in crate::tools::dispatch) async fn map(
 
     let mut doc = ContextDocBuilder::new();
     doc.push_answer(&format!("tree: {} directories", result.directories.len()));
+    doc.push_root_fingerprint(meta_for_structured.root_fingerprint);
     if response_mode != ResponseMode::Minimal {
-        doc.push_root_fingerprint(meta_for_structured.root_fingerprint);
+        if let Some(scope) = scope_prefix.as_deref() {
+            doc.push_note(&format!("scope: {scope}"));
+        }
     }
     if result.directories.is_empty() && !result.truncated {
         doc.push_note("hint: no directories found");

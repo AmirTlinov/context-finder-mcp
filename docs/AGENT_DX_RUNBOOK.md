@@ -23,9 +23,17 @@ Best practice: **always pass `path`** on tool calls when your client can.
 
 When `path` is omitted, Context Finder resolves the project root in this order:
 
-1) Per-connection session root (from MCP `roots/list`)
-2) `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`
+1) Per-connection session root (from MCP `roots/list` or an explicit `root_set`)
+2) `CONTEXT_ROOT` / `CONTEXT_PROJECT_ROOT` (legacy: `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`)
 3) (Non-daemon only) server process cwd fallback
+
+Notes:
+
+- Relative `path` values are resolved against the established session/workspace root (not the server process cwd).
+- For `search` / `context` / `context_pack`, a **relative** `path` with an existing session root is treated as an in-repo scope hint (`include_paths` / `file_pattern`) instead of switching roots. Use `root_set` or an absolute `path` to switch projects.
+- In shared daemon mode, a relative `path` without roots fails closed to avoid cross-project mixups.
+- `root_get` / `root_set` are the explicit, multi-session-safe way to introspect or change the active session root (see `crates/mcp-server/src/tools/schemas/root.rs`).
+- Agent-proof ergonomics: in an established session, some tools treat a **relative** `path` as an *in-project hint* (did-you-mean) instead of switching project roots (see schema descriptions: `crates/mcp-server/src/tools/schemas/map.rs`, `crates/mcp-server/src/tools/schemas/read_pack.rs`, `crates/mcp-server/src/tools/schemas/context_pack.rs`, `crates/mcp-server/src/tools/schemas/meaning_focus.rs`).
 
 Every project-scoped tool response includes a `root_fingerprint` note in the `.context` output so clients can detect accidental cross-project context mixups without exposing absolute filesystem paths.
 

@@ -1173,7 +1173,7 @@ pub fn classify_error(
         code = "index_corrupt".to_string();
         hints.push(Hint {
             kind: HintKind::Action,
-            text: "Index file looks corrupted — delete .agents/mcp/context/.context/indexes/<model_id>/index.json and rerun the index action."
+            text: "Index file looks corrupted — delete .agents/mcp/.context/indexes/<model_id>/index.json and rerun the index action."
                 .to_string(),
         });
     }
@@ -1199,7 +1199,7 @@ pub fn classify_error(
         code = "config_error".to_string();
         hints.push(Hint {
             kind: HintKind::Warn,
-            text: "Config issue detected — verify .agents/mcp/context/.context/config.json or remove it."
+            text: "Config issue detected — verify .agents/mcp/.context/config.json or remove it."
                 .to_string(),
         });
     }

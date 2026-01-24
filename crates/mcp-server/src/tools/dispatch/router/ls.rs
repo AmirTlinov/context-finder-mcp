@@ -14,6 +14,7 @@ use super::error::{
     invalid_cursor_with_meta, invalid_cursor_with_meta_details, invalid_request_with_meta,
     meta_for_request,
 };
+use std::path::Path;
 
 /// List directory entries (ls-like, names-only, bounded).
 pub(in crate::tools::dispatch) async fn ls(
@@ -48,6 +49,55 @@ pub(in crate::tools::dispatch) async fn ls(
         }
     }
 
+    // DX convenience: many callers expect `ls({path:\"dir\"})` to list a directory. In Context,
+    // `path` is the project root for consistency across tools, and `dir` is the directory to list.
+    // When the session already has a root, treat a relative `path` with no `dir` as a `dir` hint
+    // instead of switching the session root to a subdirectory.
+    if request
+        .dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        let cursor_missing = request
+            .cursor
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_none();
+        if cursor_missing {
+            if let Some(raw_path) = request
+                .path
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let session_root = { service.session.lock().await.clone_root().map(|(r, _)| r) };
+                if let Some(session_root) = session_root.as_ref() {
+                    let raw = Path::new(raw_path);
+                    if raw.is_absolute() {
+                        if let Ok(canonical) = raw.canonicalize() {
+                            if canonical.starts_with(session_root) {
+                                if let Ok(rel) = canonical.strip_prefix(session_root) {
+                                    if let Some(rel) =
+                                        crate::tools::dispatch::root::rel_path_string(rel)
+                                    {
+                                        request.dir = Some(rel);
+                                        request.path = None;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        request.dir = Some(raw_path.to_string());
+                        request.path = None;
+                    }
+                }
+            }
+        }
+    }
+
     let path_missing = match request.path.as_deref().map(str::trim) {
         Some(value) => value.is_empty(),
         None => true,
@@ -68,7 +118,7 @@ pub(in crate::tools::dispatch) async fn ls(
                             if let Some(session_root_display) = session_root_display {
                                 if session_root_display != root {
                                     return Ok(invalid_cursor_with_meta(
-                                        "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects.",
+                                        "Invalid cursor: cursor refers to a different project root than the current session; call `root_set` to switch projects (or pass `path`).",
                                         ToolMeta {
                                             root_fingerprint: Some(root_fingerprint(
                                                 &session_root_display,
@@ -98,6 +148,23 @@ pub(in crate::tools::dispatch) async fn ls(
     {
         Ok(value) => value,
         Err(message) => {
+            let mut message = message;
+            if request.dir.is_none() {
+                if let Some(raw_path) = request
+                    .path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    if !Path::new(raw_path).is_absolute()
+                        && message.contains("No such file or directory")
+                    {
+                        message = format!(
+                            "{message} Tip: `path` sets the project root; to list a subdirectory, pass `dir` (e.g. {{\"dir\":\"{raw_path}\"}})."
+                        );
+                    }
+                }
+            }
             let meta = if response_mode == ResponseMode::Full {
                 meta_for_request(service, request.path.as_deref()).await
             } else {
@@ -269,9 +336,11 @@ pub(in crate::tools::dispatch) async fn ls(
     {
         Ok(r) => r,
         Err(err) => {
-            return Ok(internal_error_with_meta(
-                format!("Failed to list directory: {err}"),
+            return Ok(invalid_request_with_meta(
+                err.to_string(),
                 meta_for_output.clone(),
+                None,
+                Vec::new(),
             ));
         }
     };

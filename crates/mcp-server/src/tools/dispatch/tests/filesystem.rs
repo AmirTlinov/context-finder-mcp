@@ -25,7 +25,7 @@ async fn map_works_without_index_and_has_no_side_effects() {
             && !root.join(".context-finder").exists()
     );
 
-    let result = compute_map_result(root, &root_display, 1, 20, 0)
+    let result = compute_map_result(root, &root_display, 1, 20, 0, None)
         .await
         .unwrap();
     assert_eq!(result.total_files, Some(2));

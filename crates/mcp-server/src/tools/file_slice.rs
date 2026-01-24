@@ -286,10 +286,32 @@ pub(super) fn compute_file_slice_result(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
+    let legacy_path_as_file = request
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| *s != "." && *s != "./")
+        .filter(|value| {
+            // Back-compat: some clients call `cat` with `{path: <file>}` (no `file` field).
+            //
+            // Keep this conservative: only treat absolute `path` values as a file if they point
+            // to an existing file. Relative values are interpreted as repo-relative file paths.
+            let value = Path::new(value);
+            if value.is_absolute() {
+                std::fs::metadata(value)
+                    .map(|m| m.is_file())
+                    .unwrap_or(false)
+            } else {
+                true
+            }
+        });
     let file_str = if let Some(file) = requested_file {
         file
     } else if let Some(decoded) = cursor_payload.as_ref() {
         decoded.file.as_str()
+    } else if let Some(legacy_file) = legacy_path_as_file {
+        legacy_file
     } else {
         return Err("Error: file is required when no cursor is provided".to_string());
     };
@@ -340,6 +362,25 @@ pub(super) fn compute_file_slice_result(
         .clamp(1, MAX_MAX_CHARS);
 
     let start_line = request.start_line.unwrap_or(1).max(1);
+    let using_cursor = request
+        .cursor
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_some();
+    let max_lines = if using_cursor {
+        max_lines
+    } else if let Some(end_line) = request.end_line {
+        if end_line < start_line {
+            return Err("Invalid line range: end_line must be >= start_line".to_string());
+        }
+        end_line
+            .saturating_sub(start_line)
+            .saturating_add(1)
+            .clamp(1, MAX_MAX_LINES)
+    } else {
+        max_lines
+    };
     let format = request
         .format
         .or_else(|| cursor_payload.as_ref().map(|c| c.format))
@@ -378,6 +419,7 @@ pub(super) fn compute_file_slice_result(
         file: Some(display_file.clone()),
         start_line: request.start_line,
         max_lines: request.max_lines,
+        end_line: request.end_line,
         max_chars: request.max_chars,
         format: request.format,
         response_mode: request.response_mode,

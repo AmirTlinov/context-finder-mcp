@@ -360,43 +360,14 @@ fn env_root_override() -> Option<PathBuf> {
 }
 
 fn compute_proxy_default_root() -> Option<String> {
-    let root = env_root_override().or_else(|| {
-        let cwd = std::env::current_dir().ok()?;
-        find_project_root(&cwd).or(Some(cwd))
-    })?;
-    let canonical = root.canonicalize().unwrap_or(root);
+    // Agent-native correctness: use the proxy process cwd as the default root.
+    //
+    // Some hosts reuse one long-lived MCP process across multiple workspaces; treating the git root
+    // as canonical can accidentally broaden the root to a parent mono-repo, which then allows
+    // cross-project reads.
+    let cwd = std::env::current_dir().ok()?;
+    let canonical = cwd.canonicalize().unwrap_or(cwd);
     Some(canonical.to_string_lossy().to_string())
-}
-
-fn find_git_root(start: &Path) -> Option<PathBuf> {
-    start
-        .ancestors()
-        .find(|candidate| candidate.join(".git").exists())
-        .map(PathBuf::from)
-}
-
-fn find_project_root(start: &Path) -> Option<PathBuf> {
-    if let Some(root) = find_git_root(start) {
-        return Some(root);
-    }
-
-    const MARKERS: &[&str] = &[
-        "AGENTS.md",
-        "Cargo.toml",
-        "package.json",
-        "pyproject.toml",
-        "go.mod",
-        "pom.xml",
-        "build.gradle",
-        "build.gradle.kts",
-        "CMakeLists.txt",
-        "Makefile",
-    ];
-
-    start
-        .ancestors()
-        .find(|candidate| MARKERS.iter().any(|marker| candidate.join(marker).exists()))
-        .map(PathBuf::from)
 }
 
 fn ensure_tool_call_has_path(value: &mut Value, root: &str) -> bool {
@@ -432,22 +403,130 @@ fn ensure_tool_call_has_path(value: &mut Value, root: &str) -> bool {
         return true;
     }
 
-    let has_path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|v| !v.is_empty());
-    if has_path {
-        return true;
-    }
-
     let trimmed_root = root.trim();
     if trimmed_root.is_empty() {
         return false;
     }
 
+    let raw_path = args.get("path").and_then(Value::as_str).map(str::trim);
+    if let Some(raw_path) = raw_path.filter(|value| !value.is_empty()) {
+        if Path::new(raw_path).is_absolute() {
+            return true;
+        }
+
+        // Agent-native robustness: some callers pass relative paths like "." expecting them to
+        // resolve against the *agent session cwd*, not the daemon's cwd or a stale session root.
+        // Normalize relative roots against the proxy default root so the daemon sees an absolute
+        // project root.
+        let base = Path::new(trimmed_root);
+        let candidate = base.join(raw_path);
+        let normalized = candidate.canonicalize().unwrap_or(candidate);
+        args.insert(
+            "path".to_string(),
+            Value::String(normalized.to_string_lossy().to_string()),
+        );
+        return true;
+    }
+
     args.insert("path".to_string(), Value::String(trimmed_root.to_string()));
     true
+}
+
+#[cfg(test)]
+mod ensure_tool_call_has_path_tests {
+    use super::*;
+
+    fn tool_call(arguments: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "ls",
+                "arguments": arguments
+            }
+        })
+    }
+
+    fn extract_path(value: &serde_json::Value) -> Option<String> {
+        value
+            .get("params")?
+            .get("arguments")?
+            .get("path")?
+            .as_str()
+            .map(|s| s.to_string())
+    }
+
+    #[test]
+    fn ensure_tool_call_has_path_injects_root_when_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let root_str = root.to_string_lossy().to_string();
+
+        let mut value = tool_call(serde_json::json!({}));
+        assert!(ensure_tool_call_has_path(&mut value, &root_str));
+
+        let got = extract_path(&value).expect("path injected");
+        assert_eq!(got, root_str);
+    }
+
+    #[test]
+    fn ensure_tool_call_has_path_normalizes_relative_path_against_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let root_str = root.to_string_lossy().to_string();
+
+        let mut value = tool_call(serde_json::json!({ "path": "." }));
+        assert!(ensure_tool_call_has_path(&mut value, &root_str));
+
+        let got = extract_path(&value).expect("path present");
+        assert_eq!(got, root_str);
+    }
+
+    #[test]
+    fn ensure_tool_call_has_path_leaves_absolute_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let root_str = root.to_string_lossy().to_string();
+
+        let other = tmp.path().join("other");
+        std::fs::create_dir_all(&other).expect("create other");
+        let other = other.canonicalize().unwrap_or(other);
+        let other_str = other.to_string_lossy().to_string();
+
+        let mut value = tool_call(serde_json::json!({ "path": other_str }));
+        assert!(ensure_tool_call_has_path(&mut value, &root_str));
+
+        let got = extract_path(&value).expect("path present");
+        assert_eq!(got, other.to_string_lossy().to_string());
+    }
+
+    #[test]
+    fn ensure_tool_call_has_path_does_not_inject_on_cursor_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let root_str = root.to_string_lossy().to_string();
+
+        let mut value = tool_call(serde_json::json!({ "cursor": "abc" }));
+        assert!(ensure_tool_call_has_path(&mut value, &root_str));
+
+        assert!(
+            extract_path(&value).is_none(),
+            "path should not be injected"
+        );
+    }
 }
 
 async fn connect_daemon_transport(socket: &Path) -> Result<DaemonTransport> {
@@ -508,7 +587,6 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
         let canonical = root.canonicalize().unwrap_or(root);
         canonical.to_string_lossy().to_string()
     });
-    let default_root = compute_proxy_default_root();
 
     // Hot-reload ergonomics:
     //
@@ -533,6 +611,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
         initialized_forwarded: bool,
         synthesized_initialize: bool,
         client_supports_roots: bool,
+        default_root: Option<String>,
         client_protocol_version: Option<String>,
         initialize_request_id: Option<Value>,
         pending_request_ids: Vec<Value>,
@@ -546,6 +625,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
             self.initialized_forwarded = false;
             self.synthesized_initialize = false;
             self.client_supports_roots = false;
+            self.default_root = compute_proxy_default_root();
             self.client_protocol_version = None;
             self.initialize_request_id = None;
         }
@@ -607,7 +687,6 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
             tokio::io::Stdin,
             tokio::io::Stdout,
         >,
-        default_root: Option<&str>,
         env_root: Option<&str>,
         value: &mut Value,
         session: &mut DaemonSessionState,
@@ -629,6 +708,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
             session.reset_flags();
             session.real_initialize_count = session.real_initialize_count.saturating_add(1);
             session.initialize_seen = true;
+            session.default_root = compute_proxy_default_root();
             session.initialize_request_id = request_id.clone();
             session.client_supports_roots = value
                 .get("params")
@@ -674,6 +754,7 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
 
         // Agent-native robustness: some tool runners call `tools/call` directly without handshake.
         if !session.initialize_seen && method != Some("notifications/initialized") {
+            session.default_root = compute_proxy_default_root();
             let init_req = serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": SYNTH_INIT_ID,
@@ -715,27 +796,19 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
 
         if !session.root_established {
             let mut established = false;
-            if session.client_supports_roots {
-                // When the client supports MCP roots, the daemon can establish the per-connection
-                // root via `roots/list`. That is the most robust option for hosts that reuse a
-                // single MCP server process across multiple sessions/projects.
-                //
-                // However, in the common CLI case (fresh proxy process; stable cwd) it's safer to
-                // proactively pin the root on the first tool call: `roots/list` can be slow or
-                // unavailable under load, and an unpinned session increases the chance of
-                // accidental cross-project fallback behavior.
-                if session.real_initialize_count <= 1 {
-                    if let Some(root) = default_root {
-                        established = ensure_tool_call_has_path(value, root);
-                    }
-                }
-            } else {
-                let root = if session.real_initialize_count > 1 {
-                    env_root
-                } else {
-                    default_root
-                };
-                if let Some(root) = root {
+            // Root binding policy:
+            // - Prefer MCP roots (`initialize -> roots/list`) when supported by the client.
+            //   In shared-backend mode, guessing a root from the proxy process cwd is unsafe when
+            //   the MCP process is reused across multiple workspaces: the cwd can be stale.
+            // - When roots are not supported, we can only use explicit `path` values from calls,
+            //   or an explicit env override. As a narrow compatibility escape hatch, we inject
+            //   the proxy cwd-derived root only for the *first* initialized session in this
+            //   process; on subsequent initializes without roots we fail-closed to avoid
+            //   cross-project contamination.
+            if let Some(root) = env_root {
+                established = ensure_tool_call_has_path(value, root);
+            } else if !session.client_supports_roots && session.real_initialize_count <= 1 {
+                if let Some(root) = session.default_root.as_deref() {
                     established = ensure_tool_call_has_path(value, root);
                 }
             }
@@ -778,7 +851,6 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
                             forward_client_value(
                                 daemon,
                                 &mut client_transport,
-                                default_root.as_deref(),
                                 env_root.as_deref(),
                                 &mut value,
                                 &mut session,
@@ -879,7 +951,6 @@ pub async fn proxy_stdio_to_daemon(socket: &Path) -> Result<()> {
                     let forward_step = forward_client_value(
                         &mut new_daemon,
                         &mut client_transport,
-                        default_root.as_deref(),
                         env_root.as_deref(),
                         &mut value,
                         &mut session,

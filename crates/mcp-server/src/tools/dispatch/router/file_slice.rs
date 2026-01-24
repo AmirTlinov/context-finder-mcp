@@ -12,6 +12,7 @@ use super::error::{
     attach_structured_content, invalid_cursor_with_meta, invalid_request_with_meta,
     meta_for_request,
 };
+use std::path::Path;
 
 /// Read a bounded slice of a file within the project root (safe file access for agents).
 pub(in crate::tools::dispatch) async fn file_slice(
@@ -53,6 +54,7 @@ pub(in crate::tools::dispatch) async fn file_slice(
         .unwrap_or(DEFAULT_MAX_CHARS)
         .clamp(1, MAX_MAX_CHARS);
 
+    let mut file = request.file.clone();
     let mut path = request.path.clone();
     let path_missing = match path.as_deref().map(str::trim) {
         Some(value) => value.is_empty(),
@@ -66,7 +68,7 @@ pub(in crate::tools::dispatch) async fn file_slice(
                     if let Some(session_root_display) = session_root_display {
                         if session_root_display != root {
                             return Ok(invalid_cursor_with_meta(
-                                "Invalid cursor: cursor refers to a different project root than the current session; pass `path` to switch projects.",
+                                "Invalid cursor: cursor refers to a different project root than the current session; call `root_set` to switch projects (or pass `path`).",
                                 ToolMeta {
                                     root_fingerprint: Some(root_fingerprint(&session_root_display)),
                                     ..ToolMeta::default()
@@ -80,8 +82,56 @@ pub(in crate::tools::dispatch) async fn file_slice(
         }
     }
 
+    // DX convenience: many callers expect `cat({path:\"file\"})` to read a file. In Context,
+    // `path` is the project root, and `file` is the file to read.
+    //
+    // When the session already has a root, treat a relative `path` with no `file` as a `file`
+    // hint instead of switching the session root to a subdirectory.
+    let cursor_missing = request
+        .cursor
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none();
+    let file_missing = file
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none();
+    if cursor_missing && file_missing {
+        if let Some(raw_path) = path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let session_root = { service.session.lock().await.clone_root().map(|(r, _)| r) };
+            if let Some(session_root) = session_root.as_ref() {
+                let raw = Path::new(raw_path);
+                if raw.is_absolute() {
+                    if let Ok(canonical) = raw.canonicalize() {
+                        if canonical.starts_with(session_root) {
+                            let is_file = std::fs::metadata(&canonical)
+                                .ok()
+                                .map(|meta| meta.is_file())
+                                .unwrap_or(false);
+                            if is_file {
+                                if let Ok(rel) = canonical.strip_prefix(session_root) {
+                                    if let Some(rel) =
+                                        crate::tools::dispatch::root::rel_path_string(rel)
+                                    {
+                                        file = Some(rel);
+                                        path = None;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    file = Some(raw_path.to_string());
+                    path = None;
+                }
+            }
+        }
+    }
+
     let mut hints: Vec<String> = Vec::new();
-    if let Some(file) = request.file.as_deref() {
+    if let Some(file) = file.as_deref() {
         hints.push(file.to_string());
     }
     let (root, root_display) = match service
@@ -110,9 +160,10 @@ pub(in crate::tools::dispatch) async fn file_slice(
 
     let compute_request = FileSliceRequest {
         path: path.clone(),
-        file: request.file.clone(),
+        file: file.clone(),
         start_line: request.start_line,
         max_lines: request.max_lines,
+        end_line: request.end_line,
         max_chars: request.max_chars,
         format: request.format,
         response_mode: Some(response_mode),

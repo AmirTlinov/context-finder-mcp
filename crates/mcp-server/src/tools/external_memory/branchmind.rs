@@ -23,7 +23,7 @@ fn candidate_context_pack_paths(root: &Path) -> Vec<(String, std::path::PathBuf)
 
     // Backward compatibility: older Context Finder builds historically wrote under repo-root
     // `.context/` or `.context-finder/`, while newer versions prefer
-    // `.agents/mcp/context/.context/`.
+    // `.agents/mcp/.context/`.
     for dir in [CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME] {
         let candidate = root.join(dir).join("branchmind").join("context_pack.json");
         out.push((

@@ -1,4 +1,4 @@
-# Quick Start: Context Finder MCP
+# Quick Start: Context MCP
 
 ## What is Context Finder MCP?
 
@@ -22,10 +22,15 @@ Its core UX goal is **not** “yet another search command” — it is to feel l
 ### From Source (recommended)
 
 ```bash
-git clone https://github.com/AmirTlinov/context-finder-mcp.git
-cd context-finder-mcp
-cargo build --release
-cargo install --path crates/cli --locked
+git clone https://github.com/AmirTlinov/context-mcp.git
+cd context-mcp
+
+# One command (recommended):
+bash scripts/install.sh
+
+# Or manual (MCP server is required; CLI is optional):
+# cargo install --path crates/mcp-server --locked
+# cargo install --path crates/cli --locked
 ```
 
 ### Requirements
@@ -36,14 +41,37 @@ cargo install --path crates/cli --locked
 - `protoc` is **not** required on the system (vendored during build)
 - `Cargo.lock` is expected to be committed for reproducible builds
 
+### Zero‑GPU pilot (fastest path, minimal value)
+
+If you don’t have CUDA yet, you can still pilot the **filesystem‑first** workflow (no models, no GPU):
+
+```bash
+# Skip model install; force stub embeddings
+export CONTEXT_EMBEDDING_MODE=stub
+# (legacy) export CONTEXT_FINDER_EMBEDDING_MODE=stub
+```
+
+What you get:
+
+- `read_pack`, `text_search`, `rg`, `ls`, `map` still work and stay bounded.
+- Semantic ranking quality is **not** representative (stub mode), but the **agent DX flow** is.
+
+Upgrade path (CPU semantic):
+
+```bash
+export CONTEXT_ALLOW_CPU=1
+context install-models
+context doctor
+```
+
 ### Models (offline)
 
 Model assets are downloaded once into `./models/` (gitignored) using `models/manifest.json`.
 
 ```bash
-# Run from repo root (or set CONTEXT_FINDER_MODEL_DIR)
-context-finder install-models
-context-finder doctor
+# Run from repo root (or set CONTEXT_MODEL_DIR; legacy: CONTEXT_FINDER_MODEL_DIR)
+context install-models
+context doctor
 ```
 
 ## Basic Usage
@@ -92,12 +120,17 @@ Default modes (`facts` / `minimal`) stay intentionally low-noise and omit these 
 
 When you have multiple agent sessions (or multiple repos open at once), prefer explicit roots:
 
-- Always pass `path` on tool calls when your client can.
+- Use `root_get` to confirm the current per-connection session root (and the client workspace roots, when available).
+- Use `root_set` to intentionally switch projects within one MCP session (or to disambiguate multi-root workspaces).
+- After the session root is pinned (via MCP `roots/list` or `root_set`), prefer omitting `path` on subsequent calls.
+- In **shared-backend mode** (default), Context is **roots-first**: when the client supports MCP roots, the daemon pins each connection to a
+  workspace root from `roots/list` (fail-closed for multi-root). The proxy does not guess from a potentially stale process cwd.
 - If `path` is omitted, Context Finder resolves roots in this order:
-  1) per-connection session root (from MCP `roots/list`), then
-  2) `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`, then
+  1) per-connection session root (from MCP `roots/list` or `root_set`), then
+  2) `CONTEXT_ROOT` / `CONTEXT_PROJECT_ROOT` (legacy: `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`), then
   3) (non-daemon only) server process cwd fallback.
 - If the client reports multiple workspace roots, Context Finder **does not guess** (fail-closed) and requires an explicit `path`.
+- To explicitly switch projects within one MCP session, call `root_set { "path": "/abs/repo" }`, then omit `path` on subsequent calls.
 - Every tool response includes a `root_fingerprint` in tool meta so clients can detect cross-project mixups without exposing filesystem paths.
 - For human debugging, `response_mode=full` also prints `N: root_fingerprint=...` in the `.context` text output so you can eyeball provenance quickly.
 - Error responses also include this note when a root is known, so provenance is visible even when a call fails.
@@ -110,35 +143,35 @@ The CLI still exposes `index` for explicit rebuilds (useful for automation, debu
 
 ```bash
 cd ~/my-project
-context-finder index .
+context index .
 
 # Force full reindex (ignore incremental cache)
-context-finder index . --force
+context index . --force
 
 # Output JSON format
-context-finder index . --json
+context index . --json
 
 # Multi-model: index all expert models referenced by the active profile
-context-finder index . --experts --json
+context index . --experts --json
 
 # Add specific models on top (comma-separated)
-context-finder index . --experts --models embeddinggemma-300m --json
+context index . --experts --models embeddinggemma-300m --json
 ```
 
 #### 2) Search for Code
 
 ```bash
 # Simple search
-context-finder search "error handling"
+context search "error handling"
 
 # Limit results
-context-finder search "database query" -n 5
+context search "database query" -n 5
 
 # Include code graph relations
-context-finder search "authentication" --with-graph
+context search "authentication" --with-graph
 
 # JSON output for programmatic use
-context-finder search "api endpoint" --json
+context search "api endpoint" --json
 ```
 
 #### 3) Build a Bounded Context Pack (JSON)
@@ -147,7 +180,7 @@ context-finder search "api endpoint" --json
 
 ```bash
 # Implementation-first (prefer code), exclude docs, reduce halo noise
-context-finder context-pack "EmbeddingCache" --path . \
+context context-pack "EmbeddingCache" --path . \
   --prefer-code --exclude-docs --related-mode focus \
   --max-chars 20000 --json --quiet
 ```
@@ -162,10 +195,10 @@ Notes:
 
 ```bash
 # Aggregate context from multiple queries
-context-finder get-context "user authentication" "session management" "jwt tokens"
+context get-context "user authentication" "session management" "jwt tokens"
 
 # JSON output
-context-finder get-context "error handling" "logging" --json -n 5
+context get-context "error handling" "logging" --json -n 5
 ```
 
 Note: `get-context` is a CLI helper that composes multiple `search` requests. The Command API action `get_context` is different: it extracts a window around a specific file and line.
@@ -174,16 +207,16 @@ Note: `get-context` is a CLI helper that composes multiple `search` requests. Th
 
 ```bash
 # List all symbols in project
-context-finder list-symbols .
+context list-symbols .
 
 # Filter by file pattern
-context-finder list-symbols . --file "*.rs"
+context list-symbols . --file "*.rs"
 
 # Filter by symbol type
-context-finder list-symbols . --symbol-type function
+context list-symbols . --symbol-type function
 
 # JSON output
-context-finder list-symbols . --json
+context list-symbols . --json
 ```
 
 ## Evaluation (golden datasets)
@@ -191,16 +224,16 @@ context-finder list-symbols . --json
 Measure quality instead of guessing: run MRR/recall/latency/bytes on a JSON dataset.
 
 ```bash
-context-finder eval . --dataset datasets/golden_smoke.json --json \
-  --out-json .agents/mcp/context/eval.smoke.json \
-  --out-md .agents/mcp/context/eval.smoke.md
+context eval . --dataset datasets/golden_smoke.json --json \
+  --out-json .agents/mcp/.context/eval.smoke.json \
+  --out-md .agents/mcp/.context/eval.smoke.md
 
-context-finder eval-compare . --dataset datasets/golden_smoke.json \
+context eval-compare . --dataset datasets/golden_smoke.json \
   --a-profile general --b-profile general \
   --a-models bge-small --b-models embeddinggemma-300m \
   --json \
-  --out-json .agents/mcp/context/eval.compare.json \
-  --out-md .agents/mcp/context/eval.compare.md
+  --out-json .agents/mcp/.context/eval.compare.json \
+  --out-md .agents/mcp/.context/eval.compare.md
 ```
 
 ## Server Modes
@@ -209,10 +242,10 @@ context-finder eval-compare . --dataset datasets/golden_smoke.json \
 
 ```bash
 # Start HTTP server on default port 7700
-context-finder serve-http
+context serve-http
 
 # Custom bind address
-context-finder serve-http --bind 0.0.0.0:8080
+context serve-http --bind 0.0.0.0:8080
 ```
 
 API endpoint: `POST /command`
@@ -243,17 +276,17 @@ curl http://localhost:7700/health
 
 ```bash
 # Start gRPC server on default port 50051
-context-finder serve-grpc
+context serve-grpc
 
 # Custom bind address
-context-finder serve-grpc --bind 0.0.0.0:50052
+context serve-grpc --bind 0.0.0.0:50052
 ```
 
 ### Background Daemon
 
 ```bash
 # Keep indexes warm for pinged projects
-context-finder daemon-loop
+context daemon-loop
 ```
 
 ### MCP Server (tools)
@@ -262,7 +295,7 @@ Install and run the MCP server:
 
 ```bash
 cargo install --path crates/mcp-server --locked
-context-finder-mcp
+context-mcp
 ```
 
 #### Multi-agent mode (shared backend)
@@ -272,10 +305,10 @@ If you have many agent sessions open, the MCP server defaults to a shared backen
 If you need an isolated in-process server per session (mostly useful in tests), disable shared mode:
 
 ```text
-CONTEXT_FINDER_MCP_SHARED=0
+CONTEXT_MCP_SHARED=0  # legacy: CONTEXT_FINDER_MCP_SHARED=0
 ```
 
-In shared mode, each session runs a lightweight stdio proxy that connects to a single long-lived daemon process (`context-finder-mcp daemon`) behind the scenes.
+In shared mode, each session runs a lightweight stdio proxy that connects to a single long-lived daemon process (`context-mcp daemon`) behind the scenes.
 
 Optional:
 
@@ -289,7 +322,7 @@ Optional:
 Self-audit tool inventory (no MCP client required):
 
 ```bash
-context-finder-mcp --print-tools
+context-mcp --print-tools
 ```
 
 #### Codex CLI (MCP) integration
@@ -297,15 +330,15 @@ context-finder-mcp --print-tools
 Example `~/.codex/config.toml` snippet:
 
 ```toml
-[mcp_servers.context-finder]
-command = "context-finder-mcp"
+[mcp_servers.context]
+command = "context-mcp"
 args = []
 
-[mcp_servers.context-finder.env]
-CONTEXT_FINDER_PROFILE = "quality"
+[mcp_servers.context.env]
+CONTEXT_PROFILE = "quality"
 # Shared backend is enabled by default (agent-native multi-session UX).
 # Set to "0" only if you need an isolated in-process server per session:
-# CONTEXT_FINDER_MCP_SHARED = "0"
+# CONTEXT_MCP_SHARED = "0"
 
 # Default output is agent-native `.context` plain text (no JSON in agent chat).
 # For machine-readable automation / `$ref` fan-out, use the Command API.
@@ -332,10 +365,10 @@ If you are using Context Finder as a daily navigation/memory tool, start with th
 
 - `docs/AGENT_MEMORY.md` — `read_pack` as the “apply_patch of context”
 
-This calls `read_pack` with defaults (see the full schema via `context-finder-mcp --print-tools` or the MCP tool schema in `crates/mcp-server/src/tools/schemas/read_pack.rs`):
+This calls `read_pack` with defaults (see the full schema via `context-mcp --print-tools` or the MCP tool schema in `crates/mcp-server/src/tools/schemas/read_pack.rs`):
 - `intent: "memory"` (returns a memory pack)
 - `response_mode: "facts"` (low-noise daily mode: returns mostly project content; avoids diagnostic meta and helper guidance)
-- `auto_index: false` for `memory`/`onboarding` (no `.agents/mcp/context/.context` side effects unless you ask)
+- `auto_index: false` for `memory`/`onboarding` (no `.agents/mcp/.context` side effects unless you ask)
 - `auto_index: false` by default for `recall`, but per-question `deep` is an explicit opt-in and may auto-index unless you explicitly disable it
 - `auto_index: true` for `query` (so semantic packs work out of the box)
 
@@ -357,7 +390,7 @@ All MCP tool errors are reported in `.context` text (`A: error: <code>` + a shor
 
 External memory overlay (default convention):
 
-- BranchMind context pack file: `.agents/mcp/context/.context/branchmind/context_pack.json` (preferred; legacy `.context/…` and `.context-finder/…` are supported).
+- BranchMind context pack file: `.agents/mcp/.context/branchmind/context_pack.json` (preferred; legacy `.agents/mcp/context/.context/…`, `.context/…` and `.context-finder/…` are supported).
 - Codex CLI worklog cache: stored under your Codex home (e.g. `~/.codex/.context-finder/external_memory/codex_cli/*`, keyed by project root), derived from `~/.codex/sessions` / `$CODEX_HOME/sessions` (project-scoped via session cwd prefix; deduped + bounded; never written into the repo).
 
 ### Recall mini-language (per question)
@@ -551,19 +584,19 @@ For programmatic access, use the `command` subcommand:
 
 ```bash
 # Index project
-context-finder command --json '{"action": "index", "payload": {"path": "/project"}}'
+context command --json '{"action": "index", "payload": {"path": "/project"}}'
 
 # Capabilities handshake (versions + budgets + start route)
-context-finder command --json '{"action": "capabilities", "payload": {}}'
+context command --json '{"action": "capabilities", "payload": {}}'
 
 # Search
-context-finder command --json '{"action": "search", "payload": {"query": "handler", "limit": 5}}'
+context command --json '{"action": "search", "payload": {"query": "handler", "limit": 5}}'
 
 # From file
-context-finder command --file request.json
+context command --file request.json
 
 # From stdin
-echo '{"action": "search", "payload": {"query": "test"}}' | context-finder command
+echo '{"action": "search", "payload": {"query": "test"}}' | context command
 ```
 
 Errors return `status: "error"` plus an `error` envelope (`code/message/details/hint/next_actions`).
@@ -572,7 +605,7 @@ Both success and error responses may include `next_actions` when a follow-up is 
 Cross-cutting options are supported under `options` (freshness policy, budgets, path filters):
 
 ```bash
-context-finder command --json '{
+context command --json '{
   "action": "context_pack",
   "options": { "stale_policy": "auto", "max_reindex_ms": 1500, "include_paths": ["src"] },
   "payload": {
@@ -589,7 +622,7 @@ context-finder command --json '{
 Batch (one request → many actions, one bounded result):
 
 ```bash
-context-finder command --json '{
+context command --json '{
   "action": "batch",
   "options": { "stale_policy": "auto", "max_reindex_ms": 1500 },
   "payload": {
@@ -640,10 +673,10 @@ All commands support these options:
 | `--quiet` | Only warnings/errors to stderr | off |
 | `--embed-mode` | Embedding backend: `fast` or `stub` | fast |
 | `--embed-model` | Override embedding model id | unset |
-| `--model-dir` | Model directory (overrides `CONTEXT_FINDER_MODEL_DIR`) | `./models` |
+| `--model-dir` | Model directory (overrides `CONTEXT_MODEL_DIR`; legacy: `CONTEXT_FINDER_MODEL_DIR`) | `./models` |
 | `--cuda-device` | CUDA device ID | unset |
 | `--cuda-mem-limit-mb` | CUDA memory arena limit (MB) | unset |
-| `--cache-dir` | Cache directory | `.agents/mcp/context/.context/cache` |
+| `--cache-dir` | Cache directory | `.agents/mcp/.context/cache` |
 | `--cache-ttl-seconds` | Cache TTL in seconds | `86400` |
 | `--cache-backend` | Cache backend: `file` or `memory` | `file` |
 | `--profile` | Search heuristics profile | `quality` |
@@ -652,13 +685,13 @@ All commands support these options:
 
 | Variable | Description |
 |----------|-------------|
-| `CONTEXT_FINDER_MODEL_DIR` | Model cache directory |
-| `CONTEXT_FINDER_EMBEDDING_MODEL` | Embedding model id |
-| `CONTEXT_FINDER_CUDA_DEVICE` | CUDA device ID |
-| `CONTEXT_FINDER_CUDA_MEM_LIMIT_MB` | CUDA memory limit |
-| `CONTEXT_FINDER_EMBEDDING_MODE` | Embedding mode |
-| `CONTEXT_FINDER_PROFILE` | Search profile |
-| `CONTEXT_FINDER_ALLOW_CPU` | Set to `1` to explicitly allow CPU fallback |
+| `CONTEXT_MODEL_DIR` | Model cache directory (legacy: `CONTEXT_FINDER_MODEL_DIR`) |
+| `CONTEXT_EMBEDDING_MODEL` | Embedding model id (legacy: `CONTEXT_FINDER_EMBEDDING_MODEL`) |
+| `CONTEXT_CUDA_DEVICE` | CUDA device ID (legacy: `CONTEXT_FINDER_CUDA_DEVICE`) |
+| `CONTEXT_CUDA_MEM_LIMIT_MB` | CUDA memory limit (legacy: `CONTEXT_FINDER_CUDA_MEM_LIMIT_MB`) |
+| `CONTEXT_EMBEDDING_MODE` | Embedding mode (legacy: `CONTEXT_FINDER_EMBEDDING_MODE`) |
+| `CONTEXT_PROFILE` | Search profile (legacy: `CONTEXT_FINDER_PROFILE`) |
+| `CONTEXT_ALLOW_CPU` | Set to `1` to explicitly allow CPU fallback (legacy: `CONTEXT_FINDER_ALLOW_CPU`) |
 
 ### Search Profiles
 
@@ -666,7 +699,7 @@ Profiles customize search behavior for different use cases:
 
 ```bash
 # Use a specific profile
-context-finder search "query" --profile general
+context search "query" --profile general
 
 # Profile locations:
 # - Built-in: profiles/fast.json, profiles/quality.json, profiles/general.json
@@ -736,7 +769,7 @@ Context Finder can be used as a context provider for AI coding assistants:
 
 ```bash
 # Start HTTP API
-context-finder serve-http --bind 127.0.0.1:7700
+context serve-http --bind 127.0.0.1:7700
 
 # AI agent can query:
 curl -X POST http://localhost:7700/command \
@@ -759,24 +792,24 @@ The project is organized as a Rust workspace with reusable crates:
 
 ```bash
 # Use stub embedding mode for testing
-context-finder index . --embed-mode stub
+context index . --embed-mode stub
 ```
 
 ### Out of Memory
 
 ```bash
 # Limit CUDA memory
-context-finder index . --cuda-mem-limit-mb 2048
+context index . --cuda-mem-limit-mb 2048
 ```
 
 ### No Results
 
 ```bash
 # Check if index exists
-ls .agents/mcp/context/.context/
+ls .agents/mcp/.context/
 
 # Force reindex
-context-finder index . --force
+context index . --force
 ```
 
 ### MCP: "tool not found" / missing tools
@@ -785,8 +818,8 @@ If your MCP client reports `tool not found` or does not show tools like `read_pa
 
 Checklist:
 
-1) Ensure the MCP server command is `context-finder-mcp` (not the CLI `context-finder`).
-2) Reinstall the MCP server (updates `~/.cargo/bin/context-finder-mcp`):
+1) Ensure the MCP server command is `context-mcp` (not the CLI `context`).
+2) Reinstall the MCP server (updates `~/.cargo/bin/context-mcp`):
 
 ```bash
 cargo install --path crates/mcp-server --locked --force
@@ -796,7 +829,7 @@ cargo install --path crates/mcp-server --locked --force
 4) Self-check the server's tool inventory from source:
 
 ```bash
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test -p context-finder-mcp --test mcp_smoke
+CONTEXT_EMBEDDING_MODE=stub cargo test -p context-mcp --test mcp_smoke
 ```
 
 Expected MCP tool names (primary):
@@ -815,12 +848,12 @@ Convenience aliases: `grep` (alias for `rg`), `find` (alias for `ls`).
 scripts/validate_contracts.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
+CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 
 # "Big audit" (includes contract-first gate + the checks above + extra reports)
 ./audit.sh
 
-# Optional: strict clippy (core targets: `context-finder-mcp` binary; enabled = gate)
+# Optional: strict clippy (core targets: `context-mcp` binary; enabled = gate)
 AUDIT_STRICT_CLIPPY=1 ./audit.sh
 ```
 

@@ -13,9 +13,21 @@ pub struct SearchRequest {
 
     /// Project directory path
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT, git root, then cwd)."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). DX: when a session root is already set and no path filters are provided, a relative `path` may be treated as an in-project scope hint instead of switching roots."
     )]
     pub path: Option<String>,
+
+    /// Optional include path prefixes (relative to project root).
+    #[schemars(description = "Optional include path prefixes (relative to project root).")]
+    pub include_paths: Option<Vec<String>>,
+
+    /// Optional exclude path prefixes (relative to project root).
+    #[schemars(description = "Optional exclude path prefixes (relative to project root).")]
+    pub exclude_paths: Option<Vec<String>>,
+
+    /// Optional file path filter (glob or substring).
+    #[schemars(description = "Optional file path filter (glob or substring).")]
+    pub file_pattern: Option<String>,
 
     /// Maximum results (default: 10)
     #[schemars(description = "Maximum number of results (1-50)")]
@@ -51,10 +63,28 @@ pub struct SearchResult {
     pub symbol: Option<String>,
     /// Symbol type (function, struct, etc.)
     pub symbol_type: Option<String>,
+    /// Fully-qualified name (module.Class.method)
+    pub qualified_name: Option<String>,
+    /// Parent scope (class/module for methods/functions)
+    pub parent_scope: Option<String>,
     /// Relevance score (0-1)
     pub score: f32,
     /// Code content
     pub content: String,
+    /// Documentation/docstring (trimmed)
+    pub documentation: Option<String>,
+    /// Contextual imports relevant to this chunk
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_imports: Vec<String>,
+    /// Tags for categorization (async, public, deprecated, etc.)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Tier/bundle markers (file/document/test)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundle_tags: Vec<String>,
+    /// Related relative paths (tests, configs, docs)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]

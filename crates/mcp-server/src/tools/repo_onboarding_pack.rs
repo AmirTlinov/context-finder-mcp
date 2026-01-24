@@ -243,7 +243,7 @@ pub(super) async fn compute_repo_onboarding_pack_result(
         .clamp(1, MAX_DOC_MAX_CHARS);
     let doc_max_chars = doc_max_chars.min((max_chars / 2).max(200));
 
-    let mut map = compute_map_result(root, root_display, map_depth, map_limit, 0).await?;
+    let mut map = compute_map_result(root, root_display, map_depth, map_limit, 0, None).await?;
     // Repo onboarding is doc-first; keep the map payload light so even small `max_chars` budgets can
     // fit at least one doc snippet.
     map.total_files = None;

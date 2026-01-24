@@ -55,6 +55,51 @@ pub(in crate::tools::dispatch) fn hint_score_for_root(root: &Path, hints: &[Stri
     score
 }
 
+#[derive(Debug, Clone)]
+pub(in crate::tools::dispatch) struct ScopeHint {
+    pub include_paths: Vec<String>,
+    pub file_pattern: Option<String>,
+}
+
+pub(in crate::tools::dispatch) fn scope_hint_from_relative_path(
+    session_root: &Path,
+    raw_path: &str,
+) -> Option<ScopeHint> {
+    let normalized = raw_path.trim().replace('\\', "/");
+    let normalized = normalized.trim_start_matches("./");
+    let normalized = normalized.trim_end_matches('/');
+    if normalized.is_empty() || normalized == "." {
+        return None;
+    }
+    if Path::new(normalized).is_absolute() {
+        return None;
+    }
+
+    if is_glob_hint(normalized) {
+        return Some(ScopeHint {
+            include_paths: Vec::new(),
+            file_pattern: Some(normalized.to_string()),
+        });
+    }
+
+    let candidate = session_root.join(normalized);
+    let is_dir = std::fs::metadata(&candidate)
+        .ok()
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false);
+    if is_dir {
+        return Some(ScopeHint {
+            include_paths: vec![normalized.to_string()],
+            file_pattern: None,
+        });
+    }
+
+    Some(ScopeHint {
+        include_paths: Vec::new(),
+        file_pattern: Some(normalized.to_string()),
+    })
+}
+
 fn is_glob_hint(value: &str) -> bool {
     value.contains('*') || value.contains('?')
 }

@@ -9,6 +9,8 @@
 //! - `context_pack` - Bounded semantic pack (primary + related halo)
 //! - `batch` - Multiple tool calls under one max_chars budget with $ref
 //! - `help` - `.context` legend (A/R/N/M) and usage notes
+//! - `root_get` - Session root + workspace roots status (multi-root + cross-project safety)
+//! - `root_set` - Explicitly set per-connection session root (switch projects intentionally)
 //! - `cat` - Bounded file window (root-locked)
 //! - `rg` - Regex matches with before/after context hunks
 //! - `grep` - Alias for `rg`

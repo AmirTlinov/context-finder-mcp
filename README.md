@@ -57,8 +57,12 @@ Context is meant to be **more convenient than shell probing** *by design*:
 git clone https://github.com/AmirTlinov/context-mcp.git
 cd context-mcp
 
-cargo build --release
-cargo install --path crates/cli --locked
+# One command (recommended):
+bash scripts/install.sh
+
+# Or manual:
+# cargo install --path crates/mcp-server --locked
+# cargo install --path crates/cli --locked
 ```
 
 Optional local alias (avoids `cargo install` during iteration):

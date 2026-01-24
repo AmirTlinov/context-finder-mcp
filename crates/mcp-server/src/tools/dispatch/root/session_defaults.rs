@@ -17,6 +17,15 @@ pub(in crate::tools::dispatch) struct SessionDefaults {
     ///
     /// In this state, callers must pass an explicit `path` (or an env override) to disambiguate.
     mcp_roots_ambiguous: bool,
+
+    /// Canonical workspace roots reported by MCP `roots/list`.
+    ///
+    /// When non-empty, resolved roots must be within one of these directories.
+    mcp_workspace_roots: Vec<PathBuf>,
+
+    /// Fail-closed: when we detect that the session root is outside the MCP workspace roots,
+    /// we record an error and refuse to serve requests without an explicit `path`.
+    root_mismatch_error: Option<String>,
     // Working-set: ephemeral, per-connection state (no disk). Used to avoid repeating the same
     // anchors/snippets across multiple calls in one agent session.
     seen_snippet_files: VecDeque<String>,
@@ -44,8 +53,34 @@ impl SessionDefaults {
         self.mcp_roots_ambiguous = value;
     }
 
-    pub(in crate::tools::dispatch) fn has_root(&self) -> bool {
-        self.root.is_some()
+    pub(in crate::tools::dispatch) fn set_mcp_workspace_roots(&mut self, roots: Vec<PathBuf>) {
+        self.mcp_workspace_roots = roots;
+    }
+
+    pub(in crate::tools::dispatch) fn mcp_workspace_roots(&self) -> &[PathBuf] {
+        &self.mcp_workspace_roots
+    }
+
+    pub(in crate::tools::dispatch) fn root_allowed_by_workspace(
+        &self,
+        root: &std::path::Path,
+    ) -> bool {
+        if self.mcp_workspace_roots.is_empty() {
+            return true;
+        }
+        self.mcp_workspace_roots
+            .iter()
+            .any(|candidate| root.starts_with(candidate))
+    }
+
+    pub(in crate::tools::dispatch) fn root_mismatch_error(&self) -> Option<&str> {
+        self.root_mismatch_error.as_deref()
+    }
+
+    pub(in crate::tools::dispatch) fn set_root_mismatch_error(&mut self, message: String) {
+        if self.root_mismatch_error.is_none() {
+            self.root_mismatch_error = Some(message);
+        }
     }
 
     pub(in crate::tools::dispatch) fn clone_root(&self) -> Option<(PathBuf, String)> {
@@ -71,6 +106,8 @@ impl SessionDefaults {
         self.focus_file = None;
         self.roots_pending = roots_pending;
         self.mcp_roots_ambiguous = false;
+        self.mcp_workspace_roots.clear();
+        self.root_mismatch_error = None;
         self.clear_working_set();
     }
 
@@ -88,6 +125,7 @@ impl SessionDefaults {
         self.root_display = Some(root_display);
         self.focus_file = focus_file;
         self.mcp_roots_ambiguous = false;
+        self.root_mismatch_error = None;
         if root_changed {
             self.clear_working_set();
         }
