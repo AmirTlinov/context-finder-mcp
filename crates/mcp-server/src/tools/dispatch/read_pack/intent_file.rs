@@ -1,32 +1,16 @@
 use super::super::router::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
-use super::super::router::error::invalid_cursor_with_meta_details;
-use super::super::{compute_file_slice_result, decode_cursor, FileSliceCursorV1, FileSliceRequest};
+use super::super::{compute_file_slice_result, FileSliceRequest};
 use super::candidates::is_disallowed_memory_file;
 use super::cursors::{snippet_kind_for_path, trimmed_non_empty_str};
+use super::file_cursor::{
+    decode_file_slice_cursor, ensure_cursor_file_matches_request, validate_file_slice_cursor,
+};
+use super::file_limits::resolve_file_slice_max_chars;
 use super::{
     call_error, ReadPackContext, ReadPackNextAction, ReadPackRequest, ReadPackSection,
-    ReadPackSnippet, ResponseMode, CURSOR_VERSION,
+    ReadPackSnippet, ResponseMode,
 };
-use crate::tools::cursor::cursor_fingerprint;
-use context_indexer::{root_fingerprint, ToolMeta};
 use serde_json::json;
-
-fn snippet_inner_max_chars(inner_max_chars: usize) -> usize {
-    // Snippet-mode should stay small and leave room for envelope + cursor strings.
-    let min_chars = 200usize;
-    let max_chars = 2_000usize;
-    (inner_max_chars / 3).clamp(min_chars, max_chars)
-}
-
-fn decode_file_slice_cursor(cursor: Option<&str>) -> super::ToolResult<Option<FileSliceCursorV1>> {
-    let Some(cursor) = trimmed_non_empty_str(cursor) else {
-        return Ok(None);
-    };
-
-    let decoded: FileSliceCursorV1 = decode_cursor(cursor)
-        .map_err(|err| call_error("invalid_cursor", format!("Invalid cursor: {err}")))?;
-    Ok(Some(decoded))
-}
 
 pub(super) async fn handle_file_intent(
     service: &super::ContextFinderService,
@@ -47,55 +31,12 @@ pub(super) async fn handle_file_intent(
     };
     let cursor_payload = decode_file_slice_cursor(expanded_cursor.as_deref())?;
     if let Some(decoded) = cursor_payload.as_ref() {
-        if decoded.v != CURSOR_VERSION || (decoded.tool != "cat" && decoded.tool != "file_slice") {
-            return Err(call_error(
-                "invalid_cursor",
-                "Invalid cursor: wrong tool (expected cat)",
-            ));
-        }
-        let expected_root_hash = cursor_fingerprint(&ctx.root_display);
-        let expected_root_fingerprint = root_fingerprint(&ctx.root_display);
-        if let Some(hash) = decoded.root_hash {
-            if hash != expected_root_hash {
-                return Err(invalid_cursor_with_meta_details(
-                    "Invalid cursor: different root",
-                    ToolMeta {
-                        root_fingerprint: Some(expected_root_fingerprint),
-                        ..ToolMeta::default()
-                    },
-                    json!({
-                        "expected_root_fingerprint": expected_root_fingerprint,
-                        "cursor_root_fingerprint": Some(hash),
-                    }),
-                ));
-            }
-        } else if decoded.root.as_deref() != Some(ctx.root_display.as_str()) {
-            let cursor_root_fingerprint = decoded.root.as_deref().map(root_fingerprint);
-            return Err(invalid_cursor_with_meta_details(
-                "Invalid cursor: different root",
-                ToolMeta {
-                    root_fingerprint: Some(expected_root_fingerprint),
-                    ..ToolMeta::default()
-                },
-                json!({
-                    "expected_root_fingerprint": expected_root_fingerprint,
-                    "cursor_root_fingerprint": cursor_root_fingerprint,
-                }),
-            ));
-        }
+        validate_file_slice_cursor(ctx, decoded)?;
     }
 
     let requested_file = trimmed_non_empty_str(request.file.as_deref()).map(ToString::to_string);
     if let (Some(decoded), Some(requested)) = (cursor_payload.as_ref(), requested_file.as_ref()) {
-        if requested != &decoded.file {
-            return Err(call_error(
-                "invalid_cursor",
-                format!(
-                    "Invalid cursor: different file (cursor={}, request={})",
-                    decoded.file, requested
-                ),
-            ));
-        }
+        ensure_cursor_file_matches_request(decoded, requested)?;
     }
 
     let file = requested_file.or_else(|| cursor_payload.as_ref().map(|c| c.file.clone()));
@@ -121,20 +62,12 @@ pub(super) async fn handle_file_intent(
         .max_lines
         .or_else(|| cursor_payload.as_ref().map(|c| c.max_lines));
 
-    let file_slice_max_chars = if let Some(decoded) = cursor_payload.as_ref() {
-        if request.max_chars.is_some() {
-            ctx.inner_max_chars
-        } else {
-            decoded.max_chars
-        }
-    } else {
-        match response_mode {
-            ResponseMode::Full => ctx.inner_max_chars,
-            ResponseMode::Facts | ResponseMode::Minimal => {
-                snippet_inner_max_chars(ctx.inner_max_chars)
-            }
-        }
-    };
+    let file_slice_max_chars = resolve_file_slice_max_chars(
+        ctx,
+        response_mode,
+        cursor_payload.as_ref(),
+        request.max_chars,
+    );
     let mut slice = compute_file_slice_result(
         &ctx.root,
         &ctx.root_display,
