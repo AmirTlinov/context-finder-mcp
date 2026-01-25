@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context as AnyhowContext, Result};
 use context_search::{MultiModelHybridSearch, SearchProfile};
 use context_vector_store::{
     context_dir_for_project_root, corpus_path_for_project_root, current_model_id, ChunkCorpus,
-    QueryKind, VectorIndex, LEGACY_CONTEXT_DIR_NAME,
+    QueryKind, VectorIndex,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -196,23 +196,13 @@ async fn load_dataset(path: &Path) -> Result<EvalDatasetFile> {
 }
 
 fn profile_candidates(root: &Path, profile: &str) -> Vec<PathBuf> {
-    let mut dirs = vec![context_dir_for_project_root(root)];
-    let legacy_dir = root.join(LEGACY_CONTEXT_DIR_NAME);
-    if legacy_dir != dirs[0] {
-        dirs.push(legacy_dir);
+    let dir = context_dir_for_project_root(root);
+    let base = dir.join("profiles").join(profile);
+    if base.extension().is_none() {
+        vec![base.with_extension("json"), base.with_extension("toml")]
+    } else {
+        vec![base]
     }
-
-    let mut candidates = Vec::new();
-    for dir in dirs {
-        let base = dir.join("profiles").join(profile);
-        if base.extension().is_none() {
-            candidates.push(base.with_extension("json"));
-            candidates.push(base.with_extension("toml"));
-        } else {
-            candidates.push(base);
-        }
-    }
-    candidates
 }
 
 fn load_profile(root: &Path, profile_name: &str) -> Result<SearchProfile> {

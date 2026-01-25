@@ -1,6 +1,6 @@
 use crate::tools::schemas::read_pack::{ReadPackExternalMemoryHit, ReadPackExternalMemoryResult};
 use crate::tools::schemas::response_mode::ResponseMode;
-use context_vector_store::{CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
+use context_vector_store::CONTEXT_DIR_NAME;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -2508,17 +2508,7 @@ async fn cache_path_for_project(codex_home: &Path, project_root: &Path) -> Optio
         .unwrap_or_else(|_| project_root.to_path_buf());
     let key_full = sha256_hex(canonical.to_string_lossy().as_bytes());
     let key = key_full.chars().take(16).collect::<String>();
-    let preferred = codex_home.join(CONTEXT_DIR_NAME);
-    let base = if preferred.exists() {
-        preferred
-    } else {
-        let legacy = codex_home.join(LEGACY_CONTEXT_DIR_NAME);
-        if legacy.exists() {
-            legacy
-        } else {
-            preferred
-        }
-    };
+    let base = codex_home.join(CONTEXT_DIR_NAME);
     Some(
         base.join("external_memory")
             .join("codex_cli")

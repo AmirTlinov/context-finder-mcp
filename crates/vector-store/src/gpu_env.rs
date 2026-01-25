@@ -1,4 +1,4 @@
-use crate::paths::{CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
+use crate::paths::CONTEXT_DIR_NAME;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -140,13 +140,6 @@ fn global_cuda_deps_dir() -> Option<PathBuf> {
     let preferred = home.join(CONTEXT_DIR_NAME).join("deps").join("ort_cuda");
     if preferred.join(ORT_PROVIDER_SO).exists() {
         return Some(preferred);
-    }
-    let legacy = home
-        .join(LEGACY_CONTEXT_DIR_NAME)
-        .join("deps")
-        .join("ort_cuda");
-    if legacy.join(ORT_PROVIDER_SO).exists() {
-        return Some(legacy);
     }
     None
 }

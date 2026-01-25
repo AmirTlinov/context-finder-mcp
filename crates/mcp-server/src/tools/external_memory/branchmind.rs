@@ -1,8 +1,6 @@
 use crate::tools::schemas::read_pack::ReadPackExternalMemoryResult;
 use crate::tools::schemas::response_mode::ResponseMode;
-use context_vector_store::{
-    context_dir_for_project_root, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME,
-};
+use context_vector_store::context_dir_for_project_root;
 use serde_json::Value;
 use std::path::Path;
 
@@ -11,32 +9,14 @@ fn candidate_context_pack_paths(root: &Path) -> Vec<(String, std::path::PathBuf)
         .join("branchmind")
         .join("context_pack.json");
 
-    let mut out = Vec::new();
-    out.push((
+    vec![(
         preferred
             .strip_prefix(root)
             .unwrap_or(&preferred)
             .to_string_lossy()
             .to_string(),
         preferred,
-    ));
-
-    // Backward compatibility: older Context Finder builds historically wrote under repo-root
-    // `.context/` or `.context-finder/`, while newer versions prefer
-    // `.agents/mcp/.context/`.
-    for dir in [CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME] {
-        let candidate = root.join(dir).join("branchmind").join("context_pack.json");
-        out.push((
-            candidate
-                .strip_prefix(root)
-                .unwrap_or(&candidate)
-                .to_string_lossy()
-                .to_string(),
-            candidate,
-        ));
-    }
-
-    out
+    )]
 }
 
 pub(super) async fn overlay_for_query(

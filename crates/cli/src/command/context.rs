@@ -3,9 +3,7 @@ use crate::command::domain::{
 };
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use context_search::SearchProfile;
-use context_vector_store::{
-    context_dir_for_project_root, current_model_id, LEGACY_CONTEXT_DIR_NAME,
-};
+use context_vector_store::{context_dir_for_project_root, current_model_id};
 use serde_json::Value;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -28,9 +26,7 @@ impl CommandContext {
         Self {
             request_config: normalize_config(config),
             request_options: options,
-            profile_name: env::var("CONTEXT_PROFILE")
-                .or_else(|_| env::var("CONTEXT_FINDER_PROFILE"))
-                .unwrap_or_else(|_| "quality".to_string()),
+            profile_name: env::var("CONTEXT_PROFILE").unwrap_or_else(|_| "quality".to_string()),
             resolved: Mutex::new(None),
         }
     }
@@ -59,33 +55,24 @@ impl CommandContext {
             });
         }
 
-        apply_env_fallback(
-            "CONTEXT_EMBEDDING_MODE",
-            "CONTEXT_FINDER_EMBEDDING_MODE",
-            &merged,
-            &[&["embed_mode"]],
-        );
+        apply_env_fallback("CONTEXT_EMBEDDING_MODE", &merged, &[&["embed_mode"]]);
         apply_env_fallback(
             "CONTEXT_EMBEDDING_MODEL",
-            "CONTEXT_FINDER_EMBEDDING_MODEL",
             &merged,
             &[&["embedding_model"], &["defaults", "embedding_model"]],
         );
         apply_env_fallback(
             "CONTEXT_MODEL_DIR",
-            "CONTEXT_FINDER_MODEL_DIR",
             &merged,
             &[&["model_dir"], &["defaults", "model_dir"]],
         );
         apply_env_fallback(
             "CONTEXT_CUDA_DEVICE",
-            "CONTEXT_FINDER_CUDA_DEVICE",
             &merged,
             &[&["cuda_device"], &["defaults", "cuda_device"]],
         );
         apply_env_fallback(
             "CONTEXT_CUDA_MEM_LIMIT_MB",
-            "CONTEXT_FINDER_CUDA_MEM_LIMIT_MB",
             &merged,
             &[&["cuda_mem_limit_mb"], &["defaults", "cuda_mem_limit_mb"]],
         );
@@ -113,17 +100,7 @@ impl CommandContext {
     ) -> Result<(Option<Value>, Option<String>, Vec<Hint>)> {
         let mut hints = Vec::new();
         let context_dir = context_dir_for_project_root(root);
-        let mut candidates = vec![context_dir.join("config.json")];
-        let legacy_dir = root.join(LEGACY_CONTEXT_DIR_NAME);
-        if legacy_dir != context_dir {
-            candidates.push(legacy_dir.join("config.json"));
-        }
-        let path = match candidates.into_iter().find(|p| p.exists()) {
-            Some(path) => path,
-            None => {
-                return Ok((None, None, hints));
-            }
-        };
+        let path = context_dir.join("config.json");
         if !path.exists() {
             return Ok((None, None, hints));
         }
@@ -214,8 +191,8 @@ pub struct ProjectContext {
     pub hints: Vec<Hint>,
 }
 
-fn apply_env_fallback(primary: &str, legacy: &str, config: &Option<Value>, paths: &[&[&str]]) {
-    if std::env::var(primary).is_ok() || std::env::var(legacy).is_ok() {
+fn apply_env_fallback(primary: &str, config: &Option<Value>, paths: &[&[&str]]) {
+    if std::env::var(primary).is_ok() {
         return;
     }
     for path in paths {
@@ -268,12 +245,7 @@ fn resolve_project_root(provided: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 fn env_root_override() -> Option<PathBuf> {
-    for key in [
-        "CONTEXT_ROOT",
-        "CONTEXT_PROJECT_ROOT",
-        "CONTEXT_FINDER_ROOT",
-        "CONTEXT_FINDER_PROJECT_ROOT",
-    ] {
+    for key in ["CONTEXT_ROOT", "CONTEXT_PROJECT_ROOT"] {
         if let Ok(value) = env::var(key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
@@ -365,21 +337,11 @@ pub fn graph_language_from_config(config: &Option<Value>) -> Option<String> {
 }
 
 fn profile_candidates(root: &Path, profile: &str) -> Vec<PathBuf> {
-    let mut dirs = vec![context_dir_for_project_root(root)];
-    let legacy_dir = root.join(LEGACY_CONTEXT_DIR_NAME);
-    if legacy_dir != dirs[0] {
-        dirs.push(legacy_dir);
+    let dir = context_dir_for_project_root(root);
+    let base = dir.join("profiles").join(profile);
+    if base.extension().is_none() {
+        vec![base.with_extension("json"), base.with_extension("toml")]
+    } else {
+        vec![base]
     }
-
-    let mut candidates = Vec::new();
-    for dir in dirs {
-        let base = dir.join("profiles").join(profile);
-        if base.extension().is_none() {
-            candidates.push(base.with_extension("json"));
-            candidates.push(base.with_extension("toml"));
-        } else {
-            candidates.push(base);
-        }
-    }
-    candidates
 }

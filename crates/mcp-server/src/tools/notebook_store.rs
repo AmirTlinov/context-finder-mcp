@@ -1,7 +1,5 @@
 use anyhow::{Context as AnyhowContext, Result};
-use context_vector_store::{
-    context_dir_for_project_root, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME,
-};
+use context_vector_store::{context_dir_for_project_root, CONTEXT_DIR_NAME};
 use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -78,15 +76,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn home_context_base_dir() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    let preferred = home.join(CONTEXT_DIR_NAME);
-    if preferred.exists() {
-        return Some(preferred);
-    }
-    let legacy = home.join(LEGACY_CONTEXT_DIR_NAME);
-    if legacy.exists() {
-        return Some(legacy);
-    }
-    Some(preferred)
+    Some(home.join(CONTEXT_DIR_NAME))
 }
 
 pub(crate) fn notebook_paths_for_scope(

@@ -1,7 +1,8 @@
-use super::super::intent_recall::{
-    best_keyword_pattern, parse_recall_question_directives, recall_question_policy,
-    snippets_from_grep_filtered, GrepSnippetParams, RecallQuestionMode,
+use super::super::recall_directives::{
+    parse_recall_question_directives, recall_question_policy, RecallQuestionMode,
 };
+use super::super::recall_keywords::best_keyword_pattern;
+use super::super::recall_snippets::{snippets_from_grep_filtered, GrepSnippetParams};
 use super::super::{
     build_context, handle_recall_intent, ContextFinderService, ReadPackSection, ResponseMode,
 };
