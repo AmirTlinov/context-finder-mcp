@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, schemars::JsonSchema, Default)]
 pub struct RootGetRequest {}
 
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq)]
 pub struct RootUpdateInfo {
     /// Update source (e.g. `root_set`, `resolve_path`, `mcp_roots`).
     pub source: String,

@@ -353,6 +353,14 @@ async fn root_tools_can_set_and_report_session_root() {
         result.meta.root_fingerprint,
         Some(context_indexer::root_fingerprint(&root_str))
     );
+
+    let last_root_set = result.last_root_set.expect("last_root_set");
+    let last_root_update = result.last_root_update.expect("last_root_update");
+    assert_eq!(last_root_set.source, "root_set");
+    assert_eq!(last_root_set.requested_path, Some(root_str.clone()));
+    assert_eq!(last_root_set.source_tool, Some("root_set".to_string()));
+    assert!(last_root_set.at_ms > 0, "expected at_ms to be populated");
+    assert_eq!(last_root_update, last_root_set);
 }
 
 #[tokio::test]
@@ -486,6 +494,76 @@ async fn daemon_can_disambiguate_multi_root_workspace_from_hints() {
     assert_eq!(
         result.session_root,
         Some(root_a.to_string_lossy().to_string())
+    );
+}
+
+#[tokio::test]
+async fn invalid_path_errors_include_root_context_details() {
+    let dir = tempdir().expect("temp dir");
+    std::fs::create_dir(dir.path().join(".git")).expect("create .git");
+    let canonical_root = dir.path().canonicalize().expect("canonical root");
+    let root_str = canonical_root.to_string_lossy().to_string();
+    let outside = tempdir().expect("temp outside");
+    let outside_root = outside.path().canonicalize().expect("canonical outside");
+
+    let service = ContextFinderService::new_daemon();
+    let _ = crate::tools::dispatch::router::root::root_set(
+        &service,
+        RootSetRequest {
+            path: root_str.clone(),
+        },
+    )
+    .await
+    .expect("root_set");
+
+    let out = crate::tools::dispatch::router::ls::ls(
+        &service,
+        LsRequest {
+            path: Some(outside_root.to_string_lossy().to_string()),
+            dir: None,
+            all: None,
+            allow_secrets: None,
+            limit: None,
+            max_chars: None,
+            response_mode: None,
+            cursor: None,
+        },
+    )
+    .await
+    .expect("ls");
+
+    let payload = out.structured_content.expect("structured_content");
+    let error = payload.get("error").expect("error");
+    assert_eq!(
+        error.get("code").and_then(serde_json::Value::as_str),
+        Some("invalid_request")
+    );
+    let details = error.get("details").expect("details");
+    let root_context = details.get("root_context").expect("root_context");
+    assert_eq!(
+        root_context
+            .get("session_root")
+            .and_then(serde_json::Value::as_str),
+        Some(root_str.as_str())
+    );
+    let last_root_set = root_context.get("last_root_set").expect("last_root_set");
+    assert_eq!(
+        last_root_set
+            .get("source")
+            .and_then(serde_json::Value::as_str),
+        Some("root_set")
+    );
+    assert_eq!(
+        last_root_set
+            .get("requested_path")
+            .and_then(serde_json::Value::as_str),
+        Some(root_str.as_str())
+    );
+    assert_eq!(
+        last_root_set
+            .get("source_tool")
+            .and_then(serde_json::Value::as_str),
+        Some("root_set")
     );
 }
 
