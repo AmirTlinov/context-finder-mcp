@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::{ReadPackRequest, ReadPackSnippetKind, ResponseMode};
 
-pub(super) fn trimmed_non_empty_str(input: Option<&str>) -> Option<&str> {
+pub(crate) fn trimmed_non_empty_str(input: Option<&str>) -> Option<&str> {
     input.map(str::trim).filter(|value| !value.is_empty())
 }
 

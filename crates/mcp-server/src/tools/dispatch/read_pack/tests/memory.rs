@@ -1,7 +1,6 @@
+use super::super::context::build_context;
 use super::super::ContextFinderService;
-use super::super::{
-    build_context, handle_memory_intent, ProjectFactsResult, ReadPackSection, ResponseMode,
-};
+use super::super::{handle_memory_intent, ProjectFactsResult, ReadPackSection, ResponseMode};
 use super::support::base_request;
 use tempfile::tempdir;
 

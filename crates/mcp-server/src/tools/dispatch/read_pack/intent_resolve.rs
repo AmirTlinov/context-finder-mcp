@@ -2,7 +2,7 @@ use super::cursors::CursorHeader;
 use super::{call_error, decode_cursor, trimmed_non_empty_str, ReadPackIntent};
 use super::{ReadPackRequest, ToolResult, CURSOR_VERSION};
 
-pub(super) fn resolve_intent(request: &ReadPackRequest) -> ToolResult<ReadPackIntent> {
+pub(crate) fn resolve_intent(request: &ReadPackRequest) -> ToolResult<ReadPackIntent> {
     let mut intent = request.intent.unwrap_or(ReadPackIntent::Auto);
     if !matches!(intent, ReadPackIntent::Auto) {
         return Ok(intent);

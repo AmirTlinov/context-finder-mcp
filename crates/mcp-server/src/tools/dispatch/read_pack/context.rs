@@ -1,14 +1,14 @@
 use super::{ReadPackRequest, ToolResult};
 use std::path::PathBuf;
 
-pub(super) struct ReadPackContext {
-    pub(super) root: PathBuf,
-    pub(super) root_display: String,
-    pub(super) max_chars: usize,
-    pub(super) inner_max_chars: usize,
+pub(crate) struct ReadPackContext {
+    pub(crate) root: PathBuf,
+    pub(crate) root_display: String,
+    pub(crate) max_chars: usize,
+    pub(crate) inner_max_chars: usize,
 }
 
-pub(super) fn build_context(
+pub(crate) fn build_context(
     request: &ReadPackRequest,
     root: PathBuf,
     root_display: String,

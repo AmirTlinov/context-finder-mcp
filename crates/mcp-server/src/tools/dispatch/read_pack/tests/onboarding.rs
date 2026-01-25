@@ -1,6 +1,7 @@
+use super::super::context::build_context;
+use super::super::intent_resolve::resolve_intent;
 use super::super::{
-    build_context, handle_onboarding_intent, resolve_intent, ProjectFactsResult, ReadPackIntent,
-    ReadPackSection, ResponseMode,
+    handle_onboarding_intent, ProjectFactsResult, ReadPackIntent, ReadPackSection, ResponseMode,
 };
 use super::support::base_request;
 use tempfile::tempdir;

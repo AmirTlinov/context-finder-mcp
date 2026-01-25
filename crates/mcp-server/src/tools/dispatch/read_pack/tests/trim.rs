@@ -1,10 +1,11 @@
 use super::super::super::router::cursor_alias::expand_cursor_alias;
 use super::super::cursors::ReadPackRecallCursorV1;
 use super::super::recall_trim::repair_recall_cursor_after_trim;
+use super::super::context::build_context;
 use super::super::{
-    build_context, decode_cursor, finalize_and_trim, ContextFinderService, ProjectFactsResult,
-    ReadPackBudget, ReadPackIntent, ReadPackRecallResult, ReadPackResult, ReadPackSection,
-    ReadPackSnippet, ReadPackTruncation, ResponseMode,
+    decode_cursor, finalize_and_trim, ContextFinderService, ProjectFactsResult, ReadPackBudget,
+    ReadPackIntent, ReadPackRecallResult, ReadPackResult, ReadPackSection, ReadPackSnippet,
+    ReadPackTruncation, ResponseMode,
 };
 use super::support::base_request;
 use std::path::PathBuf;
