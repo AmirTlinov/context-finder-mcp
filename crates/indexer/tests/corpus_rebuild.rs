@@ -22,7 +22,7 @@ fn has_chunk_for_file(index: &VectorIndex, file_prefix: &str) -> bool {
 
 #[tokio::test]
 async fn project_indexer_rebuilds_store_when_corpus_is_missing() {
-    std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
 
     let temp = TempDir::new().expect("tempdir");
     let src_dir = temp.path().join("src");
@@ -69,7 +69,7 @@ pub fn world() {
 
 #[tokio::test]
 async fn multimodel_indexer_rebuilds_all_models_when_corpus_is_missing() {
-    std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
 
     let temp = TempDir::new().expect("tempdir");
     let src_dir = temp.path().join("src");

@@ -1,6 +1,6 @@
 use crate::error::{Result, VectorStoreError};
 use crate::gpu_env;
-use crate::paths::{CONTEXT_CACHE_DIR_NAME, LEGACY_CONTEXT_CACHE_DIR_NAME};
+use crate::paths::CONTEXT_CACHE_DIR_NAME;
 use ndarray::{Array, Axis, Dimension, Ix2, Ix3};
 use once_cell::sync::OnceCell;
 use ort::execution_providers::{
@@ -30,7 +30,6 @@ enum EmbeddingMode {
 impl EmbeddingMode {
     fn from_env() -> Result<Self> {
         let raw = env::var("CONTEXT_EMBEDDING_MODE")
-            .or_else(|_| env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
             .unwrap_or_else(|_| "fast".to_string())
             .to_ascii_lowercase();
         match raw.as_str() {
@@ -340,7 +339,6 @@ impl<B> BackendCache<B> {
 
 fn backend_cache_capacity_from_env() -> usize {
     std::env::var("CONTEXT_MODEL_REGISTRY_CAPACITY")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_MODEL_REGISTRY_CAPACITY"))
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or_else(default_backend_cache_capacity)
@@ -391,10 +389,6 @@ pub fn model_dir() -> PathBuf {
     if let Ok(path) = std::env::var("CONTEXT_MODEL_DIR") {
         return PathBuf::from(path);
     }
-    if let Ok(path) = std::env::var("CONTEXT_FINDER_MODEL_DIR") {
-        return PathBuf::from(path);
-    }
-
     // Prefer a repo-local `models/manifest.json` near the executable (agent-friendly, no hidden
     // caches). This allows running `context` from an arbitrary project directory while
     // still resolving the tool's own `./models/` folder.
@@ -432,10 +426,6 @@ pub fn model_dir() -> PathBuf {
         if preferred.exists() {
             return preferred;
         }
-        let legacy = base.join(LEGACY_CONTEXT_CACHE_DIR_NAME).join("models");
-        if legacy.exists() {
-            return legacy;
-        }
         return preferred;
     }
 
@@ -445,10 +435,6 @@ pub fn model_dir() -> PathBuf {
     let preferred = base.join(CONTEXT_CACHE_DIR_NAME).join("models");
     if preferred.exists() {
         return preferred;
-    }
-    let legacy = base.join(LEGACY_CONTEXT_CACHE_DIR_NAME).join("models");
-    if legacy.exists() {
-        return legacy;
     }
     preferred
 }
@@ -460,9 +446,8 @@ impl ModelId {
     }
 
     fn from_env() -> Self {
-        let model_name = std::env::var("CONTEXT_EMBEDDING_MODEL")
-            .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODEL"))
-            .unwrap_or_else(|_| "bge-small".to_string());
+        let model_name =
+            std::env::var("CONTEXT_EMBEDDING_MODEL").unwrap_or_else(|_| "bge-small".to_string());
         Self::from_raw(&model_name)
     }
 
@@ -985,7 +970,6 @@ fn is_cuda_disabled() -> bool {
 
 fn allow_cpu_fallback() -> bool {
     env::var("CONTEXT_ALLOW_CPU")
-        .or_else(|_| env::var("CONTEXT_FINDER_ALLOW_CPU"))
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }
@@ -1020,18 +1004,14 @@ fn build_cuda_ep() -> Result<ort::execution_providers::ExecutionProviderDispatch
     let report = gpu_env::bootstrap_cuda_env_best_effort();
     let mut cuda = CUDAExecutionProvider::default();
 
-    if let Ok(device) =
-        env::var("CONTEXT_CUDA_DEVICE").or_else(|_| env::var("CONTEXT_FINDER_CUDA_DEVICE"))
-    {
+    if let Ok(device) = env::var("CONTEXT_CUDA_DEVICE") {
         let parsed: i32 = device.parse().map_err(|e| {
             VectorStoreError::EmbeddingError(format!("Invalid CONTEXT_CUDA_DEVICE '{device}': {e}"))
         })?;
         cuda = cuda.with_device_id(parsed);
     }
 
-    if let Ok(limit_mb) = env::var("CONTEXT_CUDA_MEM_LIMIT_MB")
-        .or_else(|_| env::var("CONTEXT_FINDER_CUDA_MEM_LIMIT_MB"))
-    {
+    if let Ok(limit_mb) = env::var("CONTEXT_CUDA_MEM_LIMIT_MB") {
         let parsed: usize = limit_mb.parse().map_err(|e| {
             VectorStoreError::EmbeddingError(format!(
                 "Invalid CONTEXT_CUDA_MEM_LIMIT_MB '{limit_mb}': {e}"

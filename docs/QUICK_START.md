@@ -48,7 +48,6 @@ If you don’t have CUDA yet, you can still pilot the **filesystem‑first** wor
 ```bash
 # Skip model install; force stub embeddings
 export CONTEXT_EMBEDDING_MODE=stub
-# (legacy) export CONTEXT_FINDER_EMBEDDING_MODE=stub
 ```
 
 What you get:
@@ -315,8 +314,8 @@ Optional:
 - `CONTEXT_FINDER_MCP_SOCKET` overrides the Unix socket path for the daemon.
 - Keep the indexing daemon enabled (avoid `CONTEXT_FINDER_DISABLE_DAEMON=1`) if you want indexes to stay warm while you work.
 - `CONTEXT_FINDER_INDEX_CONCURRENCY` caps how many projects can be indexed in parallel in shared daemon mode (default: auto; range: 1–32). Requires restarting the daemon to take effect.
-- `CONTEXT_FINDER_WARM_WORKER_CAPACITY` caps how many hot project warm workers are kept in the daemon warm-indexer LRU (default: auto). Requires restarting the daemon to take effect.
-- `CONTEXT_FINDER_WARM_WORKER_TTL_SECS` sets idle eviction TTL for warm workers (default: auto). Requires restarting the daemon to take effect.
+- `CONTEXT_WARM_WORKER_CAPACITY` caps how many hot project warm workers are kept in the daemon warm-indexer LRU (default: auto). Requires restarting the daemon to take effect.
+- `CONTEXT_WARM_WORKER_TTL_SECS` sets idle eviction TTL for warm workers (default: auto). Requires restarting the daemon to take effect.
 - `CONTEXT_FINDER_ENGINE_SEMANTIC_INDEX_CAPACITY` caps how many semantic indices are kept loaded per project engine (default: auto; minimum: 1). Lower values reduce RAM but may increase on-demand index loads. Requires restarting the daemon to take effect.
 
 Self-audit tool inventory (no MCP client required):

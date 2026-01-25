@@ -103,12 +103,11 @@ async fn mcp_supports_content_length_framing() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::null());
@@ -182,12 +181,11 @@ async fn mcp_accepts_content_type_before_content_length() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::null());
@@ -224,12 +222,11 @@ async fn mcp_initialize_does_not_block_on_roots_list() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::null());
@@ -275,12 +272,11 @@ async fn mcp_accepts_tools_list_without_initialized_notification() -> Result<()>
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::null());
@@ -341,12 +337,11 @@ async fn mcp_accepts_tools_call_without_mcp_handshake() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::null());
@@ -385,10 +380,9 @@ async fn shared_backend_proxy_supports_content_length_and_path_injection() -> Re
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    daemon_cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.env("RUST_LOG", "warn");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
@@ -405,16 +399,12 @@ async fn shared_backend_proxy_supports_content_length_and_path_injection() -> Re
 
         let mut cmd = Command::new(bin);
         cmd.current_dir(root);
-        cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-        cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-        cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-        cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+        cmd.env("CONTEXT_PROFILE", "quality");
+        cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+        cmd.env("CONTEXT_DISABLE_DAEMON", "1");
         cmd.env("RUST_LOG", "warn");
-        cmd.env("CONTEXT_FINDER_MCP_SHARED", "1");
-        cmd.env(
-            "CONTEXT_FINDER_MCP_SOCKET",
-            socket.to_string_lossy().to_string(),
-        );
+        cmd.env("CONTEXT_MCP_SHARED", "1");
+        cmd.env("CONTEXT_MCP_SOCKET", socket.to_string_lossy().to_string());
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::null());
@@ -507,10 +497,9 @@ async fn shared_backend_proxy_synthesizes_initialized_notification_if_client_ski
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    daemon_cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.env("RUST_LOG", "warn");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
@@ -521,16 +510,12 @@ async fn shared_backend_proxy_synthesizes_initialized_notification_if_client_ski
         wait_for_socket(&socket).await?;
 
         let mut cmd = Command::new(bin);
-        cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-        cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-        cmd.env_remove("CONTEXT_FINDER_DAEMON_EXE");
-        cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+        cmd.env("CONTEXT_PROFILE", "quality");
+        cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+        cmd.env("CONTEXT_DISABLE_DAEMON", "1");
         cmd.env("RUST_LOG", "warn");
-        cmd.env("CONTEXT_FINDER_MCP_SHARED", "1");
-        cmd.env(
-            "CONTEXT_FINDER_MCP_SOCKET",
-            socket.to_string_lossy().to_string(),
-        );
+        cmd.env("CONTEXT_MCP_SHARED", "1");
+        cmd.env("CONTEXT_MCP_SOCKET", socket.to_string_lossy().to_string());
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::null());

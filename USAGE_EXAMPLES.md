@@ -19,7 +19,7 @@ alias context='./target/release/context'
 Models are downloaded once into `./models/` from `models/manifest.json` and are not committed to git.
 
 ```bash
-# run from repo root (or use --model-dir / CONTEXT_MODEL_DIR; legacy: CONTEXT_FINDER_MODEL_DIR)
+# run from repo root (or use --model-dir / CONTEXT_MODEL_DIR)
 context install-models
 context doctor --json
 ```
@@ -31,7 +31,7 @@ v1 roster (model_id):
 - `nomic-embed-text-v1` — long-context doc queries (768d, max_len=8192)
 - `embeddinggemma-300m` — "promptable" conceptual queries (768d)
 
-Execution policy: GPU-only by default. CPU fallback only with `CONTEXT_ALLOW_CPU=1` (legacy: `CONTEXT_FINDER_ALLOW_CPU=1`).
+Execution policy: GPU-only by default. CPU fallback only with `CONTEXT_ALLOW_CPU=1`.
 
 ## Indexing
 

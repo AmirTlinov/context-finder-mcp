@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use context_vector_store::{CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
+use context_vector_store::CONTEXT_DIR_NAME;
 
 #[derive(Clone)]
 pub(super) struct PersistedEntryData {
@@ -132,9 +132,7 @@ struct PersistedCursorStoreEntry {
 }
 
 pub(super) fn cursor_store_persist_path() -> Option<PathBuf> {
-    if let Ok(raw) = std::env::var("CONTEXT_MCP_CURSOR_STORE_PATH")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_MCP_CURSOR_STORE_PATH"))
-    {
+    if let Ok(raw) = std::env::var("CONTEXT_MCP_CURSOR_STORE_PATH") {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
             return Some(PathBuf::from(trimmed));
@@ -148,13 +146,6 @@ pub(super) fn cursor_store_persist_path() -> Option<PathBuf> {
         .join("cursor_store_v1.json");
     if preferred.exists() {
         return Some(preferred);
-    }
-    let legacy = home
-        .join(LEGACY_CONTEXT_DIR_NAME)
-        .join("cache")
-        .join("cursor_store_v1.json");
-    if legacy.exists() {
-        return Some(legacy);
     }
     Some(preferred)
 }

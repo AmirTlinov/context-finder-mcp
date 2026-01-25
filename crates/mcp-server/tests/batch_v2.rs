@@ -41,12 +41,12 @@ async fn batch_missing_items_returns_agent_friendly_invalid_request() -> Result<
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -100,11 +100,11 @@ async fn batch_v2_resolves_refs_between_items() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -170,11 +170,11 @@ async fn batch_v2_accepts_action_payload_aliases() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -234,11 +234,11 @@ async fn batch_v2_respects_max_chars_budget() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -295,11 +295,11 @@ async fn batch_accepts_legacy_string_items_for_back_compat() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -354,11 +354,11 @@ async fn batch_v2_ref_to_failed_item_data_returns_error() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))

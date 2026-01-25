@@ -103,7 +103,7 @@ async fn onboarding_tests_question_emits_command_snippet_via_grep() {
     let root = temp.path();
     std::fs::write(
         root.join("AGENTS.md"),
-        b"# Agent rules\n\n...\n\nQuality gates:\nCONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace\n",
+        b"# Agent rules\n\n...\n\nQuality gates:\nCONTEXT_EMBEDDING_MODE=stub cargo test --workspace\n",
     )
     .unwrap();
 

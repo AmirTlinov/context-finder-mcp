@@ -10,7 +10,7 @@ if [[ ! -x "${CLI}" ]]; then
   exit 1
 fi
 
-EMBED_MODE="${CONTEXT_FINDER_EMBEDDING_MODE:-stub}"
+EMBED_MODE="${CONTEXT_EMBEDDING_MODE:-stub}"
 COMMON=(--quiet --embed-mode "${EMBED_MODE}")
 
 echo "╔════════════════════════════════════════════════════════════════╗"

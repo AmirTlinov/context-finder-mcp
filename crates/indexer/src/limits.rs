@@ -68,7 +68,7 @@ fn parse_index_concurrency(raw: Option<&str>, default_value: usize) -> usize {
 }
 
 fn index_concurrency_from_env() -> usize {
-    let raw = std::env::var("CONTEXT_FINDER_INDEX_CONCURRENCY").ok();
+    let raw = std::env::var("CONTEXT_INDEX_CONCURRENCY").ok();
     parse_index_concurrency(raw.as_deref(), default_index_concurrency())
 }
 

@@ -99,9 +99,6 @@ pub fn resolve_model_dir() -> PathBuf {
     if let Ok(path) = std::env::var("CONTEXT_MODEL_DIR") {
         return PathBuf::from(path);
     }
-    if let Ok(path) = std::env::var("CONTEXT_FINDER_MODEL_DIR") {
-        return PathBuf::from(path);
-    }
     PathBuf::from("models")
 }
 
@@ -244,17 +241,12 @@ pub async fn install_models(
 pub fn doctor(model_dir: &Path) -> DoctorReport {
     let mut report = DoctorReport {
         model_dir: model_dir.display().to_string(),
-        profile: std::env::var("CONTEXT_PROFILE")
-            .or_else(|_| std::env::var("CONTEXT_FINDER_PROFILE"))
-            .unwrap_or_else(|_| "quality".to_string()),
+        profile: std::env::var("CONTEXT_PROFILE").unwrap_or_else(|_| "quality".to_string()),
         embedding_mode: std::env::var("CONTEXT_EMBEDDING_MODE")
-            .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
             .unwrap_or_else(|_| "fast".to_string()),
         embedding_model: std::env::var("CONTEXT_EMBEDDING_MODEL")
-            .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODEL"))
             .unwrap_or_else(|_| "bge-small".to_string()),
         allow_cpu_fallback: std::env::var("CONTEXT_ALLOW_CPU")
-            .or_else(|_| std::env::var("CONTEXT_FINDER_ALLOW_CPU"))
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false),
         gpu_ok: false,

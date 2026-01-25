@@ -77,13 +77,10 @@ async fn call_cat_once(
 fn spawn_proxy_cmd(bin: &Path, socket: &Path, cwd: &Path) -> Command {
     let mut cmd = Command::new(bin);
     cmd.current_dir(cwd);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "1");
-    cmd.env(
-        "CONTEXT_FINDER_MCP_SOCKET",
-        socket.to_string_lossy().to_string(),
-    );
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_MCP_SHARED", "1");
+    cmd.env("CONTEXT_MCP_SOCKET", socket.to_string_lossy().to_string());
     cmd
 }
 

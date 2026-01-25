@@ -21,7 +21,7 @@ async fn streaming_indexer_latency_under_two_seconds() {
         return;
     }
     ensure_ulimit();
-    std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
 
     let temp = TempDir::new().expect("tempdir");
     let src_dir = temp.path().join("src");
@@ -101,7 +101,7 @@ async fn streaming_indexer_soak_keeps_alert_log_empty() {
         return;
     }
     ensure_ulimit();
-    std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
 
     let temp = TempDir::new().expect("tempdir");
     let src_dir = temp.path().join("src");
@@ -200,7 +200,7 @@ async fn streaming_indexer_health_records_last_success() {
         return;
     }
     ensure_ulimit();
-    std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
 
     let temp = TempDir::new().expect("tempdir");
     let src_dir = temp.path().join("src");

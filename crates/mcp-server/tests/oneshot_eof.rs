@@ -66,11 +66,11 @@ async fn oneshot_stdin_close_still_returns_response() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::null());

@@ -1,10 +1,9 @@
 use super::super::router::cursor_alias::compact_cursor_alias;
 use super::super::{decode_cursor, encode_cursor};
-use super::cursors::trimmed_non_empty_str;
+use super::cursors::{trimmed_non_empty_str, ReadPackMemoryCursorV1};
 use super::{
     call_error, invalid_cursor_with_meta_details, ContextFinderService, ReadPackContext,
-    ReadPackMemoryCursorV1, ReadPackNextAction, ReadPackRequest, ResponseMode, ToolResult,
-    CURSOR_VERSION,
+    ReadPackNextAction, ReadPackRequest, ResponseMode, ToolResult, CURSOR_VERSION,
 };
 use crate::tools::cursor::cursor_fingerprint;
 use context_indexer::{root_fingerprint, ToolMeta};

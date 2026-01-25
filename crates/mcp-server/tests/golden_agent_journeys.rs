@@ -51,11 +51,11 @@ async fn start_service(cwd: &Path) -> Result<RunningService<RoleClient, ()>> {
 
     let mut cmd = Command::new(bin);
     cmd.current_dir(cwd);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.env("RUST_LOG", "warn");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;

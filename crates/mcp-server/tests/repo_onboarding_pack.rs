@@ -82,12 +82,12 @@ async fn repo_onboarding_pack_returns_map_docs_and_next_actions() -> Result<()> 
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -167,12 +167,12 @@ async fn repo_onboarding_pack_reports_docs_reason_when_docs_disabled() -> Result
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -216,12 +216,12 @@ async fn repo_onboarding_pack_keeps_docs_under_tight_budget() -> Result<()> {
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -290,12 +290,12 @@ async fn repo_onboarding_pack_keeps_map_under_tight_budget_even_with_long_docs()
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -350,12 +350,12 @@ async fn repo_onboarding_pack_clamps_tiny_budget_and_stays_low_noise_by_default(
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))

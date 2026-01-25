@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::is_disallowed_memory_file;
+use super::candidates::is_disallowed_memory_file;
 
 pub(super) fn parse_path_token(token: &str) -> Option<(String, Option<usize>)> {
     let token = token.trim_matches(|c: char| {

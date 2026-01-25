@@ -92,14 +92,11 @@ async fn spawn_shared_proxy(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env(
-        "CONTEXT_FINDER_MCP_SOCKET",
-        socket.to_string_lossy().to_string(),
-    );
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "1");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SOCKET", socket.to_string_lossy().to_string());
+    cmd.env("CONTEXT_MCP_SHARED", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -117,13 +114,10 @@ async fn spawn_shared_proxy_allow_daemon_spawn(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env(
-        "CONTEXT_FINDER_MCP_SOCKET",
-        socket.to_string_lossy().to_string(),
-    );
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "1");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_MCP_SOCKET", socket.to_string_lossy().to_string());
+    cmd.env("CONTEXT_MCP_SHARED", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
@@ -141,9 +135,9 @@ async fn shared_backend_proxy_roundtrips_tool_calls() -> Result<()> {
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());
@@ -207,9 +201,9 @@ async fn shared_backend_proxy_accepts_tools_call_without_handshake() -> Result<(
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());
@@ -223,14 +217,11 @@ async fn shared_backend_proxy_accepts_tools_call_without_handshake() -> Result<(
         std::fs::write(root.join("README.md"), "hello\nworld\n").context("write README.md")?;
 
         let mut proxy_cmd = Command::new(&bin);
-        proxy_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-        proxy_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-        proxy_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-        proxy_cmd.env(
-            "CONTEXT_FINDER_MCP_SOCKET",
-            socket.to_string_lossy().to_string(),
-        );
-        proxy_cmd.env("CONTEXT_FINDER_MCP_SHARED", "1");
+        proxy_cmd.env_remove("CONTEXT_MODEL_DIR");
+        proxy_cmd.env("CONTEXT_PROFILE", "quality");
+        proxy_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+        proxy_cmd.env("CONTEXT_MCP_SOCKET", socket.to_string_lossy().to_string());
+        proxy_cmd.env("CONTEXT_MCP_SHARED", "1");
         proxy_cmd.stdin(std::process::Stdio::piped());
         proxy_cmd.stdout(std::process::Stdio::piped());
         proxy_cmd.stderr(std::process::Stdio::null());
@@ -299,9 +290,9 @@ async fn shared_backend_daemon_recovers_from_stale_socket_file() -> Result<()> {
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());
@@ -361,9 +352,9 @@ async fn shared_backend_proxy_injects_path_from_cwd_on_first_call() -> Result<()
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());
@@ -423,9 +414,9 @@ async fn shared_backend_proxy_recovers_when_daemon_restarts() -> Result<()> {
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());
@@ -472,9 +463,9 @@ async fn shared_backend_proxy_recovers_when_daemon_restarts() -> Result<()> {
 
         let mut daemon2_cmd = Command::new(&bin);
         daemon2_cmd.arg("daemon").arg("--socket").arg(&socket);
-        daemon2_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-        daemon2_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-        daemon2_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+        daemon2_cmd.env_remove("CONTEXT_MODEL_DIR");
+        daemon2_cmd.env("CONTEXT_PROFILE", "quality");
+        daemon2_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
         daemon2_cmd.stdin(std::process::Stdio::null());
         daemon2_cmd.stdout(std::process::Stdio::null());
         daemon2_cmd.stderr(std::process::Stdio::null());
@@ -525,9 +516,9 @@ async fn shared_backend_proxy_restarts_daemon_when_binary_changes() -> Result<()
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());
@@ -624,9 +615,9 @@ async fn shared_backend_sessions_do_not_share_default_root() -> Result<()> {
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());
@@ -770,9 +761,9 @@ async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_u
 
     let mut daemon_cmd = Command::new(&bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(&socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
     daemon_cmd.stderr(std::process::Stdio::null());

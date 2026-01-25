@@ -40,7 +40,7 @@ impl<'de> Deserialize<'de> for MeaningFocusOutputFormat {
 pub struct MeaningFocusRequest {
     /// Project directory path.
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). DX: in established sessions, if `path` is a relative in-project prefix, it may be treated as a `focus` prefix hint instead of switching roots; use `root_set` for explicit project switching."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT; non-daemon fallback: cwd). DX: in established sessions, if `path` is a relative in-project prefix, it may be treated as a `focus` prefix hint instead of switching roots; use `root_set` for explicit project switching."
     )]
     pub path: Option<String>,
 

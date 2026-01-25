@@ -41,10 +41,10 @@ async fn error_text_includes_root_fingerprint_when_meta_is_attached() -> Result<
     let bin = locate_context_finder_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
 
     let transport = TokioChildProcess::new(cmd).context("spawn mcp server")?;
     let service = tokio::time::timeout(Duration::from_secs(10), ().serve(transport))

@@ -197,9 +197,7 @@ struct FrameDumpLine<'a> {
 }
 
 fn frame_dump_from_env() -> Option<Arc<Mutex<FrameDump>>> {
-    let raw_path = std::env::var("CONTEXT_MCP_DUMP_FRAMES")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_MCP_DUMP_FRAMES"))
-        .ok()?;
+    let raw_path = std::env::var("CONTEXT_MCP_DUMP_FRAMES").ok()?;
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
         return None;

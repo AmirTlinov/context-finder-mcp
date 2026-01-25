@@ -615,7 +615,6 @@ fn cuda_disabled_by_env() -> bool {
 
 fn embed_mode_is_stub() -> bool {
     env::var("CONTEXT_EMBEDDING_MODE")
-        .or_else(|_| env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
         .map(|v| v.eq_ignore_ascii_case("stub"))
         .unwrap_or(false)
 }
@@ -658,7 +657,6 @@ pub async fn main_entry() -> Result<()> {
         .profile
         .clone()
         .or_else(|| env::var("CONTEXT_PROFILE").ok())
-        .or_else(|| env::var("CONTEXT_FINDER_PROFILE").ok())
         .unwrap_or_else(|| "quality".to_string());
     env::set_var("CONTEXT_PROFILE", &profile);
 
@@ -668,7 +666,7 @@ pub async fn main_entry() -> Result<()> {
         _ => true,
     };
     if needs_ort_bootstrap && !embed_mode_is_stub() && !cuda_disabled_by_env() {
-        let allow_cpu = env_truthy("CONTEXT_ALLOW_CPU") || env_truthy("CONTEXT_FINDER_ALLOW_CPU");
+        let allow_cpu = env_truthy("CONTEXT_ALLOW_CPU");
         if let Err(err) = bootstrap_gpu_env() {
             if matches!(cli.command, Commands::Doctor(_)) || allow_cpu {
                 // Best-effort: allow `doctor` to report GPU/runtime issues and allow CPU fallback
@@ -920,7 +918,7 @@ async fn run_command(args: CommandArgs, cache_cfg: CacheConfig) -> Result<()> {
         && !embed_mode_is_stub()
         && !cuda_disabled_by_env()
     {
-        let allow_cpu = env_truthy("CONTEXT_ALLOW_CPU") || env_truthy("CONTEXT_FINDER_ALLOW_CPU");
+        let allow_cpu = env_truthy("CONTEXT_ALLOW_CPU");
         if let Err(err) = bootstrap_gpu_env() {
             if !allow_cpu {
                 return Err(err).context("Failed to configure CUDA runtime paths");

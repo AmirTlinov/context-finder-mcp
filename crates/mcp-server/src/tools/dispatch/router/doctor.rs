@@ -205,7 +205,7 @@ pub(in crate::tools::dispatch) async fn doctor(
 
     let gpu = runtime_env::diagnose_gpu_env();
     let cuda_disabled = runtime_env::is_cuda_disabled();
-    let allow_cpu_fallback = std::env::var("CONTEXT_FINDER_ALLOW_CPU")
+    let allow_cpu_fallback = std::env::var("CONTEXT_ALLOW_CPU")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 

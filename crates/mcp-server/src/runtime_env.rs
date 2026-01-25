@@ -57,12 +57,7 @@ fn infer_repo_root_best_effort() -> Option<PathBuf> {
 }
 
 fn env_root_override() -> Option<PathBuf> {
-    for key in [
-        "CONTEXT_ROOT",
-        "CONTEXT_PROJECT_ROOT",
-        "CONTEXT_FINDER_ROOT",
-        "CONTEXT_FINDER_PROJECT_ROOT",
-    ] {
+    for key in ["CONTEXT_ROOT", "CONTEXT_PROJECT_ROOT"] {
         if let Ok(value) = env::var(key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
@@ -97,9 +92,7 @@ fn bootstrap_from_repo_root(repo_root: Option<&Path>) -> BootstrapReport {
 
     // Model dir: optional, but helps avoid surprises when the MCP server is launched
     // from an arbitrary working directory.
-    let model_dir = if env::var_os("CONTEXT_MODEL_DIR").is_none()
-        && env::var_os("CONTEXT_FINDER_MODEL_DIR").is_none()
-    {
+    let model_dir = if env::var_os("CONTEXT_MODEL_DIR").is_none() {
         repo_root.as_deref().and_then(|root| {
             let candidate = root.join("models");
             if candidate.join("manifest.json").exists() {
@@ -111,10 +104,7 @@ fn bootstrap_from_repo_root(repo_root: Option<&Path>) -> BootstrapReport {
             }
         })
     } else {
-        env::var("CONTEXT_MODEL_DIR")
-            .or_else(|_| env::var("CONTEXT_FINDER_MODEL_DIR"))
-            .ok()
-            .map(PathBuf::from)
+        env::var("CONTEXT_MODEL_DIR").ok().map(PathBuf::from)
     };
 
     // GPU env: do best-effort bootstrap, but never fail server startup.
@@ -505,7 +495,6 @@ mod tests {
         let _lock = ENV_MUTEX.lock().expect("ENV_MUTEX");
         let _guard = EnvGuard::new(&[
             "CONTEXT_MODEL_DIR",
-            "CONTEXT_FINDER_MODEL_DIR",
             "ORT_LIB_LOCATION",
             "ORT_DYLIB_PATH",
             "LD_LIBRARY_PATH",
@@ -530,9 +519,7 @@ mod tests {
         let report = bootstrap_for_test_repo(root);
         assert!(report.model_dir.as_deref().unwrap().ends_with("/models"));
         assert_eq!(
-            env::var("CONTEXT_MODEL_DIR")
-                .or_else(|_| env::var("CONTEXT_FINDER_MODEL_DIR"))
-                .unwrap(),
+            env::var("CONTEXT_MODEL_DIR").unwrap(),
             root.join("models").to_string_lossy()
         );
 
@@ -556,9 +543,6 @@ mod tests {
             "CONTEXT_ROOT",
             "CONTEXT_PROJECT_ROOT",
             "CONTEXT_MODEL_DIR",
-            "CONTEXT_FINDER_ROOT",
-            "CONTEXT_FINDER_PROJECT_ROOT",
-            "CONTEXT_FINDER_MODEL_DIR",
             "ORT_LIB_LOCATION",
             "ORT_DYLIB_PATH",
             "LD_LIBRARY_PATH",

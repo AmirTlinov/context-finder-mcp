@@ -3,6 +3,11 @@ mod cursor_out;
 mod input;
 mod question;
 mod retrieve;
+mod retrieve_grep;
+mod retrieve_ops;
+mod retrieve_post;
+mod retrieve_semantic;
+mod retrieve_sources;
 
 use budget::compute_recall_budget;
 use cursor_out::write_recall_cursor;

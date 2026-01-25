@@ -3,7 +3,7 @@ use crate::stdio_hybrid::{
 };
 use crate::tools::ContextFinderService;
 use anyhow::{Context, Result};
-use context_vector_store::{CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME};
+use context_vector_store::CONTEXT_DIR_NAME;
 use rmcp::service::TxJsonRpcMessage;
 use rmcp::transport::Transport;
 use rmcp::ServiceExt;
@@ -225,7 +225,6 @@ async fn recover_stuck_spawn_lock(socket: &Path) -> Option<()> {
 
 fn logging_enabled() -> bool {
     std::env::var("CONTEXT_MCP_LOG")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_MCP_LOG"))
         .ok()
         .map(|v| {
             let v = v.trim();
@@ -236,23 +235,11 @@ fn logging_enabled() -> bool {
 
 fn default_socket_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let preferred = home.join(CONTEXT_DIR_NAME);
-    let base = if preferred.exists() {
-        preferred
-    } else {
-        let legacy = home.join(LEGACY_CONTEXT_DIR_NAME);
-        if legacy.exists() {
-            legacy
-        } else {
-            preferred
-        }
-    };
-    base.join("mcp.sock")
+    home.join(CONTEXT_DIR_NAME).join("mcp.sock")
 }
 
 pub fn socket_path_from_env() -> PathBuf {
     std::env::var("CONTEXT_MCP_SOCKET")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_MCP_SOCKET"))
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
@@ -343,12 +330,7 @@ async fn serve_one_connection(service: ContextFinderService, stream: UnixStream)
 }
 
 fn env_root_override() -> Option<PathBuf> {
-    for key in [
-        "CONTEXT_ROOT",
-        "CONTEXT_PROJECT_ROOT",
-        "CONTEXT_FINDER_ROOT",
-        "CONTEXT_FINDER_PROJECT_ROOT",
-    ] {
+    for key in ["CONTEXT_ROOT", "CONTEXT_PROJECT_ROOT"] {
         if let Ok(value) = std::env::var(key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {

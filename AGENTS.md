@@ -42,7 +42,7 @@ When you need to *understand a repo* or *read lots of context*, prefer bounded M
    - core logic lives in crates like `search/`, `indexer/`, `graph/`
    - adapters/entrypoints live in `cli/`, `mcp-server/`
 4. Prefer deterministic test mode:
-   - `CONTEXT_FINDER_EMBEDDING_MODE=stub`
+   - `CONTEXT_EMBEDDING_MODE=stub`
 
 ## 4) Quality gates (must be green)
 

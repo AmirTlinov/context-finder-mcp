@@ -101,25 +101,25 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default=None,
-        help="Embedding model id (sets CONTEXT_FINDER_EMBEDDING_MODEL)",
+        help="Embedding model id (sets CONTEXT_EMBEDDING_MODEL)",
     )
     parser.add_argument(
         "--model-dir",
         type=Path,
         default=None,
-        help="Model cache directory (sets CONTEXT_FINDER_MODEL_DIR)",
+        help="Model cache directory (sets CONTEXT_MODEL_DIR)",
     )
     parser.add_argument(
         "--cuda-device",
         type=int,
         default=None,
-        help="CUDA device id (sets CONTEXT_FINDER_CUDA_DEVICE)",
+        help="CUDA device id (sets CONTEXT_CUDA_DEVICE)",
     )
     parser.add_argument(
         "--cuda-mem-limit-mb",
         type=int,
         default=None,
-        help="CUDA memory limit in MB (sets CONTEXT_FINDER_CUDA_MEM_LIMIT_MB)",
+        help="CUDA memory limit in MB (sets CONTEXT_CUDA_MEM_LIMIT_MB)",
     )
     parser.add_argument(
         "--profile",
@@ -310,15 +310,15 @@ def main() -> None:
 
     base_env = os.environ.copy()
     if args.model:
-        base_env["CONTEXT_FINDER_EMBEDDING_MODEL"] = args.model
+        base_env["CONTEXT_EMBEDDING_MODEL"] = args.model
     if args.model_dir:
-        base_env["CONTEXT_FINDER_MODEL_DIR"] = str(args.model_dir)
+        base_env["CONTEXT_MODEL_DIR"] = str(args.model_dir)
     if args.cuda_device is not None:
-        base_env["CONTEXT_FINDER_CUDA_DEVICE"] = str(args.cuda_device)
+        base_env["CONTEXT_CUDA_DEVICE"] = str(args.cuda_device)
     if args.cuda_mem_limit_mb is not None:
-        base_env["CONTEXT_FINDER_CUDA_MEM_LIMIT_MB"] = str(args.cuda_mem_limit_mb)
+        base_env["CONTEXT_CUDA_MEM_LIMIT_MB"] = str(args.cuda_mem_limit_mb)
     if args.profile:
-        base_env["CONTEXT_FINDER_PROFILE"] = args.profile
+        base_env["CONTEXT_PROFILE"] = args.profile
     # Prefer locally downloaded ORT GPU libs if present
     ort_lib = Path(
         base_env.get(

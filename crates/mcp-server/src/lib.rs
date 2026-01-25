@@ -144,7 +144,6 @@ fn logging_enabled() -> bool {
     // Protocol purity: any non-MCP bytes on stdout will break clients, and some MCP clients
     // may merge stderr into stdout. Default to silent unless explicitly enabled.
     std::env::var("CONTEXT_MCP_LOG")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_MCP_LOG"))
         .ok()
         .map(|v| {
             let v = v.trim();
@@ -154,9 +153,7 @@ fn logging_enabled() -> bool {
 }
 
 fn shared_backend_enabled() -> bool {
-    match std::env::var("CONTEXT_MCP_SHARED")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_MCP_SHARED"))
-    {
+    match std::env::var("CONTEXT_MCP_SHARED") {
         Ok(value) => {
             let value = value.trim();
             !(value == "0" || value.eq_ignore_ascii_case("false"))
@@ -169,7 +166,6 @@ fn background_bootstrap_enabled() -> bool {
     // In deterministic/stub modes (and some CI/test harnesses), skip best-effort bootstrapping.
     // Semantic paths will still bootstrap lazily when needed.
     let daemon_disabled = std::env::var("CONTEXT_DISABLE_DAEMON")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_DISABLE_DAEMON"))
         .ok()
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -178,7 +174,6 @@ fn background_bootstrap_enabled() -> bool {
     }
 
     let stub_embeddings = std::env::var("CONTEXT_EMBEDDING_MODE")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
         .ok()
         .is_some_and(|v| v.trim().eq_ignore_ascii_case("stub"));
     if stub_embeddings {

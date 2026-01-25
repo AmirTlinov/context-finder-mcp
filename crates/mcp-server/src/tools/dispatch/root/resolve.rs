@@ -109,12 +109,7 @@ fn looks_like_path_hint(value: &str) -> bool {
 }
 
 pub(in crate::tools::dispatch) fn env_root_override() -> Option<(String, String)> {
-    for key in [
-        "CONTEXT_ROOT",
-        "CONTEXT_PROJECT_ROOT",
-        "CONTEXT_FINDER_ROOT",
-        "CONTEXT_FINDER_PROJECT_ROOT",
-    ] {
+    for key in ["CONTEXT_ROOT", "CONTEXT_PROJECT_ROOT"] {
         if let Ok(value) = env::var(key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {

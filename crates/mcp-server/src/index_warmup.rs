@@ -522,7 +522,6 @@ async fn model_needs_refresh(root: &Path, project_watermark: &Watermark, model_i
 
 fn worker_capacity_from_env() -> usize {
     std::env::var("CONTEXT_WARM_WORKER_CAPACITY")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_WARM_WORKER_CAPACITY"))
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or_else(default_worker_capacity)
@@ -531,7 +530,6 @@ fn worker_capacity_from_env() -> usize {
 
 fn worker_ttl_from_env() -> Duration {
     std::env::var("CONTEXT_WARM_WORKER_TTL_SECS")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_WARM_WORKER_TTL_SECS"))
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .map(Duration::from_secs)

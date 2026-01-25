@@ -88,12 +88,11 @@ impl AutoIndexPolicy {
         // If we are running without a daemon (or in stub embedding mode), there is no background
         // warmup path. In that environment, allow a bounded inline build so semantic tools can
         // become usable without requiring an explicit `index` step.
-        let daemon_disabled = std::env::var("CONTEXT_FINDER_DISABLE_DAEMON")
+        let daemon_disabled = std::env::var("CONTEXT_DISABLE_DAEMON")
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         let stub_embeddings = std::env::var("CONTEXT_EMBEDDING_MODE")
-            .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
             .ok()
             .is_some_and(|v| v.trim().eq_ignore_ascii_case("stub"));
 

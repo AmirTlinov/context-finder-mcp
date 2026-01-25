@@ -91,7 +91,7 @@ run_step 2 "$TOTAL_STEPS" "Clippy (project gate: -D warnings)" "$AUDIT_CLIPPY_LO
 # ============================================================================
 
 run_step 3 "$TOTAL_STEPS" "Tests (stub embeddings)" "$AUDIT_TESTS_LOG" gate \
-    env CONTEXT_FINDER_EMBEDDING_MODE="${CONTEXT_FINDER_EMBEDDING_MODE:-stub}" \
+    env CONTEXT_EMBEDDING_MODE="${CONTEXT_EMBEDDING_MODE:-stub}" \
         cargo test --workspace
 
 # ============================================================================

@@ -47,13 +47,13 @@ async fn spawn_server(
     cursor_store_path: &Path,
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>> {
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
     cmd.env("RUST_LOG", "warn");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
     cmd.env(
-        "CONTEXT_FINDER_MCP_CURSOR_STORE_PATH",
+        "CONTEXT_MCP_CURSOR_STORE_PATH",
         cursor_store_path.to_string_lossy().to_string(),
     );
 

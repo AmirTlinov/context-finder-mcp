@@ -18,7 +18,7 @@ pub(super) fn is_semantic_unavailable_error(message: &str) -> bool {
         || message.contains("Embedding error:")
         || message.contains("Chunk corpus is empty")
         || message.contains("CUDA execution provider")
-        || message.contains("CONTEXT_FINDER_ALLOW_CPU=1")
+        || message.contains("CONTEXT_ALLOW_CPU=1")
 }
 
 pub(super) async fn grep_fallback_hunks(

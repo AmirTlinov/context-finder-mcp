@@ -150,7 +150,7 @@ impl ContextFinderService {
         // Shared daemon mode: never guess a root from the daemon process cwd. Require either:
         // - explicit `path` on a tool call, or
         // - MCP roots capability (via initialize -> roots/list), or
-        // - an explicit env override (CONTEXT_ROOT/CONTEXT_PROJECT_ROOT, legacy: CONTEXT_FINDER_ROOT).
+        // - an explicit env override (CONTEXT_ROOT/CONTEXT_PROJECT_ROOT).
         Self::new_with_policy(false)
     }
 
@@ -181,7 +181,6 @@ impl ContextFinderService {
 
 fn load_profile_from_env() -> SearchProfile {
     let profile_name = std::env::var("CONTEXT_PROFILE")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_PROFILE"))
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
@@ -653,7 +652,7 @@ impl ContextFinderService {
     }
 
     fn touch_daemon_models_best_effort(&self, root: &Path, models: Vec<String>) {
-        let disable = std::env::var("CONTEXT_FINDER_DISABLE_DAEMON")
+        let disable = std::env::var("CONTEXT_DISABLE_DAEMON")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         if disable {
@@ -664,7 +663,7 @@ impl ContextFinderService {
         // (used heavily in CI and tests). The background daemon is a performance
         // optimization and can introduce nondeterminism / flakiness in constrained
         // environments, so we skip it.
-        let stub = std::env::var("CONTEXT_FINDER_EMBEDDING_MODE")
+        let stub = std::env::var("CONTEXT_EMBEDDING_MODE")
             .ok()
             .map(|v| v.trim().eq_ignore_ascii_case("stub"))
             .unwrap_or(false);
@@ -704,7 +703,7 @@ impl ContextFinderService {
         reason: &str,
         models: Vec<String>,
     ) {
-        let disable = std::env::var("CONTEXT_FINDER_DISABLE_DAEMON")
+        let disable = std::env::var("CONTEXT_DISABLE_DAEMON")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         if disable {
@@ -714,7 +713,7 @@ impl ContextFinderService {
         // In stub embedding mode we aim for deterministic, dependency-light behavior.
         // Background refresh is a performance optimization and can introduce nondeterminism,
         // so we skip it.
-        let stub = std::env::var("CONTEXT_FINDER_EMBEDDING_MODE")
+        let stub = std::env::var("CONTEXT_EMBEDDING_MODE")
             .ok()
             .map(|v| v.trim().eq_ignore_ascii_case("stub"))
             .unwrap_or(false);
@@ -1119,7 +1118,7 @@ fn default_engine_semantic_index_cache_capacity() -> usize {
 }
 
 fn engine_semantic_index_cache_capacity_from_env() -> usize {
-    std::env::var("CONTEXT_FINDER_ENGINE_SEMANTIC_INDEX_CAPACITY")
+    std::env::var("CONTEXT_ENGINE_SEMANTIC_INDEX_CAPACITY")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or_else(default_engine_semantic_index_cache_capacity)

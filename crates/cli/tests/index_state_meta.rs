@@ -8,7 +8,7 @@ fn run_cli_raw(workdir: &std::path::Path, request: &str) -> (bool, Value) {
     let output = Command::cargo_bin("context-finder")
         .expect("binary")
         .current_dir(workdir)
-        .env("CONTEXT_FINDER_EMBEDDING_MODE", "stub")
+        .env("CONTEXT_EMBEDDING_MODE", "stub")
         .arg("command")
         .arg("--json")
         .arg(request)

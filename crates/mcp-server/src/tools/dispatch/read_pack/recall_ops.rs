@@ -134,7 +134,7 @@ pub(super) fn ops_grep_pattern(intent: OpsIntent) -> &'static str {
     match intent {
         OpsIntent::TestAndGates => {
             // Prefer concrete commands / recipes across ecosystems.
-            r"(?m)(^\s*(test|tests|check|gate|lint|fmt|format)\s*:|scripts/validate_contracts\.sh|validate_contracts|cargo\s+fmt\b|fmt\b.*--check|cargo\s+clippy\b|clippy\b.*--workspace|cargo\s+xtask\s+(check|gate)\b|cargo\s+test\b|CONTEXT_FINDER_EMBEDDING_MODE=stub\s+cargo\s+test\b|cargo\s+nextest\b|pytest\b|go\s+test\b|npm\s+test\b|yarn\s+test\b|pnpm\s+test\b|just\s+(test|check|gate|lint|fmt)\b|make\s+test\b|make\s+check\b)"
+            r"(?m)(^\s*(test|tests|check|gate|lint|fmt|format)\s*:|scripts/validate_contracts\.sh|validate_contracts|cargo\s+fmt\b|fmt\b.*--check|cargo\s+clippy\b|clippy\b.*--workspace|cargo\s+xtask\s+(check|gate)\b|cargo\s+test\b|CONTEXT_EMBEDDING_MODE=stub\s+cargo\s+test\b|cargo\s+nextest\b|pytest\b|go\s+test\b|npm\s+test\b|yarn\s+test\b|pnpm\s+test\b|just\s+(test|check|gate|lint|fmt)\b|make\s+test\b|make\s+check\b)"
         }
         OpsIntent::Snapshots => {
             // Visual regression / golden snapshot workflows across ecosystems.

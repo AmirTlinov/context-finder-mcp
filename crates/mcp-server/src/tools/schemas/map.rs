@@ -8,7 +8,7 @@ use super::ToolNextAction;
 pub struct MapRequest {
     /// Project directory path (defaults to session root; fallback: env (non-daemon: cwd))
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). DX: when a session root is already set, a relative `path` is treated as an in-project scope hint (filter) rather than switching the project root. Use `root_set` for explicit project switching."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT; non-daemon fallback: cwd). DX: when a session root is already set, a relative `path` is treated as an in-project scope hint (filter) rather than switching the project root. Use `root_set` for explicit project switching."
     )]
     pub path: Option<String>,
 

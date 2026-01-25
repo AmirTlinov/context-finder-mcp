@@ -12,7 +12,7 @@ pub struct ContextRequest {
 
     /// Project directory path
     #[schemars(
-        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT (legacy: CONTEXT_FINDER_ROOT/CONTEXT_FINDER_PROJECT_ROOT); non-daemon fallback: cwd). DX: when a session root is already set and no path filters are provided, a relative `path` may be treated as an in-project scope hint instead of switching roots."
+        description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT; non-daemon fallback: cwd). DX: when a session root is already set and no path filters are provided, a relative `path` may be treated as an in-project scope hint instead of switching roots."
     )]
     pub path: Option<String>,
 

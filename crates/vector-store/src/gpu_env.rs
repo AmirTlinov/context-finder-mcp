@@ -151,12 +151,7 @@ pub fn repo_cuda_provider_dir(root: &Path) -> Option<PathBuf> {
 }
 
 fn env_root_override() -> Option<PathBuf> {
-    for key in [
-        "CONTEXT_ROOT",
-        "CONTEXT_PROJECT_ROOT",
-        "CONTEXT_FINDER_ROOT",
-        "CONTEXT_FINDER_PROJECT_ROOT",
-    ] {
+    for key in ["CONTEXT_ROOT", "CONTEXT_PROJECT_ROOT"] {
         if let Ok(value) = env::var(key) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
@@ -423,8 +418,6 @@ mod tests {
             "XDG_CACHE_HOME",
             "CONTEXT_ROOT",
             "CONTEXT_PROJECT_ROOT",
-            "CONTEXT_FINDER_ROOT",
-            "CONTEXT_FINDER_PROJECT_ROOT",
             "ORT_LIB_LOCATION",
             "ORT_DYLIB_PATH",
             "LD_LIBRARY_PATH",
@@ -465,8 +458,6 @@ mod tests {
             "XDG_CACHE_HOME",
             "CONTEXT_ROOT",
             "CONTEXT_PROJECT_ROOT",
-            "CONTEXT_FINDER_ROOT",
-            "CONTEXT_FINDER_PROJECT_ROOT",
             "ORT_LIB_LOCATION",
             "ORT_DYLIB_PATH",
             "LD_LIBRARY_PATH",
@@ -502,8 +493,6 @@ mod tests {
             "XDG_CACHE_HOME",
             "CONTEXT_ROOT",
             "CONTEXT_PROJECT_ROOT",
-            "CONTEXT_FINDER_ROOT",
-            "CONTEXT_FINDER_PROJECT_ROOT",
             "ORT_LIB_LOCATION",
             "ORT_DYLIB_PATH",
             "LD_LIBRARY_PATH",

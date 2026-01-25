@@ -3,9 +3,7 @@ use context_indexer::{
     ModelIndexSpec, MultiModelProjectIndexer, MultiModelStreamingIndexer, StreamingIndexerConfig,
 };
 use context_search::SearchProfile;
-use context_vector_store::{
-    current_model_id, QueryKind, CONTEXT_DIR_NAME, LEGACY_CONTEXT_DIR_NAME,
-};
+use context_vector_store::{current_model_id, QueryKind, CONTEXT_DIR_NAME};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -61,15 +59,11 @@ fn duration_from_env_ms(var: &str) -> Option<Duration> {
 }
 
 fn daemon_ttl() -> Duration {
-    duration_from_env_ms("CONTEXT_DAEMON_TTL_MS")
-        .or_else(|| duration_from_env_ms("CONTEXT_FINDER_DAEMON_TTL_MS"))
-        .unwrap_or(DEFAULT_TTL)
+    duration_from_env_ms("CONTEXT_DAEMON_TTL_MS").unwrap_or(DEFAULT_TTL)
 }
 
 fn daemon_cleanup_interval() -> Duration {
-    duration_from_env_ms("CONTEXT_DAEMON_CLEANUP_MS")
-        .or_else(|| duration_from_env_ms("CONTEXT_FINDER_DAEMON_CLEANUP_MS"))
-        .unwrap_or(DEFAULT_CLEANUP_INTERVAL)
+    duration_from_env_ms("CONTEXT_DAEMON_CLEANUP_MS").unwrap_or(DEFAULT_CLEANUP_INTERVAL)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -120,18 +114,8 @@ struct ModelManifestAsset {
 
 fn default_socket_path() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let preferred = home.join(CONTEXT_DIR_NAME);
-    let base = if preferred.exists() {
-        preferred
-    } else {
-        let legacy = home.join(LEGACY_CONTEXT_DIR_NAME);
-        if legacy.exists() {
-            legacy
-        } else {
-            preferred
-        }
-    };
-    base.join(format!("daemon.{}.sock", exe_build_id_best_effort()))
+    home.join(CONTEXT_DIR_NAME)
+        .join(format!("daemon.{}.sock", exe_build_id_best_effort()))
 }
 
 fn exe_build_id_best_effort() -> String {
@@ -502,7 +486,6 @@ pub async fn ping(project: &Path) -> Result<()> {
     // optimization and can introduce nondeterminism / flakiness in constrained
     // environments, so we skip it.
     if std::env::var("CONTEXT_EMBEDDING_MODE")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_EMBEDDING_MODE"))
         .ok()
         .map(|v| v.trim().eq_ignore_ascii_case("stub"))
         .unwrap_or(false)
@@ -626,7 +609,6 @@ async fn bind_single_instance(socket_path: &Path) -> Result<Option<UnixListener>
 
 fn load_profile_from_env() -> SearchProfile {
     let profile_name = std::env::var("CONTEXT_PROFILE")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_PROFILE"))
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())

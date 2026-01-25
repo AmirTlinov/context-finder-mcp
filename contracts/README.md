@@ -124,5 +124,5 @@ Large outputs: `tree`, `ls`, `text_search`, `rg`, `cat` can return `next_cursor`
 3. Add/adjust tests.
 4. Run checks:
    - `scripts/validate_contracts.sh`
-   - `CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace`
+   - `CONTEXT_EMBEDDING_MODE=stub cargo test --workspace`
 5. Update prose docs (`docs/…`) only to explain and link back to the contract.

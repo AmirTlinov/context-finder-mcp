@@ -56,11 +56,11 @@ async fn spawn_isolated_server(
     bin: &Path,
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>> {
     let mut cmd = Command::new(bin);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "0");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SHARED", "0");
     cmd.env("RUST_LOG", "warn");
 
     let transport = TokioChildProcess::new(cmd).context("spawn isolated MCP server")?;
@@ -73,11 +73,11 @@ async fn spawn_isolated_server(
 async fn spawn_shared_daemon(bin: &Path, socket: &Path) -> Result<tokio::process::Child> {
     let mut daemon_cmd = Command::new(bin);
     daemon_cmd.arg("daemon").arg("--socket").arg(socket);
-    daemon_cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    daemon_cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    daemon_cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    daemon_cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    daemon_cmd.env("CONTEXT_FINDER_INDEX_CONCURRENCY", "1");
+    daemon_cmd.env_remove("CONTEXT_MODEL_DIR");
+    daemon_cmd.env("CONTEXT_PROFILE", "quality");
+    daemon_cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    daemon_cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    daemon_cmd.env("CONTEXT_INDEX_CONCURRENCY", "1");
     daemon_cmd.env("RUST_LOG", "warn");
     daemon_cmd.stdin(std::process::Stdio::null());
     daemon_cmd.stdout(std::process::Stdio::null());
@@ -92,15 +92,12 @@ async fn spawn_shared_proxy(
 ) -> Result<rmcp::service::RunningService<rmcp::RoleClient, ()>> {
     let mut cmd = Command::new(bin);
     cmd.current_dir(cwd);
-    cmd.env_remove("CONTEXT_FINDER_MODEL_DIR");
-    cmd.env("CONTEXT_FINDER_PROFILE", "quality");
-    cmd.env("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
-    cmd.env("CONTEXT_FINDER_DISABLE_DAEMON", "1");
-    cmd.env(
-        "CONTEXT_FINDER_MCP_SOCKET",
-        socket.to_string_lossy().to_string(),
-    );
-    cmd.env("CONTEXT_FINDER_MCP_SHARED", "1");
+    cmd.env_remove("CONTEXT_MODEL_DIR");
+    cmd.env("CONTEXT_PROFILE", "quality");
+    cmd.env("CONTEXT_EMBEDDING_MODE", "stub");
+    cmd.env("CONTEXT_DISABLE_DAEMON", "1");
+    cmd.env("CONTEXT_MCP_SOCKET", socket.to_string_lossy().to_string());
+    cmd.env("CONTEXT_MCP_SHARED", "1");
     cmd.env("RUST_LOG", "warn");
 
     let transport = TokioChildProcess::new(cmd).context("spawn shared-backend MCP proxy")?;

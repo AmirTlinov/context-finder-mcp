@@ -1818,7 +1818,7 @@ struct Point {
     async fn multi_model_indexing_is_atomic_on_model_error() {
         // Ensure we don't leave "corpus/index drift" artifacts behind when one of the requested
         // models is invalid (common failure mode during profile edits).
-        std::env::set_var("CONTEXT_FINDER_EMBEDDING_MODE", "stub");
+        std::env::set_var("CONTEXT_EMBEDDING_MODE", "stub");
 
         // Point the model registry at the repo's manifest so built-in model ids resolve.
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1827,7 +1827,7 @@ struct Point {
             .nth(2)
             .expect("repo root from crates/indexer");
         std::env::set_var(
-            "CONTEXT_FINDER_MODEL_DIR",
+            "CONTEXT_MODEL_DIR",
             repo_root.join("models").to_string_lossy().to_string(),
         );
 

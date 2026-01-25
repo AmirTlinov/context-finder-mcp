@@ -23,7 +23,7 @@ Run these before opening a PR:
 scripts/validate_contracts.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace
+CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 ```
 
 ## Documentation
