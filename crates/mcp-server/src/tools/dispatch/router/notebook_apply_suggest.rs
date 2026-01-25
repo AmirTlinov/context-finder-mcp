@@ -4,7 +4,10 @@ use super::super::{
 };
 use crate::tools::context_doc::ContextDocBuilder;
 
-use super::error::{attach_structured_content, internal_error_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, internal_error_with_meta, invalid_request_with_root_context,
+    meta_for_request,
+};
 use crate::tools::schemas::notebook_apply_suggest::{
     NotebookApplySuggestChangeAction, NotebookApplySuggestChangeKind, NotebookApplySuggestResult,
     NotebookApplySuggestSkipReason,
@@ -26,7 +29,10 @@ pub(in crate::tools::dispatch) async fn notebook_apply_suggest(
     let response_mode = ResponseMode::Facts;
     let path = request_path(&request);
 
-    let (root, _) = match service.resolve_root_no_daemon_touch(path).await {
+    let (root, _) = match service
+        .resolve_root_no_daemon_touch_for_tool(path, "notebook_apply_suggest")
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
             let meta = if response_mode == ResponseMode::Minimal {
@@ -34,12 +40,9 @@ pub(in crate::tools::dispatch) async fn notebook_apply_suggest(
             } else {
                 meta_for_request(service, path).await
             };
-            return Ok(super::error::invalid_request_with_meta(
-                message,
-                meta,
-                None,
-                Vec::new(),
-            ));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

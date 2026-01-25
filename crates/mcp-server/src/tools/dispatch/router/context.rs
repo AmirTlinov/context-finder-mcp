@@ -8,7 +8,7 @@ use crate::tools::doc_context::{collect_doc_context, push_doc_context};
 
 use super::error::{
     attach_structured_content, internal_error_with_meta, invalid_request_with_meta,
-    meta_for_request,
+    invalid_request_with_root_context, meta_for_request,
 };
 use super::semantic_fallback::{grep_fallback_hunks, is_semantic_unavailable_error};
 use std::path::Path;
@@ -129,7 +129,9 @@ pub(in crate::tools::dispatch) async fn context(
             } else {
                 meta_for_request(service, request.path.as_deref()).await
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

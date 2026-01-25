@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::error::{
-    attach_structured_content, internal_error_with_meta, invalid_request_with_meta,
+    attach_structured_content, internal_error_with_meta, invalid_request_with_root_context,
     meta_for_request,
 };
 use super::semantic_fallback::is_semantic_unavailable_error;
@@ -308,7 +308,10 @@ pub(in crate::tools::dispatch) async fn overview(
     request: OverviewRequest,
 ) -> Result<CallToolResult, McpError> {
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
-    let root = match service.resolve_root(request.path.as_deref()).await {
+    let root = match service
+        .resolve_root_for_tool(request.path.as_deref(), "overview")
+        .await
+    {
         Ok((root, _)) => root,
         Err(message) => {
             let meta = if response_mode == ResponseMode::Minimal {
@@ -316,7 +319,9 @@ pub(in crate::tools::dispatch) async fn overview(
             } else {
                 meta_for_request(service, request.path.as_deref()).await
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);

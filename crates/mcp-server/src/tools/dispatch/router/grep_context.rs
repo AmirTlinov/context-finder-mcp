@@ -16,7 +16,8 @@ use serde_json::json;
 use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
     attach_structured_content, internal_error_with_meta, invalid_cursor_with_meta,
-    invalid_cursor_with_meta_details, invalid_request_with_meta, meta_for_request,
+    invalid_cursor_with_meta_details, invalid_request_with_meta, invalid_request_with_root_context,
+    meta_for_request,
 };
 use std::path::Path;
 
@@ -460,7 +461,7 @@ pub(in crate::tools::dispatch) async fn grep_context(
         }
     }
     let (root, root_display) = match service
-        .resolve_root_with_hints_no_daemon_touch(request.path.as_deref(), &hints)
+        .resolve_root_with_hints_no_daemon_touch_for_tool(request.path.as_deref(), &hints, "rg")
         .await
     {
         Ok(value) => value,
@@ -470,7 +471,9 @@ pub(in crate::tools::dispatch) async fn grep_context(
             } else {
                 ToolMeta::default()
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let provenance_meta = ToolMeta {

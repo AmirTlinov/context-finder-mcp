@@ -191,13 +191,6 @@ fn select_workspace_root_by_hints(roots: &[PathBuf], hints: &[String]) -> Option
 }
 
 impl ContextFinderService {
-    pub(in crate::tools::dispatch) async fn resolve_root(
-        &self,
-        raw_path: Option<&str>,
-    ) -> Result<(PathBuf, String), String> {
-        self.resolve_root_with_hints(raw_path, &[]).await
-    }
-
     pub(in crate::tools::dispatch) async fn resolve_root_for_tool(
         &self,
         raw_path: Option<&str>,
@@ -205,18 +198,6 @@ impl ContextFinderService {
     ) -> Result<(PathBuf, String), String> {
         self.resolve_root_with_hints_for_tool(raw_path, &[], tool)
             .await
-    }
-
-    pub(in crate::tools::dispatch) async fn resolve_root_with_hints(
-        &self,
-        raw_path: Option<&str>,
-        hints: &[String],
-    ) -> Result<(PathBuf, String), String> {
-        let (root, root_display) = self
-            .resolve_root_impl_with_hints(raw_path, hints, None)
-            .await?;
-        self.touch_daemon_best_effort(&root);
-        Ok((root, root_display))
     }
 
     pub(in crate::tools::dispatch) async fn resolve_root_with_hints_for_tool(

@@ -13,7 +13,7 @@ use std::path::Path;
 type ToolResult<T> = std::result::Result<T, CallToolResult>;
 
 use super::error::{
-    attach_meta, internal_error_with_meta, invalid_request, invalid_request_with_meta,
+    attach_meta, internal_error_with_meta, invalid_request, invalid_request_with_root_context,
     meta_for_request,
 };
 use super::semantic_fallback::{grep_fallback_hunks, is_semantic_unavailable_error};
@@ -836,13 +836,15 @@ pub(in crate::tools::dispatch) async fn context_pack(
         }
     }
     let (root, root_display) = match service
-        .resolve_root_with_hints(inputs.path.as_deref(), &hints)
+        .resolve_root_with_hints_for_tool(inputs.path.as_deref(), &hints, "context_pack")
         .await
     {
         Ok(value) => value,
         Err(message) => {
             let meta = meta_for_request(service, inputs.path.as_deref()).await;
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

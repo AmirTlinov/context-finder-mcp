@@ -14,7 +14,7 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 - Root hygiene: new `root_get` / `root_set` MCP tools to introspect and explicitly switch the
   per-connection session root (multi-root disambiguation, cross-project safety).
 - Root diagnostics: `root_get` now reports `last_root_set` / `last_root_update` snapshots to help
-  debug unexpected root drift.
+  debug unexpected root drift (including `source_tool` when known).
 - Meaning mode: `meaning_pack` and `meaning_focus` now provide actionable `next_actions` hints
   in MCP `.context` output when `response_mode=full` (keeps defaults low-noise).
 - Meaning eval: expanded the stub smoke dataset with additional repo archetypes
@@ -35,6 +35,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 
 - Root errors: `Invalid path` responses now include session root + cwd hints and suggest a
   corrective `root_set` when the root diverges from the caller's cwd.
+- Root errors: `details.root_context` is attached for root-resolution failures to provide a
+  machine-readable snapshot of session_root/cwd/last_root_* for automated triage.
 
 - MCP `search`/`context` output now includes lightweight metadata notes and trimmed doc comments per
   hit (type/scope/imports/tags + doc block) to improve agent context density.

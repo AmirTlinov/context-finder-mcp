@@ -2,7 +2,10 @@ use super::super::{apply_notebook_edit, CallToolResult, Content, ContextFinderSe
 use crate::tools::context_doc::ContextDocBuilder;
 
 use super::super::{NotebookEditRequest, ResponseMode, ToolMeta};
-use super::error::{attach_structured_content, internal_error_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, internal_error_with_meta, invalid_request_with_root_context,
+    meta_for_request,
+};
 use crate::tools::schemas::notebook_edit::NotebookEditResult;
 
 /// Agent notebook: edit anchors/runbooks (durable, explicit writes).
@@ -12,18 +15,15 @@ pub(in crate::tools::dispatch) async fn notebook_edit(
 ) -> Result<CallToolResult, McpError> {
     let response_mode = ResponseMode::Facts;
     let (root, _) = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "notebook_edit")
         .await
     {
         Ok(value) => value,
         Err(message) => {
             let meta = meta_for_request(service, request.path.as_deref()).await;
-            return Ok(super::error::invalid_request_with_meta(
-                message,
-                meta,
-                None,
-                Vec::new(),
-            ));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

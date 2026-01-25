@@ -3,7 +3,10 @@ use super::super::{
     ResponseMode, RunbookPackRequest, ToolMeta,
 };
 use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
-use super::error::{attach_structured_content, internal_error_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, internal_error_with_meta, invalid_request_with_root_context,
+    meta_for_request,
+};
 use crate::tools::context_doc::ContextDocBuilder;
 
 /// Runbook runner: returns TOC by default; expand a section on demand (cursor-based).
@@ -28,7 +31,7 @@ pub(in crate::tools::dispatch) async fn runbook_pack(
     }
 
     let (root, root_display) = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "runbook_pack")
         .await
     {
         Ok(value) => value,
@@ -38,12 +41,9 @@ pub(in crate::tools::dispatch) async fn runbook_pack(
             } else {
                 meta_for_request(service, request.path.as_deref()).await
             };
-            return Ok(super::error::invalid_request_with_meta(
-                message,
-                meta,
-                None,
-                Vec::new(),
-            ));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

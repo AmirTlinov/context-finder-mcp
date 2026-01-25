@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use super::error::{
-    attach_structured_content, internal_error_with_meta, invalid_request_with_meta,
+    attach_structured_content, internal_error_with_meta, invalid_request_with_root_context,
     meta_for_request,
 };
 
@@ -227,7 +227,10 @@ pub(in crate::tools::dispatch) async fn doctor(
         hints.push("Some models are missing assets. Run `context install-models` to download them into the model directory.".into());
     }
 
-    let (root, root_display) = match service.resolve_root_no_daemon_touch(path.as_deref()).await {
+    let (root, root_display) = match service
+        .resolve_root_no_daemon_touch_for_tool(path.as_deref(), "doctor")
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
             let meta = if response_mode == ResponseMode::Minimal {
@@ -235,7 +238,9 @@ pub(in crate::tools::dispatch) async fn doctor(
             } else {
                 meta_for_request(service, path.as_deref()).await
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let meta = service.tool_meta(&root).await;

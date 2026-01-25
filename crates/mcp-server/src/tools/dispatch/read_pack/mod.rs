@@ -40,6 +40,10 @@ mod onboarding_docs;
 mod onboarding_topics;
 mod project_facts;
 mod recall;
+mod recall_cursor;
+mod recall_ops;
+mod recall_structural;
+mod recall_trim;
 
 use candidates::{collect_memory_file_candidates, is_disallowed_memory_file};
 use cursors::{trim_chars, trimmed_non_empty_str, CursorHeader, ReadPackMemoryCursorV1};
@@ -48,10 +52,9 @@ use intent_grep::handle_grep_intent;
 use intent_memory::handle_memory_intent;
 use intent_onboarding::handle_onboarding_intent;
 use intent_query::{handle_query_intent, QueryIntentPolicy};
-use intent_recall::{
-    handle_recall_intent, repair_recall_cursor_after_trim, trim_recall_sections_for_budget,
-};
+use intent_recall::handle_recall_intent;
 use project_facts::compute_project_facts;
+use recall_trim::{repair_recall_cursor_after_trim, trim_recall_sections_for_budget};
 
 const VERSION: u32 = 1;
 const DEFAULT_MAX_CHARS: usize = 6_000;

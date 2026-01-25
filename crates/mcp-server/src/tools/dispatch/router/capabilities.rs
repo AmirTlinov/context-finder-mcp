@@ -8,7 +8,9 @@ use context_protocol::{
 };
 use serde_json::json;
 
-use super::error::{attach_structured_content, invalid_request_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, invalid_request_with_root_context, meta_for_request,
+};
 
 /// Return tool capabilities and default budgets for self-directed clients.
 pub(in crate::tools::dispatch) async fn capabilities(
@@ -16,13 +18,15 @@ pub(in crate::tools::dispatch) async fn capabilities(
     request: CapabilitiesRequest,
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     let (root, root_display) = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "capabilities")
         .await
     {
         Ok(value) => value,
         Err(message) => {
             let meta = meta_for_request(service, request.path.as_deref()).await;
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

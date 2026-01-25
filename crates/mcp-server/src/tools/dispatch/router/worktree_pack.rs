@@ -7,7 +7,7 @@ use crate::tools::context_doc::ContextDocBuilder;
 use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
     attach_structured_content, internal_error_with_meta, invalid_cursor_with_meta,
-    invalid_request_with_meta, meta_for_request,
+    invalid_request_with_root_context, meta_for_request,
 };
 
 /// Worktree atlas: list git worktrees/branches and what is being worked on (bounded + deterministic).
@@ -32,7 +32,7 @@ pub(in crate::tools::dispatch) async fn worktree_pack(
     }
 
     let (root, root_display) = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "worktree_pack")
         .await
     {
         Ok(value) => value,
@@ -42,7 +42,9 @@ pub(in crate::tools::dispatch) async fn worktree_pack(
             } else {
                 meta_for_request(service, request.path.as_deref()).await
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

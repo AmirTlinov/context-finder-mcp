@@ -13,7 +13,7 @@ use std::path::Path;
 use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
     attach_structured_content, cursor_mismatch_with_meta_details, internal_error_with_meta,
-    invalid_cursor_with_meta, invalid_cursor_with_meta_details, invalid_request_with_meta,
+    invalid_cursor_with_meta, invalid_cursor_with_meta_details, invalid_request_with_root_context,
     meta_for_request,
 };
 
@@ -160,7 +160,7 @@ pub(in crate::tools::dispatch) async fn list_files(
         }
     }
     let (root, root_display) = match service
-        .resolve_root_with_hints_no_daemon_touch(request.path.as_deref(), &hints)
+        .resolve_root_with_hints_no_daemon_touch_for_tool(request.path.as_deref(), &hints, "find")
         .await
     {
         Ok(value) => value,
@@ -170,7 +170,9 @@ pub(in crate::tools::dispatch) async fn list_files(
             } else {
                 ToolMeta::default()
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let provenance_meta = ToolMeta {

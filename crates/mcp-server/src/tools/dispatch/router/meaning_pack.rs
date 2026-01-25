@@ -7,7 +7,10 @@ use crate::tools::cpv1::cpv1_coverage;
 use crate::tools::schemas::meaning_pack::MeaningPackOutputFormat;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-use super::error::{attach_structured_content, internal_error_with_meta, meta_for_request};
+use super::error::{
+    attach_structured_content, internal_error_with_meta, invalid_request_with_root_context,
+    meta_for_request,
+};
 
 /// Meaning-first pack (facts-only CP + evidence pointers).
 pub(in crate::tools::dispatch) async fn meaning_pack(
@@ -27,7 +30,7 @@ pub(in crate::tools::dispatch) async fn meaning_pack(
     );
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
     let (root, root_display) = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "meaning_pack")
         .await
     {
         Ok(value) => value,
@@ -37,12 +40,9 @@ pub(in crate::tools::dispatch) async fn meaning_pack(
             } else {
                 meta_for_request(service, request.path.as_deref()).await
             };
-            return Ok(super::error::invalid_request_with_meta(
-                message,
-                meta,
-                None,
-                Vec::new(),
-            ));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 

@@ -143,7 +143,7 @@ pub(in crate::tools::dispatch) async fn ls(
         }
     }
     let (root, root_display) = match service
-        .resolve_root_with_hints_no_daemon_touch(request.path.as_deref(), &hints)
+        .resolve_root_with_hints_no_daemon_touch_for_tool(request.path.as_deref(), &hints, "ls")
         .await
     {
         Ok(value) => value,
@@ -170,7 +170,9 @@ pub(in crate::tools::dispatch) async fn ls(
             } else {
                 ToolMeta::default()
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let provenance_meta = ToolMeta {

@@ -21,7 +21,7 @@ use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
     attach_meta, attach_structured_content, internal_error, internal_error_with_meta,
     invalid_cursor, invalid_cursor_with_meta, invalid_cursor_with_meta_details,
-    invalid_request_with_meta, meta_for_request,
+    invalid_request_with_meta, invalid_request_with_root_context, meta_for_request,
 };
 
 fn trimmed_non_empty_str(input: Option<&str>) -> Option<&str> {
@@ -672,7 +672,11 @@ pub(in crate::tools::dispatch) async fn text_search(
         }
     }
     let (root, root_display) = match service
-        .resolve_root_with_hints_no_daemon_touch(request.path.as_deref(), &hints)
+        .resolve_root_with_hints_no_daemon_touch_for_tool(
+            request.path.as_deref(),
+            &hints,
+            "text_search",
+        )
         .await
     {
         Ok(value) => value,
@@ -682,7 +686,9 @@ pub(in crate::tools::dispatch) async fn text_search(
             } else {
                 ToolMeta::default()
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let provenance_meta = ToolMeta {

@@ -11,7 +11,7 @@ use petgraph::graph::NodeIndex;
 use std::collections::HashSet;
 
 use super::error::{
-    attach_structured_content, internal_error_with_meta, invalid_request_with_meta,
+    attach_structured_content, internal_error_with_meta, invalid_request_with_root_context,
     meta_for_request,
 };
 use super::semantic_fallback::{grep_fallback_hunks, is_semantic_unavailable_error};
@@ -162,7 +162,10 @@ pub(in crate::tools::dispatch) async fn impact(
 ) -> Result<CallToolResult, McpError> {
     let response_mode = request.response_mode.unwrap_or(ResponseMode::Facts);
     let depth = request.depth.unwrap_or(2).clamp(1, 3);
-    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+    let (root, root_display) = match service
+        .resolve_root_for_tool(request.path.as_deref(), "impact")
+        .await
+    {
         Ok((root, root_display)) => (root, root_display),
         Err(message) => {
             let meta = if response_mode == ResponseMode::Minimal {
@@ -170,7 +173,9 @@ pub(in crate::tools::dispatch) async fn impact(
             } else {
                 meta_for_request(service, request.path.as_deref()).await
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
 
