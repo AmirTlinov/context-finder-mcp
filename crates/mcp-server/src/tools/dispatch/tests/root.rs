@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::test_support::ENV_MUTEX;
+use crate::tools::dispatch::root::RootUpdateSource;
 use tempfile::tempdir;
 use tokio::time::Duration;
 
@@ -21,7 +22,14 @@ async fn resolve_root_waits_for_initialize_roots_list() {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let mut session = session_arc.lock().await;
-        session.set_root(canonical_root_clone, canonical_display, None);
+        session.set_root(
+            canonical_root_clone,
+            canonical_display,
+            None,
+            RootUpdateSource::RootSet,
+            None,
+            None,
+        );
         session.set_roots_pending(false);
         drop(session);
         notify.notify_waiters();
@@ -112,7 +120,14 @@ async fn daemon_refuses_absolute_path_outside_session_root() {
     {
         let mut session = service.session.lock().await;
         session.reset_for_initialize(false);
-        session.set_root(canonical_root.clone(), root_display, None);
+        session.set_root(
+            canonical_root.clone(),
+            root_display,
+            None,
+            RootUpdateSource::RootSet,
+            None,
+            None,
+        );
     }
 
     let err = service
@@ -150,7 +165,14 @@ async fn daemon_accepts_absolute_file_hint_within_session_root() {
     {
         let mut session = service.session.lock().await;
         session.reset_for_initialize(false);
-        session.set_root(canonical_root.clone(), root_display, None);
+        session.set_root(
+            canonical_root.clone(),
+            root_display,
+            None,
+            RootUpdateSource::RootSet,
+            None,
+            None,
+        );
     }
 
     let (resolved, _) = service
@@ -203,6 +225,9 @@ async fn session_refuses_root_outside_workspace_roots_until_explicit_path() {
         session.set_root(
             other_root.clone(),
             other_root.to_string_lossy().to_string(),
+            None,
+            RootUpdateSource::RootSet,
+            None,
             None,
         );
     }
@@ -269,7 +294,14 @@ async fn relative_path_is_resolved_against_session_root_before_process_cwd() {
     {
         let mut session = service.session.lock().await;
         session.reset_for_initialize(false);
-        session.set_root(root_a.clone(), root_a.to_string_lossy().to_string(), None);
+        session.set_root(
+            root_a.clone(),
+            root_a.to_string_lossy().to_string(),
+            None,
+            RootUpdateSource::RootSet,
+            None,
+            None,
+        );
     }
 
     let (resolved, _) = service
@@ -338,7 +370,14 @@ async fn root_set_can_switch_projects_even_when_session_root_is_already_set() {
     {
         let mut session = service.session.lock().await;
         session.reset_for_initialize(false);
-        session.set_root(root_a, "A".to_string(), None);
+        session.set_root(
+            root_a,
+            "A".to_string(),
+            None,
+            RootUpdateSource::RootSet,
+            None,
+            None,
+        );
     }
 
     let _ = crate::tools::dispatch::router::root::root_set(

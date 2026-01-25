@@ -84,7 +84,7 @@ pub(in crate::tools::dispatch) async fn meaning_focus(
     );
 
     let (root, root_display) = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "meaning_focus")
         .await
     {
         Ok(value) => value,
@@ -94,12 +94,14 @@ pub(in crate::tools::dispatch) async fn meaning_focus(
             } else {
                 meta_for_request(service, request.path.as_deref()).await
             };
-            return Ok(super::error::invalid_request_with_meta(
+            return Ok(super::error::invalid_request_with_root_context(
+                service,
                 message,
                 meta,
                 None,
                 Vec::new(),
-            ));
+            )
+            .await);
         }
     };
 

@@ -12,7 +12,7 @@ use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
     attach_structured_content, cursor_mismatch_with_meta_details, internal_error_with_meta,
     invalid_cursor_with_meta, invalid_cursor_with_meta_details, invalid_request_with_meta,
-    meta_for_request,
+    invalid_request_with_root_context, meta_for_request,
 };
 use std::path::Path;
 

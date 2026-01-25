@@ -13,6 +13,8 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   in one step (minimizes setup friction).
 - Root hygiene: new `root_get` / `root_set` MCP tools to introspect and explicitly switch the
   per-connection session root (multi-root disambiguation, cross-project safety).
+- Root diagnostics: `root_get` now reports `last_root_set` / `last_root_update` snapshots to help
+  debug unexpected root drift.
 - Meaning mode: `meaning_pack` and `meaning_focus` now provide actionable `next_actions` hints
   in MCP `.context` output when `response_mode=full` (keeps defaults low-noise).
 - Meaning eval: expanded the stub smoke dataset with additional repo archetypes
@@ -30,6 +32,9 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   `scripts/eval_zoo_compare.py`) for trend tracking across heterogeneous repos.
 
 ### Changed
+
+- Root errors: `Invalid path` responses now include session root + cwd hints and suggest a
+  corrective `root_set` when the root diverges from the caller's cwd.
 
 - MCP `search`/`context` output now includes lightweight metadata notes and trimmed doc comments per
   hit (type/scope/imports/tags + doc block) to improve agent context density.

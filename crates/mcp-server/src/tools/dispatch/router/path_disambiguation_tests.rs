@@ -2,6 +2,7 @@ use super::{
     context, context_pack, file_slice, grep_context, list_files, map, meaning_focus, read_pack,
     search, text_search,
 };
+use crate::tools::dispatch::root::RootUpdateSource;
 use crate::tools::dispatch::ContextFinderService;
 use crate::tools::schemas::context::ContextRequest;
 use crate::tools::schemas::context_pack::ContextPackRequest;
@@ -27,7 +28,14 @@ async fn make_daemon_service_with_root(root: &Path) -> ContextFinderService {
     {
         let mut session = service.session.lock().await;
         session.reset_for_initialize(false);
-        session.set_root(root, root_display, None);
+        session.set_root(
+            root,
+            root_display,
+            None,
+            RootUpdateSource::RootSet,
+            None,
+            None,
+        );
     }
     service
 }

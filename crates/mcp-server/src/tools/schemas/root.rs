@@ -6,6 +6,23 @@ use serde::{Deserialize, Serialize};
 pub struct RootGetRequest {}
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RootUpdateInfo {
+    /// Update source (e.g. `root_set`, `resolve_path`, `mcp_roots`).
+    pub source: String,
+
+    /// UTC timestamp (milliseconds) for when the root was updated.
+    pub at_ms: u64,
+
+    /// If present, the raw path that triggered the root update.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_path: Option<String>,
+
+    /// Tool name that triggered the root update (when available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_tool: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RootGetResult {
     /// Current per-connection session root (when established).
     pub session_root: Option<String>,
@@ -25,6 +42,14 @@ pub struct RootGetResult {
 
     /// If set, the session root is outside workspace roots and calls must pass an explicit `path`.
     pub root_mismatch_error: Option<String>,
+
+    /// Last explicit `root_set` update for this session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_root_set: Option<RootUpdateInfo>,
+
+    /// Last root update for this session (explicit or implicit).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_root_update: Option<RootUpdateInfo>,
 
     #[serde(default)]
     pub meta: ToolMeta,

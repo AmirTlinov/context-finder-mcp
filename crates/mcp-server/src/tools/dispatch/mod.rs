@@ -71,6 +71,7 @@ use super::schemas::trace::{TraceRequest, TraceResult, TraceStep};
 use super::schemas::worktree_pack::WorktreePackRequest;
 use super::util::{path_has_extension_ignore_ascii_case, unix_ms};
 use super::worktree_pack::{compute_worktree_pack_result, render_worktree_pack_block};
+use crate::tools::dispatch::root::RootUpdateSource;
 use anyhow::{Context as AnyhowContext, Result};
 use context_graph::{
     build_graph_docs, CodeGraph, ContextAssembler, GraphDocConfig, GraphEdge, GraphLanguage,
@@ -290,7 +291,14 @@ impl ServerHandler for ContextFinderService {
                             1 => {
                                 let root = candidates.remove(0);
                                 let root_display = root.to_string_lossy().to_string();
-                                session.set_root(root, root_display, None);
+                                session.set_root(
+                                    root,
+                                    root_display,
+                                    None,
+                                    RootUpdateSource::McpRoots,
+                                    None,
+                                    None,
+                                );
                             }
                             n if n > 1 => {
                                 // Fail-closed: do not guess a root when the workspace is multi-root.

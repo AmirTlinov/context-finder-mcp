@@ -1,5 +1,6 @@
 use super::super::{CallToolResult, Content, ContextFinderService};
 use crate::tools::context_doc::ContextDocBuilder;
+use crate::tools::dispatch::root::root_context_details;
 use context_indexer::ToolMeta;
 use context_protocol::{ErrorEnvelope, ToolNextAction};
 use rmcp::model::RawContent;
@@ -178,6 +179,53 @@ pub(in crate::tools::dispatch) fn invalid_request_with_meta(
         },
         meta,
     )
+}
+
+pub(in crate::tools::dispatch) fn invalid_request_with_meta_details(
+    message: impl Into<String>,
+    meta: ToolMeta,
+    details: serde_json::Value,
+    hint: Option<String>,
+    next_actions: Vec<ToolNextAction>,
+) -> CallToolResult {
+    tool_error_envelope_with_meta(
+        ErrorEnvelope {
+            code: "invalid_request".to_string(),
+            message: message.into(),
+            details: Some(details),
+            hint,
+            next_actions,
+        },
+        meta,
+    )
+}
+
+pub(in crate::tools::dispatch) async fn invalid_request_with_root_context(
+    service: &ContextFinderService,
+    message: impl Into<String>,
+    meta: ToolMeta,
+    hint: Option<String>,
+    next_actions: Vec<ToolNextAction>,
+) -> CallToolResult {
+    let message = message.into();
+    if !needs_root_context(&message) {
+        return invalid_request_with_meta(message, meta, hint, next_actions);
+    }
+    let root_context = root_context_details(service).await;
+    if root_context.is_null() {
+        return invalid_request_with_meta(message, meta, hint, next_actions);
+    }
+    invalid_request_with_meta_details(
+        message,
+        meta,
+        json!({ "root_context": root_context }),
+        hint,
+        next_actions,
+    )
+}
+
+fn needs_root_context(message: &str) -> bool {
+    message.starts_with("Invalid path") || message.starts_with("Missing project root")
 }
 
 pub(in crate::tools::dispatch) fn internal_error_with_meta(

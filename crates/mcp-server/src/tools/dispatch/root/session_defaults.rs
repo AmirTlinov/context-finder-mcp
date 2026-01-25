@@ -1,5 +1,69 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
+use std::time::SystemTime;
+
+use crate::tools::util::unix_ms;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tools::dispatch) enum RootUpdateSource {
+    RootSet,
+    ResolvePath,
+    McpRoots,
+    CwdFallback,
+    EnvOverride,
+}
+
+impl RootUpdateSource {
+    pub(in crate::tools::dispatch) fn as_str(self) -> &'static str {
+        match self {
+            RootUpdateSource::RootSet => "root_set",
+            RootUpdateSource::ResolvePath => "resolve_path",
+            RootUpdateSource::McpRoots => "mcp_roots",
+            RootUpdateSource::CwdFallback => "cwd_fallback",
+            RootUpdateSource::EnvOverride => "env_override",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RootUpdate {
+    at_ms: u64,
+    source: RootUpdateSource,
+    requested_path: Option<String>,
+    source_tool: Option<String>,
+}
+
+impl RootUpdate {
+    fn new(
+        source: RootUpdateSource,
+        requested_path: Option<String>,
+        source_tool: Option<String>,
+    ) -> Self {
+        Self {
+            at_ms: unix_ms(SystemTime::now()),
+            source,
+            requested_path,
+            source_tool,
+        }
+    }
+
+    fn snapshot(&self) -> RootUpdateSnapshot {
+        RootUpdateSnapshot {
+            at_ms: self.at_ms,
+            source: self.source.as_str(),
+            requested_path: self.requested_path.clone(),
+            source_tool: self.source_tool.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::tools::dispatch) struct RootUpdateSnapshot {
+    pub at_ms: u64,
+    pub source: &'static str,
+    pub requested_path: Option<String>,
+    pub source_tool: Option<String>,
+}
 
 #[derive(Default)]
 pub(in crate::tools::dispatch) struct SessionDefaults {
@@ -26,6 +90,8 @@ pub(in crate::tools::dispatch) struct SessionDefaults {
     /// Fail-closed: when we detect that the session root is outside the MCP workspace roots,
     /// we record an error and refuse to serve requests without an explicit `path`.
     root_mismatch_error: Option<String>,
+    last_root_set: Option<RootUpdate>,
+    last_root_update: Option<RootUpdate>,
     // Working-set: ephemeral, per-connection state (no disk). Used to avoid repeating the same
     // anchors/snippets across multiple calls in one agent session.
     seen_snippet_files: VecDeque<String>,
@@ -91,6 +157,16 @@ impl SessionDefaults {
         self.root_display.clone()
     }
 
+    pub(in crate::tools::dispatch) fn last_root_set_snapshot(&self) -> Option<RootUpdateSnapshot> {
+        self.last_root_set.as_ref().map(RootUpdate::snapshot)
+    }
+
+    pub(in crate::tools::dispatch) fn last_root_update_snapshot(
+        &self,
+    ) -> Option<RootUpdateSnapshot> {
+        self.last_root_update.as_ref().map(RootUpdate::snapshot)
+    }
+
     pub(in crate::tools::dispatch) fn focus_file(&self) -> Option<String> {
         self.focus_file.clone()
     }
@@ -108,6 +184,8 @@ impl SessionDefaults {
         self.mcp_roots_ambiguous = false;
         self.mcp_workspace_roots.clear();
         self.root_mismatch_error = None;
+        self.last_root_set = None;
+        self.last_root_update = None;
         self.clear_working_set();
     }
 
@@ -116,6 +194,9 @@ impl SessionDefaults {
         root: PathBuf,
         root_display: String,
         focus_file: Option<String>,
+        source: RootUpdateSource,
+        requested_path: Option<String>,
+        source_tool: Option<String>,
     ) {
         let root_changed = match self.root.as_ref() {
             Some(prev) => prev != &root,
@@ -126,9 +207,23 @@ impl SessionDefaults {
         self.focus_file = focus_file;
         self.mcp_roots_ambiguous = false;
         self.root_mismatch_error = None;
+        self.note_root_update(source, requested_path, source_tool);
         if root_changed {
             self.clear_working_set();
         }
+    }
+
+    fn note_root_update(
+        &mut self,
+        source: RootUpdateSource,
+        requested_path: Option<String>,
+        source_tool: Option<String>,
+    ) {
+        let update = RootUpdate::new(source, requested_path, source_tool);
+        if source == RootUpdateSource::RootSet {
+            self.last_root_set = Some(update.clone());
+        }
+        self.last_root_update = Some(update);
     }
 
     fn clear_working_set(&mut self) {

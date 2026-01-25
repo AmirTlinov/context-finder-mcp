@@ -13,7 +13,7 @@ use super::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::error::{
     attach_structured_content, cursor_mismatch_with_meta_details, internal_error_with_meta,
     invalid_cursor_with_meta, invalid_cursor_with_meta_details, invalid_request_with_meta,
-    meta_for_request,
+    invalid_request_with_root_context, meta_for_request,
 };
 
 /// Get project structure overview
@@ -182,7 +182,7 @@ pub(in crate::tools::dispatch) async fn map(
     }
 
     let (root, root_display) = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "map")
         .await
     {
         Ok(value) => value,
@@ -192,7 +192,9 @@ pub(in crate::tools::dispatch) async fn map(
             } else {
                 ToolMeta::default()
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let provenance_meta = ToolMeta {

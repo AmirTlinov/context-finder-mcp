@@ -3,7 +3,11 @@ use super::super::{
     RootSetRequest, RootSetResult, ToolMeta,
 };
 use crate::tools::context_doc::ContextDocBuilder;
+use crate::tools::dispatch::root::{RootUpdateSnapshot, RootUpdateSource};
+use crate::tools::schemas::root::RootUpdateInfo;
+use crate::tools::util::truncate_to_chars;
 use context_indexer::root_fingerprint;
+use std::env;
 
 use super::error::invalid_request_with_meta;
 
@@ -11,7 +15,16 @@ pub(in crate::tools::dispatch) async fn root_get(
     service: &ContextFinderService,
     _request: RootGetRequest,
 ) -> Result<CallToolResult, McpError> {
-    let (session_root, focus_file, workspace_roots, roots_pending, ambiguous, mismatch) = {
+    let (
+        session_root,
+        focus_file,
+        workspace_roots,
+        roots_pending,
+        ambiguous,
+        mismatch,
+        last_root_set,
+        last_root_update,
+    ) = {
         let session = service.session.lock().await;
         let session_root = session.root_display();
         let focus_file = session.focus_file();
@@ -27,6 +40,8 @@ pub(in crate::tools::dispatch) async fn root_get(
             session.roots_pending(),
             session.mcp_roots_ambiguous(),
             session.root_mismatch_error().map(|s| s.to_string()),
+            session.last_root_set_snapshot(),
+            session.last_root_update_snapshot(),
         )
     };
 
@@ -63,6 +78,28 @@ pub(in crate::tools::dispatch) async fn root_get(
     if let Some(message) = mismatch.as_deref() {
         doc.push_note(&format!("root_mismatch_error={message}"));
     }
+    if let Some(update) = last_root_set.as_ref() {
+        let note = format_root_update_note("last_root_set", update);
+        doc.push_note(&note);
+    }
+    if let Some(update) = last_root_update.as_ref() {
+        let should_emit = match last_root_set.as_ref() {
+            Some(last) => last.at_ms != update.at_ms,
+            None => true,
+        };
+        if should_emit {
+            let note = format_root_update_note("last_root_update", update);
+            doc.push_note(&note);
+        }
+    }
+    if let (Some(root), Ok(cwd)) = (session_root.as_deref(), env::current_dir()) {
+        let cwd_display = cwd.to_string_lossy().to_string();
+        if root != cwd_display {
+            doc.push_note(&format!("cwd={cwd_display}"));
+            doc.push_note("root_cwd_mismatch=true");
+            doc.push_note(&format!("hint: root_set path={cwd_display}"));
+        }
+    }
     doc.push_root_fingerprint(meta.root_fingerprint);
 
     let result = RootGetResult {
@@ -72,6 +109,8 @@ pub(in crate::tools::dispatch) async fn root_get(
         roots_pending,
         workspace_roots_ambiguous: ambiguous,
         root_mismatch_error: mismatch,
+        last_root_set: last_root_set.map(root_update_snapshot_to_info),
+        last_root_update: last_root_update.map(root_update_snapshot_to_info),
         meta,
     };
 
@@ -159,7 +198,14 @@ pub(in crate::tools::dispatch) async fn root_set(
         }
         // Root switching is explicit user intent: persist even if the session root was previously
         // ambiguous (multi-root) or mismatched.
-        session.set_root(root.clone(), root_display.clone(), focus_file.clone());
+        session.set_root(
+            root.clone(),
+            root_display.clone(),
+            focus_file.clone(),
+            RootUpdateSource::RootSet,
+            Some(raw.to_string()),
+            Some("root_set".to_string()),
+        );
     }
 
     let (workspace_roots, roots_pending, ambiguous, mismatch) = {
@@ -211,4 +257,25 @@ pub(in crate::tools::dispatch) async fn root_set(
     let mut out = CallToolResult::success(vec![Content::text(doc.finish())]);
     out.structured_content = Some(serde_json::json!(result));
     Ok(out)
+}
+
+fn root_update_snapshot_to_info(snapshot: RootUpdateSnapshot) -> RootUpdateInfo {
+    RootUpdateInfo {
+        source: snapshot.source.to_string(),
+        at_ms: snapshot.at_ms,
+        requested_path: snapshot.requested_path,
+        source_tool: snapshot.source_tool,
+    }
+}
+
+fn format_root_update_note(label: &str, update: &RootUpdateSnapshot) -> String {
+    let mut out = format!("{label}={}@{}", update.source, update.at_ms);
+    if let Some(path) = update.requested_path.as_deref() {
+        let trimmed = truncate_to_chars(path, 140);
+        out.push_str(&format!(" path={trimmed}"));
+    }
+    if let Some(tool) = update.source_tool.as_deref() {
+        out.push_str(&format!(" tool={tool}"));
+    }
+    out
 }

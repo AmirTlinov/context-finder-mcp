@@ -5,9 +5,11 @@ use std::time::Duration;
 use super::{
     canonicalize_root, canonicalize_root_path, collect_relative_hints, env_root_override,
     hint_score_for_root, rel_path_string, resolve_root_from_absolute_hints, trimmed_non_empty,
+    RootUpdateSnapshot, RootUpdateSource,
 };
 
 use super::super::ContextFinderService;
+use crate::tools::util::truncate_to_chars;
 
 pub(in crate::tools::dispatch) fn workspace_roots_preview(roots: &[PathBuf]) -> String {
     let preview = roots
@@ -32,6 +34,134 @@ fn root_outside_workspace_error(context: &str, root_display: &str, roots: &[Path
     format!(
         "{context}: resolved root '{root_display}' is outside MCP workspace roots [{roots_preview}]."
     )
+}
+
+struct RootDiagnostics {
+    session_root: Option<String>,
+    last_root_set: Option<RootUpdateSnapshot>,
+    last_root_update: Option<RootUpdateSnapshot>,
+    cwd: Option<String>,
+}
+
+impl RootDiagnostics {
+    async fn capture(service: &ContextFinderService) -> Self {
+        let (session_root, last_root_set, last_root_update) = {
+            let session = service.session.lock().await;
+            (
+                session.root_display(),
+                session.last_root_set_snapshot(),
+                session.last_root_update_snapshot(),
+            )
+        };
+        let cwd = env::current_dir()
+            .ok()
+            .map(|path| path.to_string_lossy().to_string());
+        Self {
+            session_root,
+            last_root_set,
+            last_root_update,
+            cwd,
+        }
+    }
+
+    fn update_json(update: &RootUpdateSnapshot) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        out.insert("source".to_string(), serde_json::json!(update.source));
+        out.insert("at_ms".to_string(), serde_json::json!(update.at_ms));
+        if let Some(path) = update.requested_path.as_deref() {
+            out.insert("requested_path".to_string(), serde_json::json!(path));
+        }
+        if let Some(tool) = update.source_tool.as_deref() {
+            out.insert("source_tool".to_string(), serde_json::json!(tool));
+        }
+        serde_json::Value::Object(out)
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        if let Some(root) = self.session_root.as_deref() {
+            out.insert("session_root".to_string(), serde_json::json!(root));
+        }
+        if let Some(cwd) = self.cwd.as_deref() {
+            out.insert("cwd".to_string(), serde_json::json!(cwd));
+        }
+        if let Some(update) = self.last_root_set.as_ref() {
+            out.insert("last_root_set".to_string(), Self::update_json(update));
+        }
+        if let Some(update) = self.last_root_update.as_ref() {
+            let should_emit = match self.last_root_set.as_ref() {
+                Some(last) => last.at_ms != update.at_ms,
+                None => true,
+            };
+            if should_emit {
+                out.insert("last_root_update".to_string(), Self::update_json(update));
+            }
+        }
+        if out.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::Object(out)
+        }
+    }
+
+    fn render_update(update: &RootUpdateSnapshot) -> String {
+        let mut out = format!("{}@{}", update.source, update.at_ms);
+        if let Some(path) = update.requested_path.as_deref() {
+            let trimmed = truncate_to_chars(path, 140);
+            out.push_str(&format!(" path={trimmed}"));
+        }
+        if let Some(tool) = update.source_tool.as_deref() {
+            out.push_str(&format!(" tool={tool}"));
+        }
+        out
+    }
+
+    fn decorate_invalid_path(&self, message: String) -> String {
+        if !message.starts_with("Invalid path") {
+            return message;
+        }
+
+        let mut notes = Vec::new();
+        if let Some(root) = self.session_root.as_deref() {
+            notes.push(format!("session_root={root}"));
+        }
+        if let Some(cwd) = self.cwd.as_deref() {
+            notes.push(format!("cwd={cwd}"));
+        }
+        if let Some(update) = self.last_root_set.as_ref() {
+            notes.push(format!("last_root_set={}", Self::render_update(update)));
+        }
+        if let Some(update) = self.last_root_update.as_ref() {
+            let should_emit = match self.last_root_set.as_ref() {
+                Some(last) => last.at_ms != update.at_ms,
+                None => true,
+            };
+            if should_emit {
+                notes.push(format!("last_root_update={}", Self::render_update(update)));
+            }
+        }
+        if let Some(cwd) = self.cwd.as_deref() {
+            if self.session_root.as_deref() != Some(cwd) {
+                notes.push(format!("hint=root_set path={cwd}"));
+            }
+        }
+        if notes.is_empty() {
+            message
+        } else {
+            format!("{message} ({})", notes.join("; "))
+        }
+    }
+}
+
+async fn decorate_invalid_path_error(service: &ContextFinderService, message: String) -> String {
+    let diagnostics = RootDiagnostics::capture(service).await;
+    diagnostics.decorate_invalid_path(message)
+}
+
+pub(in crate::tools::dispatch) async fn root_context_details(
+    service: &ContextFinderService,
+) -> serde_json::Value {
+    RootDiagnostics::capture(service).await.to_json()
 }
 
 fn select_workspace_root_by_hints(roots: &[PathBuf], hints: &[String]) -> Option<PathBuf> {
@@ -68,12 +198,36 @@ impl ContextFinderService {
         self.resolve_root_with_hints(raw_path, &[]).await
     }
 
+    pub(in crate::tools::dispatch) async fn resolve_root_for_tool(
+        &self,
+        raw_path: Option<&str>,
+        tool: &'static str,
+    ) -> Result<(PathBuf, String), String> {
+        self.resolve_root_with_hints_for_tool(raw_path, &[], tool)
+            .await
+    }
+
     pub(in crate::tools::dispatch) async fn resolve_root_with_hints(
         &self,
         raw_path: Option<&str>,
         hints: &[String],
     ) -> Result<(PathBuf, String), String> {
-        let (root, root_display) = self.resolve_root_impl_with_hints(raw_path, hints).await?;
+        let (root, root_display) = self
+            .resolve_root_impl_with_hints(raw_path, hints, None)
+            .await?;
+        self.touch_daemon_best_effort(&root);
+        Ok((root, root_display))
+    }
+
+    pub(in crate::tools::dispatch) async fn resolve_root_with_hints_for_tool(
+        &self,
+        raw_path: Option<&str>,
+        hints: &[String],
+        tool: &'static str,
+    ) -> Result<(PathBuf, String), String> {
+        let (root, root_display) = self
+            .resolve_root_impl_with_hints(raw_path, hints, Some(tool))
+            .await?;
         self.touch_daemon_best_effort(&root);
         Ok((root, root_display))
     }
@@ -86,24 +240,48 @@ impl ContextFinderService {
             .await
     }
 
+    pub(in crate::tools::dispatch) async fn resolve_root_no_daemon_touch_for_tool(
+        &self,
+        raw_path: Option<&str>,
+        tool: &'static str,
+    ) -> Result<(PathBuf, String), String> {
+        self.resolve_root_with_hints_no_daemon_touch_for_tool(raw_path, &[], tool)
+            .await
+    }
+
     pub(in crate::tools::dispatch) async fn resolve_root_with_hints_no_daemon_touch(
         &self,
         raw_path: Option<&str>,
         hints: &[String],
     ) -> Result<(PathBuf, String), String> {
-        self.resolve_root_impl_with_hints(raw_path, hints).await
+        self.resolve_root_impl_with_hints(raw_path, hints, None)
+            .await
+    }
+
+    pub(in crate::tools::dispatch) async fn resolve_root_with_hints_no_daemon_touch_for_tool(
+        &self,
+        raw_path: Option<&str>,
+        hints: &[String],
+        tool: &'static str,
+    ) -> Result<(PathBuf, String), String> {
+        self.resolve_root_impl_with_hints(raw_path, hints, Some(tool))
+            .await
     }
 
     async fn resolve_root_impl_with_hints(
         &self,
         raw_path: Option<&str>,
         hints: &[String],
+        source_tool: Option<&'static str>,
     ) -> Result<(PathBuf, String), String> {
         if trimmed_non_empty(raw_path).is_none() {
             if let Some(message) = self.session.lock().await.root_mismatch_error() {
                 return Err(message.to_string());
             }
         }
+
+        let requested_path = trimmed_non_empty(raw_path).map(str::to_string);
+        let source_tool = source_tool.map(str::to_string);
 
         if let Some(raw) = trimmed_non_empty(raw_path) {
             // `path` is frequently passed as a relative file hint (e.g. `README.md`), which should
@@ -128,14 +306,25 @@ impl ContextFinderService {
                             .iter()
                             .any(|candidate| root.starts_with(candidate));
                     if session_root_allowed_by_workspace {
-                        let canonical = PathBuf::from(raw)
-                            .canonicalize()
-                            .map_err(|err| format!("Invalid path: {err}"))?;
+                        let canonical = match PathBuf::from(raw).canonicalize() {
+                            Ok(value) => value,
+                            Err(err) => {
+                                return Err(decorate_invalid_path_error(
+                                    self,
+                                    format!("Invalid path: {err}"),
+                                )
+                                .await);
+                            }
+                        };
                         if !canonical.starts_with(root) {
                             return Err(
-                            "Invalid path: absolute `path` is outside the current project; call root_set to switch projects."
-                                .to_string(),
-                        );
+                                decorate_invalid_path_error(
+                                    self,
+                                    "Invalid path: absolute `path` is outside the current project; call root_set to switch projects."
+                                        .to_string(),
+                                )
+                                .await,
+                            );
                         }
 
                         let focus_file = std::fs::metadata(&canonical)
@@ -146,7 +335,14 @@ impl ContextFinderService {
 
                         let mut session = self.session.lock().await;
                         if self.allow_cwd_root_fallback || session.initialized() {
-                            session.set_root(root.clone(), root_display.clone(), focus_file);
+                            session.set_root(
+                                root.clone(),
+                                root_display.clone(),
+                                focus_file,
+                                RootUpdateSource::ResolvePath,
+                                requested_path.clone(),
+                                source_tool.clone(),
+                            );
                         }
                         return Ok((root.clone(), root_display.clone()));
                     }
@@ -171,8 +367,12 @@ impl ContextFinderService {
                     candidates.push(workspace_root.join(raw_norm));
                 } else {
                     return Err(
-                        "Invalid path: relative `path` is ambiguous in a multi-root workspace; pass an absolute path or call root_set."
-                            .to_string(),
+                        decorate_invalid_path_error(
+                            self,
+                            "Invalid path: relative `path` is ambiguous in a multi-root workspace; pass an absolute path or call root_set."
+                                .to_string(),
+                        )
+                        .await,
                     );
                 }
             } else if self.allow_cwd_root_fallback {
@@ -181,8 +381,12 @@ impl ContextFinderService {
                 candidates.push(PathBuf::from(raw));
             } else {
                 return Err(
-                    "Invalid path: relative `path` is ambiguous without a session/workspace root; pass an absolute path or initialize MCP roots."
-                        .to_string(),
+                    decorate_invalid_path_error(
+                        self,
+                        "Invalid path: relative `path` is ambiguous without a session/workspace root; pass an absolute path or initialize MCP roots."
+                            .to_string(),
+                    )
+                    .await,
                 );
             }
 
@@ -217,7 +421,14 @@ impl ContextFinderService {
                             continue;
                         }
                         if self.allow_cwd_root_fallback || session.initialized() {
-                            session.set_root(root.clone(), root_display.clone(), focus_file);
+                            session.set_root(
+                                root.clone(),
+                                root_display.clone(),
+                                focus_file,
+                                RootUpdateSource::ResolvePath,
+                                requested_path.clone(),
+                                source_tool.clone(),
+                            );
                         }
                         return Ok((root, root_display));
                     }
@@ -228,7 +439,11 @@ impl ContextFinderService {
                 }
             }
 
-            return Err(last_err.unwrap_or_else(|| "Invalid path".to_string()));
+            return Err(decorate_invalid_path_error(
+                self,
+                last_err.unwrap_or_else(|| "Invalid path".to_string()),
+            )
+            .await);
         }
 
         // Sticky root: once a per-connection session root is established, do not implicitly
@@ -256,14 +471,25 @@ impl ContextFinderService {
             let root_display = root.to_string_lossy().to_string();
             let mut session = self.session.lock().await;
             if !session.root_allowed_by_workspace(&root) {
-                return Err(root_outside_workspace_error(
-                    "Invalid path hint",
-                    &root_display,
-                    session.mcp_workspace_roots(),
-                ));
+                return Err(decorate_invalid_path_error(
+                    self,
+                    root_outside_workspace_error(
+                        "Invalid path hint",
+                        &root_display,
+                        session.mcp_workspace_roots(),
+                    ),
+                )
+                .await);
             }
             if self.allow_cwd_root_fallback || session.initialized() {
-                session.set_root(root.clone(), root_display.clone(), None);
+                session.set_root(
+                    root.clone(),
+                    root_display.clone(),
+                    None,
+                    RootUpdateSource::ResolvePath,
+                    None,
+                    source_tool.clone(),
+                );
             }
             return Ok((root, root_display));
         }
@@ -289,15 +515,23 @@ impl ContextFinderService {
                     });
                     let mut session = self.session.lock().await;
                     if self.allow_cwd_root_fallback || session.initialized() {
-                        session.set_root(root.clone(), root_display.clone(), focus_file);
+                        session.set_root(
+                            root.clone(),
+                            root_display.clone(),
+                            focus_file,
+                            RootUpdateSource::ResolvePath,
+                            None,
+                            source_tool.clone(),
+                        );
                     }
                     return Ok((root, root_display));
                 }
             }
 
             if self.allow_cwd_root_fallback {
-                if let Some((root, root_display)) =
-                    self.resolve_root_from_relative_hints(&relative_hints).await
+                if let Some((root, root_display)) = self
+                    .resolve_root_from_relative_hints(&relative_hints, source_tool.as_deref())
+                    .await
                 {
                     return Ok((root, root_display));
                 }
@@ -326,20 +560,39 @@ impl ContextFinderService {
         }
 
         if let Some((var, value)) = env_root_override() {
-            let root = canonicalize_root(&value)
-                .map_err(|err| format!("Invalid path from {var}: {err}"))?;
+            let root = match canonicalize_root(&value) {
+                Ok(value) => value,
+                Err(err) => {
+                    return Err(decorate_invalid_path_error(
+                        self,
+                        format!("Invalid path from {var}: {err}"),
+                    )
+                    .await);
+                }
+            };
             let root_display = root.to_string_lossy().to_string();
             let mut session = self.session.lock().await;
             if !session.root_allowed_by_workspace(&root) {
                 let context = format!("Invalid path from {var}");
-                return Err(root_outside_workspace_error(
-                    &context,
-                    &root_display,
-                    session.mcp_workspace_roots(),
-                ));
+                return Err(decorate_invalid_path_error(
+                    self,
+                    root_outside_workspace_error(
+                        &context,
+                        &root_display,
+                        session.mcp_workspace_roots(),
+                    ),
+                )
+                .await);
             }
             if self.allow_cwd_root_fallback || session.initialized() {
-                session.set_root(root.clone(), root_display.clone(), None);
+                session.set_root(
+                    root.clone(),
+                    root_display.clone(),
+                    None,
+                    RootUpdateSource::EnvOverride,
+                    Some(value),
+                    source_tool.clone(),
+                );
             }
             return Ok((root, root_display));
         }
@@ -360,8 +613,14 @@ impl ContextFinderService {
         let cwd = env::current_dir()
             .map_err(|err| format!("Failed to determine current directory: {err}"))?;
         let candidate = cwd;
-        let root =
-            canonicalize_root_path(&candidate).map_err(|err| format!("Invalid path: {err}"))?;
+        let root = match canonicalize_root_path(&candidate) {
+            Ok(root) => root,
+            Err(err) => {
+                return Err(
+                    decorate_invalid_path_error(self, format!("Invalid path: {err}")).await,
+                );
+            }
+        };
         let root_display = root.to_string_lossy().to_string();
         let mut session = self.session.lock().await;
         if !session.root_allowed_by_workspace(&root) {
@@ -372,7 +631,14 @@ impl ContextFinderService {
             ) + " Call `root_set` or pass `path`.");
         }
         if self.allow_cwd_root_fallback || session.initialized() {
-            session.set_root(root.clone(), root_display.clone(), None);
+            session.set_root(
+                root.clone(),
+                root_display.clone(),
+                None,
+                RootUpdateSource::CwdFallback,
+                None,
+                source_tool.clone(),
+            );
         }
         Ok((root, root_display))
     }
@@ -380,7 +646,9 @@ impl ContextFinderService {
     async fn resolve_root_from_relative_hints(
         &self,
         hints: &[String],
+        source_tool: Option<&str>,
     ) -> Option<(PathBuf, String)> {
+        let source_tool = source_tool.map(str::to_string);
         let session_root = self.session.lock().await.clone_root();
         let mut roots: Vec<PathBuf> = Vec::new();
         if let Some((root, _)) = session_root.as_ref() {
@@ -432,7 +700,14 @@ impl ContextFinderService {
         if !session.root_allowed_by_workspace(&chosen) {
             return None;
         }
-        session.set_root(chosen.clone(), root_display.clone(), None);
+        session.set_root(
+            chosen.clone(),
+            root_display.clone(),
+            None,
+            RootUpdateSource::ResolvePath,
+            None,
+            source_tool,
+        );
         Some((chosen, root_display))
     }
 }

@@ -1,154 +1,17 @@
 use super::super::router::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
-use super::super::router::error::invalid_cursor_with_meta_details;
-use super::super::{
-    compute_grep_context_result, decode_cursor, GrepContextComputeOptions, GrepContextCursorV1,
-    GrepContextRequest,
-};
+use super::super::{compute_grep_context_result, GrepContextComputeOptions, GrepContextRequest};
 use super::candidates::is_disallowed_memory_file;
 use super::cursors::{snippet_kind_for_path, trimmed_non_empty_str};
+use super::grep_cursor::{
+    decode_grep_cursor, resolve_grep_pattern, resolve_grep_resume, GrepResumeCheck,
+};
 use super::{
     call_error, ReadPackContext, ReadPackNextAction, ReadPackRequest, ReadPackSection,
-    ReadPackSnippet, ResponseMode, CURSOR_VERSION, DEFAULT_GREP_CONTEXT, MAX_GREP_HUNKS,
-    MAX_GREP_MATCHES,
+    ReadPackSnippet, ResponseMode, DEFAULT_GREP_CONTEXT, MAX_GREP_HUNKS, MAX_GREP_MATCHES,
 };
-use crate::tools::cursor::cursor_fingerprint;
 use crate::tools::schemas::content_format::ContentFormat;
-use context_indexer::{root_fingerprint, ToolMeta};
 use regex::RegexBuilder;
 use serde_json::json;
-
-fn decode_grep_cursor(cursor: Option<&str>) -> super::ToolResult<Option<GrepContextCursorV1>> {
-    let Some(cursor) = trimmed_non_empty_str(cursor) else {
-        return Ok(None);
-    };
-
-    let decoded: GrepContextCursorV1 = decode_cursor(cursor)
-        .map_err(|err| call_error("invalid_cursor", format!("Invalid cursor: {err}")))?;
-    Ok(Some(decoded))
-}
-
-fn validate_grep_cursor_tool_root(
-    decoded: &GrepContextCursorV1,
-    root_display: &str,
-) -> super::ToolResult<()> {
-    if decoded.v != CURSOR_VERSION || (decoded.tool != "rg" && decoded.tool != "grep_context") {
-        return Err(call_error(
-            "invalid_cursor",
-            "Invalid cursor: wrong tool (expected rg)",
-        ));
-    }
-    let expected_root_hash = cursor_fingerprint(root_display);
-    let expected_root_fingerprint = root_fingerprint(root_display);
-    if let Some(hash) = decoded.root_hash {
-        if hash != expected_root_hash {
-            return Err(invalid_cursor_with_meta_details(
-                "Invalid cursor: different root",
-                ToolMeta {
-                    root_fingerprint: Some(expected_root_fingerprint),
-                    ..ToolMeta::default()
-                },
-                json!({
-                    "expected_root_fingerprint": expected_root_fingerprint,
-                    "cursor_root_fingerprint": Some(hash),
-                }),
-            ));
-        }
-    } else if decoded.root.as_deref() != Some(root_display) {
-        let cursor_root_fingerprint = decoded.root.as_deref().map(root_fingerprint);
-        return Err(invalid_cursor_with_meta_details(
-            "Invalid cursor: different root",
-            ToolMeta {
-                root_fingerprint: Some(expected_root_fingerprint),
-                ..ToolMeta::default()
-            },
-            json!({
-                "expected_root_fingerprint": expected_root_fingerprint,
-                "cursor_root_fingerprint": cursor_root_fingerprint,
-            }),
-        ));
-    }
-    Ok(())
-}
-
-fn resolve_grep_pattern(
-    request_pattern: Option<&str>,
-    cursor_payload: Option<&GrepContextCursorV1>,
-    root_display: &str,
-) -> super::ToolResult<String> {
-    if let Some(pattern) = trimmed_non_empty_str(request_pattern) {
-        return Ok(pattern.to_string());
-    }
-
-    if let Some(decoded) = cursor_payload {
-        validate_grep_cursor_tool_root(decoded, root_display)?;
-        return Ok(decoded.pattern.clone());
-    }
-
-    Err(call_error(
-        "missing_field",
-        "Error: pattern is required for intent=grep",
-    ))
-}
-
-struct GrepResumeCheck<'a> {
-    pattern: &'a str,
-    file: Option<&'a String>,
-    file_pattern: Option<&'a String>,
-    case_sensitive: bool,
-    before: usize,
-    after: usize,
-    allow_secrets: bool,
-}
-
-fn resolve_grep_resume(
-    cursor_payload: Option<&GrepContextCursorV1>,
-    root_display: &str,
-    check: &GrepResumeCheck<'_>,
-) -> super::ToolResult<(Option<String>, usize)> {
-    let Some(decoded) = cursor_payload else {
-        return Ok((None, 1));
-    };
-    validate_grep_cursor_tool_root(decoded, root_display)?;
-
-    if decoded.pattern != check.pattern {
-        return Err(call_error(
-            "invalid_cursor",
-            "Invalid cursor: different pattern",
-        ));
-    }
-    if decoded.file.as_ref() != check.file {
-        return Err(call_error(
-            "invalid_cursor",
-            "Invalid cursor: different file",
-        ));
-    }
-    if decoded.file_pattern.as_ref() != check.file_pattern {
-        return Err(call_error(
-            "invalid_cursor",
-            "Invalid cursor: different file_pattern",
-        ));
-    }
-    if decoded.case_sensitive != check.case_sensitive
-        || decoded.before != check.before
-        || decoded.after != check.after
-    {
-        return Err(call_error(
-            "invalid_cursor",
-            "Invalid cursor: different search options",
-        ));
-    }
-    if decoded.allow_secrets != check.allow_secrets {
-        return Err(call_error(
-            "invalid_cursor",
-            "Invalid cursor: different allow_secrets",
-        ));
-    }
-
-    Ok((
-        Some(decoded.resume_file.clone()),
-        decoded.resume_line.max(1),
-    ))
-}
 
 pub(super) async fn handle_grep_intent(
     service: &super::ContextFinderService,
@@ -169,11 +32,7 @@ pub(super) async fn handle_grep_intent(
     };
 
     let cursor_payload = decode_grep_cursor(expanded_cursor.as_deref())?;
-    let pattern = resolve_grep_pattern(
-        request.pattern.as_deref(),
-        cursor_payload.as_ref(),
-        &ctx.root_display,
-    )?;
+    let pattern = resolve_grep_pattern(request.pattern.as_deref(), cursor_payload.as_ref(), ctx)?;
 
     let case_sensitive = request
         .case_sensitive
@@ -227,7 +86,7 @@ pub(super) async fn handle_grep_intent(
         allow_secrets,
     };
     let (resume_file, resume_line) =
-        resolve_grep_resume(cursor_payload.as_ref(), &ctx.root_display, &resume_check)?;
+        resolve_grep_resume(cursor_payload.as_ref(), ctx, &resume_check)?;
 
     let grep_max_chars = (ctx.inner_max_chars / 2).max(200);
     let grep_content_max_chars = super::super::router::grep_context::grep_context_content_budget(

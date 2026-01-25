@@ -118,7 +118,10 @@ pub(in crate::tools::dispatch) async fn context(
         ));
     }
 
-    let (root, root_display) = match service.resolve_root(request.path.as_deref()).await {
+    let (root, root_display) = match service
+        .resolve_root_for_tool(request.path.as_deref(), "context")
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
             let meta = if response_mode == ResponseMode::Minimal {

@@ -33,6 +33,7 @@ Notes:
 - For `search` / `context` / `context_pack`, a **relative** `path` with an existing session root is treated as an in-repo scope hint (`include_paths` / `file_pattern`) instead of switching roots. Use `root_set` or an absolute `path` to switch projects.
 - In shared daemon mode, a relative `path` without roots fails closed to avoid cross-project mixups.
 - `root_get` / `root_set` are the explicit, multi-session-safe way to introspect or change the active session root (see `crates/mcp-server/src/tools/schemas/root.rs`).
+- `root_get` includes `last_root_set` and `last_root_update` snapshots to debug unexpected root drift.
 - Agent-proof ergonomics: in an established session, some tools treat a **relative** `path` as an *in-project hint* (did-you-mean) instead of switching project roots (see schema descriptions: `crates/mcp-server/src/tools/schemas/map.rs`, `crates/mcp-server/src/tools/schemas/read_pack.rs`, `crates/mcp-server/src/tools/schemas/context_pack.rs`, `crates/mcp-server/src/tools/schemas/meaning_focus.rs`).
 
 Every project-scoped tool response includes a `root_fingerprint` note in the `.context` output so clients can detect accidental cross-project context mixups without exposing absolute filesystem paths.

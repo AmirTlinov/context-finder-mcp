@@ -13,7 +13,7 @@ type ToolResult<T> = std::result::Result<T, CallToolResult>;
 
 use super::error::{
     attach_meta, attach_structured_content, internal_error, internal_error_with_meta,
-    invalid_request, invalid_request_with_meta, meta_for_request,
+    invalid_request, meta_for_request,
 };
 use super::semantic_fallback::{grep_fallback_hunks, is_semantic_unavailable_error};
 
@@ -209,7 +209,10 @@ pub(in crate::tools::dispatch) async fn explain(
     let path = request.path;
     let symbol = request.symbol;
     let language = request.language;
-    let (root, root_display) = match service.resolve_root(path.as_deref()).await {
+    let (root, root_display) = match service
+        .resolve_root_for_tool(path.as_deref(), "explain")
+        .await
+    {
         Ok(value) => value,
         Err(message) => {
             let meta = if response_mode == ResponseMode::Minimal {
@@ -217,7 +220,14 @@ pub(in crate::tools::dispatch) async fn explain(
             } else {
                 meta_for_request(service, path.as_deref()).await
             };
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(super::error::invalid_request_with_root_context(
+                service,
+                message,
+                meta,
+                None,
+                Vec::new(),
+            )
+            .await);
         }
     };
     let policy = AutoIndexPolicy::from_request(request.auto_index, request.auto_index_budget_ms);

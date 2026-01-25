@@ -7,5 +7,7 @@ pub(super) use resolve::{
     hint_score_for_root, rel_path_string, resolve_root_from_absolute_hints, root_path_from_mcp_uri,
     scope_hint_from_relative_path,
 };
-pub(super) use service::workspace_roots_preview;
-pub(super) use session_defaults::{trimmed_non_empty, SessionDefaults};
+pub(super) use service::{root_context_details, workspace_roots_preview};
+pub(super) use session_defaults::{
+    trimmed_non_empty, RootUpdateSnapshot, RootUpdateSource, SessionDefaults,
+};

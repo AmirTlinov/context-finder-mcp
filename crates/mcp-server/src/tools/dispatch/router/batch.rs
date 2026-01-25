@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use super::error::{
     attach_meta, attach_structured_content, invalid_request, invalid_request_with,
-    invalid_request_with_meta, meta_for_request,
+    invalid_request_with_meta, invalid_request_with_root_context, meta_for_request,
 };
 const DEFAULT_MAX_CHARS: usize = 2_000;
 const MAX_MAX_CHARS: usize = 500_000;
@@ -747,7 +747,7 @@ pub(in crate::tools::dispatch) async fn batch(
     }
 
     let inferred_path = match service
-        .resolve_root_no_daemon_touch(request.path.as_deref())
+        .resolve_root_no_daemon_touch_for_tool(request.path.as_deref(), "batch")
         .await
     {
         Ok((root, root_display)) => {
@@ -759,7 +759,9 @@ pub(in crate::tools::dispatch) async fn batch(
             Some(root_display)
         }
         Err(message) => {
-            return Ok(invalid_request_with_meta(message, meta, None, Vec::new()));
+            return Ok(
+                invalid_request_with_root_context(service, message, meta, None, Vec::new()).await,
+            );
         }
     };
     let mut runner = BatchRunner::new(service, version, max_chars, inferred_path, response_mode)

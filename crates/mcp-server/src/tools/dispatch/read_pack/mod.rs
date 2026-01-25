@@ -1,7 +1,7 @@
 use super::router::cursor_alias::{compact_cursor_alias, expand_cursor_alias};
 use super::router::error::{
     attach_meta, attach_structured_content, invalid_cursor_with_meta_details, invalid_request_with,
-    invalid_request_with_meta, meta_for_request, tool_error,
+    invalid_request_with_root_context, meta_for_request, tool_error,
 };
 use super::{
     decode_cursor, encode_cursor, finalize_read_pack_budget, AutoIndexPolicy, CallToolResult,
@@ -25,6 +25,7 @@ mod anchor_scan;
 mod candidates;
 mod cursors;
 mod fs_scan;
+mod grep_cursor;
 mod intent_file;
 mod intent_grep;
 mod intent_memory;
@@ -34,6 +35,9 @@ mod intent_recall;
 mod memory_cursor;
 mod memory_overview;
 mod memory_snippets;
+mod onboarding_command;
+mod onboarding_docs;
+mod onboarding_topics;
 mod project_facts;
 mod recall;
 
@@ -1557,17 +1561,19 @@ pub(in crate::tools::dispatch) async fn read_pack(
         }
     }
     let (root, root_display) = match service
-        .resolve_root_with_hints(request.path.as_deref(), &hints)
+        .resolve_root_with_hints_for_tool(request.path.as_deref(), &hints, "read_pack")
         .await
     {
         Ok(value) => value,
         Err(message) => {
-            return Ok(invalid_request_with_meta(
+            return Ok(invalid_request_with_root_context(
+                service,
                 message,
                 ToolMeta::default(),
                 None,
                 Vec::new(),
-            ))
+            )
+            .await)
         }
     };
     let base_meta = service.tool_meta(&root).await;
