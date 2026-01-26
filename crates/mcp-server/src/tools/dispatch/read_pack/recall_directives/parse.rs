@@ -1,10 +1,15 @@
-use super::candidates::is_disallowed_memory_file;
-use super::cursors::limits::{MAX_RECALL_FILTER_PATH_BYTES, MAX_RECALL_SNIPPETS_PER_QUESTION};
-use super::cursors::trim_utf8_bytes;
-use super::recall::parse_path_token;
+use super::super::candidates::is_disallowed_memory_file;
+use super::super::cursors::limits::{
+    MAX_RECALL_FILTER_PATH_BYTES, MAX_RECALL_SNIPPETS_PER_QUESTION,
+};
+use super::super::cursors::trim_utf8_bytes;
+use super::super::recall::parse_path_token;
+use super::policy::RecallQuestionMode;
 use std::path::Path;
 
-pub(super) fn parse_recall_regex_directive(question: &str) -> Option<String> {
+pub(in crate::tools::dispatch::read_pack) fn parse_recall_regex_directive(
+    question: &str,
+) -> Option<String> {
     let q = question.trim();
     let lowered = q.to_ascii_lowercase();
     for prefix in ["re:", "regex:"] {
@@ -19,7 +24,9 @@ pub(super) fn parse_recall_regex_directive(question: &str) -> Option<String> {
     None
 }
 
-pub(super) fn parse_recall_literal_directive(question: &str) -> Option<String> {
+pub(in crate::tools::dispatch::read_pack) fn parse_recall_literal_directive(
+    question: &str,
+) -> Option<String> {
     let q = question.trim();
     let lowered = q.to_ascii_lowercase();
     for prefix in ["lit:", "literal:"] {
@@ -34,41 +41,15 @@ pub(super) fn parse_recall_literal_directive(question: &str) -> Option<String> {
     None
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum RecallQuestionMode {
-    #[default]
-    Auto,
-    Fast,
-    Deep,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct RecallQuestionPolicy {
-    pub(super) allow_semantic: bool,
-}
-
-pub(super) fn recall_question_policy(
-    mode: RecallQuestionMode,
-    semantic_index_fresh: bool,
-) -> RecallQuestionPolicy {
-    let allow_semantic = match mode {
-        RecallQuestionMode::Fast => false,
-        RecallQuestionMode::Deep => true,
-        RecallQuestionMode::Auto => semantic_index_fresh,
-    };
-
-    RecallQuestionPolicy { allow_semantic }
-}
-
 #[derive(Debug, Default)]
-pub(super) struct RecallQuestionDirectives {
-    pub(super) mode: RecallQuestionMode,
-    pub(super) snippet_limit: Option<usize>,
-    pub(super) grep_context: Option<usize>,
-    pub(super) include_paths: Vec<String>,
-    pub(super) exclude_paths: Vec<String>,
-    pub(super) file_pattern: Option<String>,
-    pub(super) file_ref: Option<(String, Option<usize>)>,
+pub(in crate::tools::dispatch::read_pack) struct RecallQuestionDirectives {
+    pub(in crate::tools::dispatch::read_pack) mode: RecallQuestionMode,
+    pub(in crate::tools::dispatch::read_pack) snippet_limit: Option<usize>,
+    pub(in crate::tools::dispatch::read_pack) grep_context: Option<usize>,
+    pub(in crate::tools::dispatch::read_pack) include_paths: Vec<String>,
+    pub(in crate::tools::dispatch::read_pack) exclude_paths: Vec<String>,
+    pub(in crate::tools::dispatch::read_pack) file_pattern: Option<String>,
+    pub(in crate::tools::dispatch::read_pack) file_ref: Option<(String, Option<usize>)>,
 }
 
 fn normalize_recall_directive_prefix(raw: &str) -> Option<String> {
@@ -116,7 +97,7 @@ fn parse_duration_ms_token(raw: &str) -> Option<u64> {
     lowered.parse::<u64>().ok()
 }
 
-pub(super) fn parse_recall_question_directives(
+pub(in crate::tools::dispatch::read_pack) fn parse_recall_question_directives(
     question: &str,
     root: &Path,
 ) -> (String, RecallQuestionDirectives) {
@@ -248,16 +229,4 @@ pub(super) fn parse_recall_question_directives(
 
     let cleaned = remaining.join(" ").trim().to_string();
     (cleaned, directives)
-}
-
-pub(super) fn build_semantic_query(question: &str, topics: Option<&Vec<String>>) -> String {
-    let Some(topics) = topics else {
-        return question.to_string();
-    };
-    if topics.is_empty() {
-        return question.to_string();
-    }
-
-    let joined = topics.join(", ");
-    format!("{question}\n\nTopics: {joined}")
 }
