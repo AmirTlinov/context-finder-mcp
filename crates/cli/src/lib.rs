@@ -537,63 +537,6 @@ fn parse_cache_backend(value: &str) -> Result<CacheBackend> {
 }
 
 fn resolve_cache_dir(raw: &str) -> PathBuf {
-    const DEFAULT: &str = ".agents/mcp/.context/cache";
-    const LEGACY: &str = ".context/cache";
-    const LEGACY_FINDER: &str = ".context-finder/cache";
-
-    const LEGACY_AGENTS: &str = ".agents/mcp/context/.context/cache";
-
-    if raw == DEFAULT {
-        let preferred = PathBuf::from(raw);
-        if preferred.exists() {
-            return preferred;
-        }
-        let legacy_agents = PathBuf::from(LEGACY_AGENTS);
-        if legacy_agents.exists() {
-            return legacy_agents;
-        }
-        let legacy_context = PathBuf::from(LEGACY);
-        if legacy_context.exists() {
-            return legacy_context;
-        }
-        let legacy_finder = PathBuf::from(LEGACY_FINDER);
-        if legacy_finder.exists() {
-            return legacy_finder;
-        }
-        return preferred;
-    }
-
-    if raw == LEGACY_AGENTS {
-        let preferred = PathBuf::from(raw);
-        if preferred.exists() {
-            return preferred;
-        }
-        let new_default = PathBuf::from(DEFAULT);
-        if new_default.exists() {
-            return new_default;
-        }
-        let legacy_context = PathBuf::from(LEGACY);
-        if legacy_context.exists() {
-            return legacy_context;
-        }
-        let legacy_finder = PathBuf::from(LEGACY_FINDER);
-        if legacy_finder.exists() {
-            return legacy_finder;
-        }
-        return preferred;
-    }
-
-    if raw == LEGACY {
-        let preferred = PathBuf::from(raw);
-        if preferred.exists() {
-            return preferred;
-        }
-        let legacy_finder = PathBuf::from(LEGACY_FINDER);
-        if legacy_finder.exists() {
-            return legacy_finder;
-        }
-        return preferred;
-    }
     PathBuf::from(raw)
 }
 

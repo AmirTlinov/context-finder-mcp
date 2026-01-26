@@ -1,7 +1,5 @@
-use super::super::{
-    render_read_pack_context_doc, ReadPackBudget, ReadPackIntent, ReadPackResult, ReadPackSection,
-    ResponseMode,
-};
+use super::super::render::render_read_pack_context_doc;
+use super::super::{ReadPackBudget, ReadPackIntent, ReadPackResult, ReadPackSection, ResponseMode};
 use context_protocol::ToolNextAction;
 
 #[test]

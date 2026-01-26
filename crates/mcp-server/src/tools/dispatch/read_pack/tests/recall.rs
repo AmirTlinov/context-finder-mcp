@@ -1,10 +1,11 @@
+use super::super::context::build_context;
+use super::super::intent_recall::handle_recall_intent;
 use super::super::recall_directives::{
     parse_recall_question_directives, recall_question_policy, RecallQuestionMode,
 };
 use super::super::recall_keywords::best_keyword_pattern;
 use super::super::recall_snippets::{snippets_from_grep_filtered, GrepSnippetParams};
-use super::super::context::build_context;
-use super::super::{handle_recall_intent, ContextFinderService, ReadPackSection, ResponseMode};
+use super::super::{ContextFinderService, ReadPackSection, ResponseMode};
 use super::support::base_request;
 use tempfile::tempdir;
 

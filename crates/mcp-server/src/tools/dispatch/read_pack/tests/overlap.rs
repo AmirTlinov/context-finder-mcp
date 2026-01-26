@@ -1,6 +1,6 @@
+use super::super::overlap::{overlap_dedupe_snippet_sections, strip_snippet_reasons_for_output};
 use super::super::{
-    overlap_dedupe_snippet_sections, strip_snippet_reasons_for_output, ProjectFactsResult,
-    ReadPackSection, ReadPackSnippet, ReadPackSnippetKind, REASON_ANCHOR_DOC,
+    ProjectFactsResult, ReadPackSection, ReadPackSnippet, ReadPackSnippetKind, REASON_ANCHOR_DOC,
     REASON_ANCHOR_FOCUS_FILE, REASON_NEEDLE_FILE_SLICE,
 };
 
