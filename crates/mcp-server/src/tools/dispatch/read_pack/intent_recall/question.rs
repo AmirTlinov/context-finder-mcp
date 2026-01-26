@@ -1,4 +1,4 @@
-use super::super::cursors::{MAX_RECALL_FILTER_PATHS, MAX_RECALL_SNIPPETS_PER_QUESTION};
+use super::super::cursors::limits::{MAX_RECALL_FILTER_PATHS, MAX_RECALL_SNIPPETS_PER_QUESTION};
 use super::super::recall::extract_existing_file_ref;
 use super::super::recall::recall_structural_intent;
 use super::super::recall::OpsIntent;

@@ -1,7 +1,6 @@
 use super::candidates::is_disallowed_memory_file;
-use super::cursors::{
-    trim_utf8_bytes, MAX_RECALL_FILTER_PATH_BYTES, MAX_RECALL_SNIPPETS_PER_QUESTION,
-};
+use super::cursors::limits::{MAX_RECALL_FILTER_PATH_BYTES, MAX_RECALL_SNIPPETS_PER_QUESTION};
+use super::cursors::trim_utf8_bytes;
 use super::recall::parse_path_token;
 use std::path::Path;
 

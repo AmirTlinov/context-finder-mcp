@@ -1,4 +1,5 @@
-use super::super::cursors::{snippet_kind_for_path, MAX_RECALL_SNIPPETS_PER_QUESTION};
+use super::super::cursors::limits::MAX_RECALL_SNIPPETS_PER_QUESTION;
+use super::super::cursors::snippet_kind_for_path;
 use super::super::recall_keywords::recall_keyword_patterns;
 use super::super::recall_scoring::{recall_has_code_snippet, score_recall_snippet};
 use super::super::ToolResult;

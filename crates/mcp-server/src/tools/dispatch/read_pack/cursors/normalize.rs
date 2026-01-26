@@ -1,94 +1,16 @@
-use serde::Deserialize;
+use super::super::{ReadPackRequest, ReadPackSnippetKind};
+use super::limits::{
+    MAX_RECALL_FILTER_PATHS, MAX_RECALL_FILTER_PATH_BYTES, MAX_RECALL_QUESTIONS,
+    MAX_RECALL_QUESTION_BYTES, MAX_RECALL_QUESTION_CHARS, MAX_RECALL_TOPICS,
+    MAX_RECALL_TOPIC_BYTES, MAX_RECALL_TOPIC_CHARS,
+};
 use std::path::Path;
-
-use super::{ReadPackRequest, ReadPackSnippetKind, ResponseMode};
 
 pub(crate) fn trimmed_non_empty_str(input: Option<&str>) -> Option<&str> {
     input.map(str::trim).filter(|value| !value.is_empty())
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct CursorHeader {
-    pub(super) v: u32,
-    pub(super) tool: String,
-    #[serde(default)]
-    pub(super) mode: Option<String>,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-pub(super) struct ReadPackMemoryCursorV1 {
-    pub(super) v: u32,
-    pub(super) tool: String,
-    pub(super) mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) root_hash: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) max_chars: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) response_mode: Option<ResponseMode>,
-    pub(super) next_candidate_index: usize,
-    pub(super) entrypoint_done: bool,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-pub(super) struct ReadPackRecallCursorV1 {
-    pub(super) v: u32,
-    pub(super) tool: String,
-    pub(super) mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) root_hash: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) max_chars: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) response_mode: Option<ResponseMode>,
-    pub(super) questions: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) topics: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) include_paths: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) exclude_paths: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) file_pattern: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) prefer_code: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) include_docs: Option<bool>,
-    #[serde(default)]
-    pub(super) allow_secrets: bool,
-    pub(super) next_question_index: usize,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-pub(super) struct ReadPackRecallCursorStoredV1 {
-    pub(super) v: u32,
-    pub(super) tool: String,
-    pub(super) mode: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) root_hash: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) max_chars: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) response_mode: Option<ResponseMode>,
-    pub(super) store_id: u64,
-}
-
-pub(super) const MAX_RECALL_QUESTIONS: usize = 12;
-pub(super) const MAX_RECALL_QUESTION_CHARS: usize = 220;
-pub(super) const MAX_RECALL_QUESTION_BYTES: usize = 384;
-pub(super) const MAX_RECALL_TOPICS: usize = 8;
-pub(super) const MAX_RECALL_TOPIC_CHARS: usize = 80;
-pub(super) const MAX_RECALL_TOPIC_BYTES: usize = 192;
-pub(super) const DEFAULT_RECALL_SNIPPETS_PER_QUESTION: usize = 3;
-pub(super) const MAX_RECALL_SNIPPETS_PER_QUESTION: usize = 5;
-
-pub(super) fn trim_chars(s: &str, max_chars: usize) -> String {
+pub(in crate::tools::dispatch::read_pack) fn trim_chars(s: &str, max_chars: usize) -> String {
     let mut out = String::new();
     for (idx, ch) in s.chars().enumerate() {
         if idx >= max_chars {
@@ -99,7 +21,7 @@ pub(super) fn trim_chars(s: &str, max_chars: usize) -> String {
     out.trim().to_string()
 }
 
-pub(super) fn trim_utf8_bytes(s: &str, max_bytes: usize) -> String {
+pub(in crate::tools::dispatch::read_pack) fn trim_utf8_bytes(s: &str, max_bytes: usize) -> String {
     let trimmed = s.trim();
     if trimmed.len() <= max_bytes {
         return trimmed.to_string();
@@ -112,7 +34,9 @@ pub(super) fn trim_utf8_bytes(s: &str, max_bytes: usize) -> String {
     trimmed[..end].trim().to_string()
 }
 
-pub(super) fn normalize_questions(request: &ReadPackRequest) -> Vec<String> {
+pub(in crate::tools::dispatch::read_pack) fn normalize_questions(
+    request: &ReadPackRequest,
+) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(questions) = request.questions.as_ref() {
         for q in questions {
@@ -153,7 +77,9 @@ pub(super) fn normalize_questions(request: &ReadPackRequest) -> Vec<String> {
     out
 }
 
-pub(super) fn normalize_topics(request: &ReadPackRequest) -> Option<Vec<String>> {
+pub(in crate::tools::dispatch::read_pack) fn normalize_topics(
+    request: &ReadPackRequest,
+) -> Option<Vec<String>> {
     let topics = request.topics.as_ref()?;
 
     let mut out = Vec::new();
@@ -175,10 +101,9 @@ pub(super) fn normalize_topics(request: &ReadPackRequest) -> Option<Vec<String>>
     }
 }
 
-pub(super) const MAX_RECALL_FILTER_PATHS: usize = 16;
-pub(super) const MAX_RECALL_FILTER_PATH_BYTES: usize = 120;
-
-pub(super) fn normalize_path_prefix_list(raw: Option<&Vec<String>>) -> Vec<String> {
+pub(in crate::tools::dispatch::read_pack) fn normalize_path_prefix_list(
+    raw: Option<&Vec<String>>,
+) -> Vec<String> {
     let Some(values) = raw else {
         return Vec::new();
     };
@@ -196,11 +121,15 @@ pub(super) fn normalize_path_prefix_list(raw: Option<&Vec<String>>) -> Vec<Strin
     out
 }
 
-pub(super) fn normalize_optional_pattern(raw: Option<&str>) -> Option<String> {
+pub(in crate::tools::dispatch::read_pack) fn normalize_optional_pattern(
+    raw: Option<&str>,
+) -> Option<String> {
     trimmed_non_empty_str(raw).map(|value| trim_utf8_bytes(value, MAX_RECALL_FILTER_PATH_BYTES))
 }
 
-pub(super) fn snippet_kind_for_path(path: &str) -> ReadPackSnippetKind {
+pub(in crate::tools::dispatch::read_pack) fn snippet_kind_for_path(
+    path: &str,
+) -> ReadPackSnippetKind {
     let normalized = path.replace('\\', "/");
     let file_name = Path::new(&normalized)
         .file_name()

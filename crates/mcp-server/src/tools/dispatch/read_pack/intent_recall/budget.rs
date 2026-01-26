@@ -1,4 +1,4 @@
-use super::super::cursors::DEFAULT_RECALL_SNIPPETS_PER_QUESTION;
+use super::super::cursors::limits::DEFAULT_RECALL_SNIPPETS_PER_QUESTION;
 use super::super::ReadPackContext;
 
 pub(super) struct RecallBudget {

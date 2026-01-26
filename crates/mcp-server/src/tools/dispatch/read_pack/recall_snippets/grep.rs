@@ -2,9 +2,8 @@ use super::super::super::router::grep_context::grep_context_content_budget;
 use super::super::super::{
     compute_grep_context_result, GrepContextComputeOptions, GrepContextRequest,
 };
-use super::super::cursors::{
-    snippet_kind_for_path, MAX_RECALL_FILTER_PATHS, MAX_RECALL_SNIPPETS_PER_QUESTION,
-};
+use super::super::cursors::limits::{MAX_RECALL_FILTER_PATHS, MAX_RECALL_SNIPPETS_PER_QUESTION};
+use super::super::cursors::snippet_kind_for_path;
 use super::super::recall_paths::{recall_path_allowed, scan_file_pattern_for_include_prefix};
 use super::super::{
     call_error, ContextFinderService, ReadPackContext, ReadPackSnippet, ResponseMode, ToolResult,
