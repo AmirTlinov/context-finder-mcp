@@ -1,12 +1,6 @@
 use super::super::router::error::{attach_meta, attach_structured_content};
 use super::budget_trim::{finalize_and_trim, trim_project_facts_for_budget};
 use super::cursor_repair::repair_cursor_after_trim;
-use super::intent_file::handle_file_intent;
-use super::intent_grep::handle_grep_intent;
-use super::intent_memory::handle_memory_intent;
-use super::intent_onboarding::handle_onboarding_intent;
-use super::intent_query::{handle_query_intent, QueryIntentPolicy};
-use super::intent_recall::handle_recall_intent;
 use super::overlap::{overlap_dedupe_snippet_sections, strip_snippet_reasons_for_output};
 use super::prepare::{prepare_read_pack, PreparedReadPack};
 use super::project_facts::compute_project_facts;
@@ -14,10 +8,13 @@ use super::render::{apply_meta_to_sections, render_read_pack_context_doc, trunca
 use super::session::note_session_working_set_from_read_pack_result;
 use super::{
     finalize_read_pack_budget, CallToolResult, Content, ContextFinderService, McpError,
-    ReadPackBudget, ReadPackIntent, ReadPackNextAction, ReadPackRequest, ReadPackResult,
-    ReadPackSection, ReadPackTruncation, ResponseMode, VERSION,
+    ReadPackBudget, ReadPackNextAction, ReadPackRequest, ReadPackResult, ReadPackSection,
+    ReadPackTruncation, ResponseMode, VERSION,
 };
 use std::time::Duration;
+
+mod dispatch;
+use dispatch::{dispatch_intent, DispatchIntentParams};
 
 /// Build a one-call semantic reading pack (file slice / grep context / context pack / onboarding).
 pub(in crate::tools::dispatch) async fn read_pack(
@@ -58,71 +55,20 @@ pub(in crate::tools::dispatch) async fn read_pack(
     });
 
     let handler_future = async {
-        match intent {
-            ReadPackIntent::Auto => unreachable!("auto intent resolved above"),
-            ReadPackIntent::File => {
-                handle_file_intent(
-                    service,
-                    &ctx,
-                    &request,
-                    response_mode,
-                    &mut sections,
-                    &mut next_actions,
-                    &mut next_cursor,
-                )
-                .await
-            }
-            ReadPackIntent::Grep => {
-                handle_grep_intent(
-                    service,
-                    &ctx,
-                    &request,
-                    response_mode,
-                    &mut sections,
-                    &mut next_actions,
-                    &mut next_cursor,
-                )
-                .await
-            }
-            ReadPackIntent::Query => {
-                handle_query_intent(
-                    service,
-                    &ctx,
-                    &request,
-                    response_mode,
-                    QueryIntentPolicy { allow_secrets },
-                    &mut sections,
-                )
-                .await
-            }
-            ReadPackIntent::Onboarding => {
-                handle_onboarding_intent(&ctx, &request, response_mode, &facts, &mut sections).await
-            }
-            ReadPackIntent::Memory => {
-                handle_memory_intent(
-                    service,
-                    &ctx,
-                    &request,
-                    response_mode,
-                    &mut sections,
-                    &mut next_actions,
-                    &mut next_cursor,
-                )
-                .await
-            }
-            ReadPackIntent::Recall => {
-                handle_recall_intent(
-                    service,
-                    &ctx,
-                    &request,
-                    response_mode,
-                    semantic_index_fresh,
-                    &mut sections,
-                    &mut next_cursor,
-                )
-                .await
-            }
-        }
+        dispatch_intent(DispatchIntentParams {
+            service,
+            ctx: &ctx,
+            request: &request,
+            response_mode,
+            intent,
+            allow_secrets,
+            semantic_index_fresh,
+            facts: &facts,
+            sections: &mut sections,
+            next_actions: &mut next_actions,
+            next_cursor: &mut next_cursor,
+        })
+        .await
     };
     let handler_result =
         match tokio::time::timeout(Duration::from_millis(timeout_ms), handler_future).await {
