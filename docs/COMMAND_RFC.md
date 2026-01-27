@@ -2,7 +2,7 @@
 
 ## 1. Goals
 
-- One CLI entry point for programmatic use: `context command --json '{...}'` (alias: `context-finder`).
+- One CLI entry point for programmatic use: `context command --json '{...}'` (legacy alias: `context-finder`).
 - A single JSON response envelope: `{status,hints,data,meta}`.
 - Reduce cognitive load: CLI subcommands build `CommandRequest` and reuse the same handler (or compose multiple requests).
 
@@ -182,6 +182,7 @@ Interpretation highlights:
 
 - `context command --json '<request>'` prints the JSON `CommandResponse`.
 - `context serve-http --bind 127.0.0.1:7700` serves `POST /command` with the same request/response shape.
+- Binding to a non-loopback address requires `--public` and an auth token (`--auth-token` or `CONTEXT_AUTH_TOKEN`).
 - Subcommands like `search/index/context-pack/...` build a `CommandRequest` and reuse the same handler (or compose multiple requests).
 - Exit code is `0` if `status == "ok"`, otherwise `1`.
 

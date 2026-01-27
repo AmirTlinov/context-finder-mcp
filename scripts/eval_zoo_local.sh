@@ -100,7 +100,7 @@ fi
 args+=(--out-json "${out_json}" --out-md "${out_md}")
 
 # Deterministic local eval mode: no model downloads.
-export CONTEXT_FINDER_EMBEDDING_MODE=stub
+export CONTEXT_EMBEDDING_MODE=stub
 
 cargo run -q -p context-mcp --bin context-mcp-eval-zoo -- "${args[@]}"
 
@@ -109,4 +109,3 @@ if [[ -n "${compare_to}" ]]; then
 fi
 
 echo "OK: wrote ${out_json} and ${out_md}"
-

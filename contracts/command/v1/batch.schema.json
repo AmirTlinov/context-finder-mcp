@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "contracts/command/v1/batch.schema.json",
-  "title": "Context Finder Batch action payload/result (v1)",
+  "title": "Context Batch action payload/result (v1)",
   "description": "Command API batch (v1) executes multiple actions sequentially and returns a single bounded result. `$ref` wrapper semantics are shared with the MCP server `batch` tool (version 2) via `crates/batch-ref`.",
   "type": "object",
   "additionalProperties": false,

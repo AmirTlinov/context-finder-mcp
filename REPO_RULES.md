@@ -24,6 +24,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 ```
 
+Optional (real embeddings, GPU/ORT required):
+
+```bash
+bash scripts/validate_real_embeddings.sh
+```
+
+Optional (HTTP contract conformance smoke; runs local server and validates JSON envelopes):
+
+```bash
+bash scripts/validate_http_conformance.sh
+```
+
 If you need the full “daily driver” checklist, see `docs/QUALITY_CHARTER.md`.
 
 ## 3) Determinism by default

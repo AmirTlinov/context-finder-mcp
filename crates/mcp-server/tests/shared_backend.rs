@@ -1,43 +1,13 @@
 use anyhow::{Context, Result};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::Command;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 async fn wait_for_socket(socket: &Path) -> Result<()> {
     let mut retries = 0usize;
@@ -128,7 +98,7 @@ async fn spawn_shared_proxy_allow_daemon_spawn(
 
 #[tokio::test]
 async fn shared_backend_proxy_roundtrips_tool_calls() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");
@@ -194,7 +164,7 @@ async fn shared_backend_proxy_roundtrips_tool_calls() -> Result<()> {
 
 #[tokio::test]
 async fn shared_backend_proxy_accepts_tools_call_without_handshake() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");
@@ -278,7 +248,7 @@ async fn shared_backend_proxy_accepts_tools_call_without_handshake() -> Result<(
 
 #[tokio::test]
 async fn shared_backend_daemon_recovers_from_stale_socket_file() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");
@@ -345,7 +315,7 @@ async fn shared_backend_daemon_recovers_from_stale_socket_file() -> Result<()> {
 
 #[tokio::test]
 async fn shared_backend_proxy_injects_path_from_cwd_on_first_call() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");
@@ -407,7 +377,7 @@ async fn shared_backend_proxy_injects_path_from_cwd_on_first_call() -> Result<()
 
 #[tokio::test]
 async fn shared_backend_proxy_recovers_when_daemon_restarts() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");
@@ -508,7 +478,7 @@ async fn shared_backend_proxy_recovers_when_daemon_restarts() -> Result<()> {
 
 #[tokio::test]
 async fn shared_backend_proxy_restarts_daemon_when_binary_changes() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");
@@ -608,7 +578,7 @@ async fn shared_backend_proxy_restarts_daemon_when_binary_changes() -> Result<()
 
 #[tokio::test]
 async fn shared_backend_sessions_do_not_share_default_root() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");
@@ -740,7 +710,7 @@ async fn shared_backend_sessions_do_not_share_default_root() -> Result<()> {
 #[tokio::test]
 async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_update() -> Result<()>
 {
-    let original_bin = locate_context_finder_mcp_bin()?;
+    let original_bin = support::locate_context_mcp_bin()?;
 
     let bin_dir = tempfile::tempdir().context("tempdir for binary copy")?;
     let bin = bin_dir.path().join("context-finder-mcp");
@@ -914,7 +884,7 @@ async fn shared_backend_proxy_hot_reload_restarts_daemon_after_in_place_binary_u
 
 #[tokio::test]
 async fn shared_backend_proxy_recovers_from_unresponsive_daemon() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");

@@ -86,7 +86,7 @@ async fn daemon_tracks_multiple_projects_and_expires() -> Result<()> {
     let sock_dir = tempdir()?;
     let socket = sock_dir.path().join("daemon.sock");
 
-    let bin = assert_cmd::cargo::cargo_bin("context-finder");
+    let bin = assert_cmd::cargo::cargo_bin("context");
     let mut daemon = tokio::process::Command::new(bin)
         .arg("daemon-loop")
         .arg("--socket")
@@ -128,7 +128,7 @@ async fn ping_extends_project_ttl() -> Result<()> {
     let sock_dir = tempdir()?;
     let socket = sock_dir.path().join("daemon.sock");
 
-    let bin = assert_cmd::cargo::cargo_bin("context-finder");
+    let bin = assert_cmd::cargo::cargo_bin("context");
     let mut daemon = tokio::process::Command::new(bin)
         .arg("daemon-loop")
         .arg("--socket")
@@ -174,7 +174,7 @@ async fn daemon_single_instance_does_not_break_live_socket() -> Result<()> {
     let sock_dir = tempdir()?;
     let socket = sock_dir.path().join("daemon.sock");
 
-    let bin = assert_cmd::cargo::cargo_bin("context-finder");
+    let bin = assert_cmd::cargo::cargo_bin("context");
     let mut daemon1 = tokio::process::Command::new(&bin)
         .arg("daemon-loop")
         .arg("--socket")
@@ -233,7 +233,7 @@ async fn daemon_exits_when_idle_and_removes_socket() -> Result<()> {
     let sock_dir = tempdir()?;
     let socket = sock_dir.path().join("daemon.sock");
 
-    let bin = assert_cmd::cargo::cargo_bin("context-finder");
+    let bin = assert_cmd::cargo::cargo_bin("context");
     let mut daemon = tokio::process::Command::new(bin)
         .arg("daemon-loop")
         .arg("--socket")

@@ -58,6 +58,8 @@
     ],
     "reject": [
       { "pattern": ".git/", "kind": "contains" },
+      { "pattern": ".agents/mcp/.context", "kind": "contains" },
+      { "pattern": ".context/cache", "kind": "contains" },
       { "pattern": ".context-finder/cache", "kind": "contains" },
       { "pattern": "node_modules", "kind": "contains" },
       { "pattern": "dist/", "kind": "contains" },

@@ -7,7 +7,7 @@ pub fn render_eval_report(project_root: &Path, out: &EvalOutput) -> Result<Strin
     let git = git_head(project_root);
 
     let mut md = String::new();
-    md.push_str("# Context Finder eval report\n\n");
+    md.push_str("# Context eval report\n\n");
     md.push_str(&format!("- Project: `{}`\n", project_root.display()));
     md.push_str(&format!("- Git: `{}`\n", git.as_deref().unwrap_or("n/a")));
     md.push_str(&format!(
@@ -66,7 +66,7 @@ pub fn render_eval_compare_report(project_root: &Path, out: &EvalCompareOutput) 
     let git = git_head(project_root);
 
     let mut md = String::new();
-    md.push_str("# Context Finder eval compare report\n\n");
+    md.push_str("# Context eval compare report\n\n");
     md.push_str(&format!("- Project: `{}`\n", project_root.display()));
     md.push_str(&format!("- Git: `{}`\n", git.as_deref().unwrap_or("n/a")));
     md.push_str(&format!(
@@ -234,7 +234,7 @@ mod tests {
         };
 
         let md = render_eval_report(Path::new("/tmp"), &out).expect("report");
-        assert!(md.contains("# Context Finder eval report"));
+        assert!(md.contains("# Context eval report"));
         assert!(md.contains("## Runs"));
         assert!(md.contains("Worst cases"));
     }
@@ -314,7 +314,7 @@ mod tests {
         };
 
         let md = render_eval_compare_report(Path::new("/tmp"), &out).expect("report");
-        assert!(md.contains("# Context Finder eval compare report"));
+        assert!(md.contains("# Context eval compare report"));
         assert!(md.contains("Summary (B - A)"));
         assert!(md.contains("Top regressions"));
         assert!(md.contains("Top improvements"));

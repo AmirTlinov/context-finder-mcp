@@ -4,47 +4,14 @@ use context_indexer::{compute_project_watermark, write_index_watermark};
 use context_vector_store::{context_dir_for_project_root, StoredChunk};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    // Cargo doesn't always expose CARGO_BIN_EXE_* at runtime. Derive it from the test exe path:
-    // `.../target/{debug|release}/deps/<test>` → `.../target/{debug|release}/context-finder-mcp`
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 #[tokio::test]
 async fn search_full_mode_suggests_grep_context_when_semantic_disabled_and_no_hits() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let tmp = tempfile::tempdir().context("tempdir")?;
     let root = tmp.path();

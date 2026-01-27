@@ -3,10 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPS_DIR="${ROOT_DIR}/.deps/ort_cuda"
-BIN="${ROOT_DIR}/target/release/context-finder"
+
+BIN="${ROOT_DIR}/target/release/context"
+if [[ ! -x "${BIN}" ]]; then
+  BIN="${ROOT_DIR}/target/release/context-finder"
+fi
 
 if [[ ! -x "${BIN}" ]]; then
-  echo "[run_cf_cuda] binary not found at ${BIN}, build first (cargo build --release)" >&2
+  echo "[run_cf_cuda] binary not found (expected target/release/context), build first:" >&2
+  echo "  cargo build --release -p context-cli --bin context" >&2
+  echo "  (or legacy) cargo build --release -p context-cli --bin context-finder" >&2
   exit 1
 fi
 
@@ -25,4 +31,5 @@ else
   echo "[run_cf_cuda] ORT_DISABLE_CUDA=1 → running without local CUDA libraries" >&2
 fi
 
+echo "[run_cf_cuda] exec: ${BIN}" >&2
 exec "${BIN}" "$@"

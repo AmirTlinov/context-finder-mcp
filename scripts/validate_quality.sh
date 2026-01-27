@@ -9,6 +9,9 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 
+# Contract conformance smoke (HTTP surface).
+bash scripts/validate_http_conformance.sh
+
 tmp_json="$(mktemp)"
 tmp_repo="$(mktemp -d)"
 cleanup() {
@@ -30,10 +33,10 @@ tar \
   --exclude='./.deps' \
   -cf - . | tar -C "${tmp_repo}" -xf -
 
-CONTEXT_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- index "${tmp_repo}" \
+CONTEXT_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context -- index "${tmp_repo}" \
   --force --json --quiet >/dev/null
 
-CONTEXT_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context-finder -- eval "${tmp_repo}" \
+CONTEXT_EMBEDDING_MODE=stub cargo run -q -p context-cli --bin context -- eval "${tmp_repo}" \
   --dataset "${tmp_repo}/datasets/golden_stub_smoke.json" \
   --json --quiet > "${tmp_json}"
 

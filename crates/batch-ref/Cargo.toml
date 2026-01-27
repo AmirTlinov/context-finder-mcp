@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "JSON $ref resolver for Context Finder batch payloads"
+description = "JSON $ref resolver for Context batch payloads"
 
 [dependencies]
 serde_json.workspace = true

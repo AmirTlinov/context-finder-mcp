@@ -1,6 +1,7 @@
 use crate::cache::CacheConfig;
 use crate::command::infra::HealthPort;
 use crate::command::CommandRequest;
+use crate::server_security::AuthToken;
 use tonic::{Request, Response, Status};
 
 pub mod proto {
@@ -13,15 +14,37 @@ use proto::{CommandPayload, CommandReply, HealthReply, HealthRequest};
 #[derive(Clone)]
 pub struct GrpcServer {
     cache: CacheConfig,
+    auth_token: Option<AuthToken>,
 }
 
 impl GrpcServer {
-    pub fn new(cache: CacheConfig) -> Self {
-        Self { cache }
+    pub fn new(cache: CacheConfig, auth_token: Option<AuthToken>) -> Self {
+        Self { cache, auth_token }
+    }
+
+    pub fn auth_is_enabled(&self) -> bool {
+        self.auth_token.is_some()
     }
 
     pub fn into_server(self) -> CommandServiceServer<Self> {
         CommandServiceServer::new(self)
+    }
+
+    fn unauthorized<T>(&self, request: &Request<T>) -> Option<Status> {
+        let token = self.auth_token.as_ref()?;
+        let header = request
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        if token.matches_http_authorization_header(header) {
+            None
+        } else {
+            Some(Status::unauthenticated(
+                "missing or invalid authorization metadata",
+            ))
+        }
     }
 }
 
@@ -31,6 +54,9 @@ impl CommandService for GrpcServer {
         &self,
         request: Request<CommandPayload>,
     ) -> Result<Response<CommandReply>, Status> {
+        if let Some(status) = self.unauthorized(&request) {
+            return Err(status);
+        }
         let json = request.into_inner().json;
         let req: CommandRequest = serde_json::from_slice(&json)
             .map_err(|e| Status::invalid_argument(format!("invalid json: {e}")))?;
@@ -46,6 +72,9 @@ impl CommandService for GrpcServer {
         &self,
         request: Request<HealthRequest>,
     ) -> Result<Response<HealthReply>, Status> {
+        if let Some(status) = self.unauthorized(&request) {
+            return Err(status);
+        }
         let project = request.into_inner().project;
         let root = if project.is_empty() {
             std::env::current_dir()

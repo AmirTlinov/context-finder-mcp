@@ -119,7 +119,9 @@ rm -f "${DEPS_DIR}/libonnxruntime_providers_tensorrt.so" || true
 # Also install into a global, repo-independent location so MCP/CLI runs from *other* repos can
 # still find the CUDA provider + runtime libs without relying on the current working directory.
 if [[ -n "${HOME:-}" ]]; then
-  GLOBAL_DIR="${HOME}/.context-finder/deps/ort_cuda"
+  GLOBAL_DIR="${HOME}/.context/deps/ort_cuda"
+  LEGACY_DIR="${HOME}/.context-finder/deps/ort_cuda"
+
   echo "[setup_cuda_deps] installing to global cache: ${GLOBAL_DIR}"
   mkdir -p "${GLOBAL_DIR}"
   if command -v rsync >/dev/null 2>&1; then
@@ -128,6 +130,16 @@ if [[ -n "${HOME:-}" ]]; then
     rm -rf "${GLOBAL_DIR}"
     mkdir -p "${GLOBAL_DIR}"
     cp -a "${DEPS_DIR}/." "${GLOBAL_DIR}/"
+  fi
+
+  # Back-compat: keep the legacy cache location in sync.
+  mkdir -p "${LEGACY_DIR}"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "${GLOBAL_DIR}/" "${LEGACY_DIR}/"
+  else
+    rm -rf "${LEGACY_DIR}"
+    mkdir -p "${LEGACY_DIR}"
+    cp -a "${GLOBAL_DIR}/." "${LEGACY_DIR}/"
   fi
   echo "[setup_cuda_deps] global cache ready"
 fi

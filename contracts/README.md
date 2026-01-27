@@ -78,6 +78,12 @@ Primary code source:
 
 **What:** `context serve-http` HTTP surface.
 
+Notes:
+
+- By default, the server is intended for loopback binds. Binding to a non-loopback address requires
+  `--public`.
+- If `--auth-token` / `CONTEXT_AUTH_TOKEN` is set, endpoints require `Authorization: Bearer <token>`.
+
 **Contract (v1):**
 
 - `contracts/http/v1/openapi.json` (OpenAPI 3.1; references the JSON Schemas above)

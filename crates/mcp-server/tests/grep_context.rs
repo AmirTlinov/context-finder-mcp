@@ -5,41 +5,10 @@ use rmcp::{
     service::ServiceExt,
     transport::TokioChildProcess,
 };
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 fn tool_text(result: &CallToolResult) -> Result<&str> {
     result
@@ -52,7 +21,7 @@ fn tool_text(result: &CallToolResult) -> Result<&str> {
 
 #[tokio::test]
 async fn rg_works_without_index_and_merges_ranges() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -146,7 +115,7 @@ async fn rg_works_without_index_and_merges_ranges() -> Result<()> {
 
 #[tokio::test]
 async fn rg_can_be_case_insensitive_and_reports_max_chars_truncation() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -225,7 +194,7 @@ async fn rg_can_be_case_insensitive_and_reports_max_chars_truncation() -> Result
 
 #[tokio::test]
 async fn rg_budget_trimming_keeps_match_line_visible() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -292,7 +261,7 @@ async fn rg_budget_trimming_keeps_match_line_visible() -> Result<()> {
 
 #[tokio::test]
 async fn rg_minimal_small_budget_still_returns_payload_hunks() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -355,7 +324,7 @@ async fn rg_minimal_small_budget_still_returns_payload_hunks() -> Result<()> {
 
 #[tokio::test]
 async fn rg_supports_literal_mode_and_cursor_only_continuation() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -442,7 +411,7 @@ async fn rg_supports_literal_mode_and_cursor_only_continuation() -> Result<()> {
 
 #[tokio::test]
 async fn rg_tight_budget_max_chars_truncation_still_returns_cursor() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");

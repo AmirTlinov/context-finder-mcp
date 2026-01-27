@@ -1,4 +1,4 @@
-# Agent Development Rules (Context Finder)
+# Agent Development Rules (Context)
 
 This repository is built for **agent-first integrations**. To keep the system reliable and easy to evolve, all external behavior is managed **through contracts**.
 
@@ -53,6 +53,18 @@ scripts/validate_contracts.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
+```
+
+Optional (real embeddings smoke; requires models + CUDA/ORT, or CPU fallback via `CONTEXT_ALLOW_CPU=1`):
+
+```bash
+bash scripts/validate_real_embeddings.sh
+```
+
+Optional (HTTP contract conformance smoke; runs local server and validates JSON envelopes):
+
+```bash
+bash scripts/validate_http_conformance.sh
 ```
 
 Notes:

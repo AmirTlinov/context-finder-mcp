@@ -5,7 +5,7 @@ use tempfile::tempdir;
 
 #[allow(deprecated)]
 fn run_cli_raw(workdir: &std::path::Path, request: &str) -> (bool, Value) {
-    let output = Command::cargo_bin("context-finder")
+    let output = Command::cargo_bin("context")
         .expect("binary")
         .current_dir(workdir)
         .env("CONTEXT_EMBEDDING_MODE", "stub")

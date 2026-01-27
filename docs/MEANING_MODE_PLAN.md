@@ -288,7 +288,7 @@ We prefer integrating into existing components rather than inventing new layers.
 
 ### 6.1) Indexing pipeline
 
-Context Finder already builds:
+Context already builds:
 
 - a corpus (chunks + metadata)
 - a fuzzy index
@@ -379,7 +379,7 @@ We will not ship this based on vibes.
 
 ### 9.1) CI layer (mandatory)
 
-- deterministic mode (`CONTEXT_FINDER_EMBEDDING_MODE=stub`)
+- deterministic mode (`CONTEXT_EMBEDDING_MODE=stub`)
 - tests for:
   - no cross-root contamination
   - boundedness

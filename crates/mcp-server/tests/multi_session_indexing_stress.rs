@@ -2,43 +2,13 @@ use anyhow::{Context, Result};
 use context_vector_store::context_dir_for_project_root;
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tokio::net::UnixStream;
 use tokio::process::Command;
 use tokio::task::JoinSet;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 async fn wait_for_socket(socket: &Path) -> Result<()> {
     let mut retries = 0usize;
@@ -109,7 +79,7 @@ async fn spawn_shared_proxy(
 
 #[tokio::test]
 async fn concurrent_isolated_servers_index_same_project_without_corruption() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let tmp = tempfile::tempdir().context("temp project dir")?;
     let root = tmp.path();
@@ -181,7 +151,7 @@ async fn concurrent_isolated_servers_index_same_project_without_corruption() -> 
 
 #[tokio::test]
 async fn shared_backend_many_projects_concurrent_context_pack_is_stable() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let socket_dir = tempfile::tempdir().context("tempdir for mcp daemon socket")?;
     let socket = socket_dir.path().join("mcp.sock");

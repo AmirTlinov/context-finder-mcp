@@ -6,7 +6,6 @@ use super::batch::{
     compute_used_chars, extract_path_from_input, parse_tool_result_as_json, prepare_item_input,
     push_item_or_truncate, resolve_batch_refs, trim_output_to_budget,
 };
-use super::catalog;
 use super::cursor::{decode_cursor, encode_cursor, CURSOR_VERSION};
 use super::evidence_fetch::compute_evidence_fetch_result;
 use super::file_slice::compute_file_slice_result;
@@ -21,7 +20,6 @@ use super::notebook_apply_suggest::apply_notebook_apply_suggest;
 use super::notebook_edit::apply_notebook_edit;
 use super::notebook_pack::compute_notebook_pack_result;
 use super::notebook_suggest::compute_notebook_suggest_result;
-use super::paths::normalize_relative_path;
 use super::repo_onboarding_pack::compute_repo_onboarding_pack_result;
 use super::runbook_pack::compute_runbook_pack_result;
 use super::schemas::atlas_pack::AtlasPackRequest;
@@ -63,15 +61,11 @@ use super::schemas::response_mode::ResponseMode;
 use super::schemas::root::{RootGetRequest, RootGetResult, RootSetRequest, RootSetResult};
 use super::schemas::runbook_pack::RunbookPackRequest;
 pub(super) use super::schemas::search::{SearchRequest, SearchResponse, SearchResult};
-use super::schemas::text_search::{
-    TextSearchCursorModeV1, TextSearchCursorV1, TextSearchMatch, TextSearchRequest,
-    TextSearchResult,
-};
+use super::schemas::text_search::TextSearchRequest;
 use super::schemas::trace::{TraceRequest, TraceResult, TraceStep};
 use super::schemas::worktree_pack::WorktreePackRequest;
 use super::util::{path_has_extension_ignore_ascii_case, unix_ms};
 use super::worktree_pack::{compute_worktree_pack_result, render_worktree_pack_block};
-use crate::tools::dispatch::root::RootUpdateSource;
 use anyhow::{Context as AnyhowContext, Result};
 use context_graph::{
     build_graph_docs, CodeGraph, ContextAssembler, GraphDocConfig, GraphEdge, GraphLanguage,
@@ -79,7 +73,7 @@ use context_graph::{
 };
 use context_indexer::{
     assess_staleness, compute_project_watermark, read_index_watermark, root_fingerprint,
-    FileScanner, IndexSnapshot, IndexState, IndexerError, PersistedIndexWatermark, ReindexAttempt,
+    IndexSnapshot, IndexState, IndexerError, PersistedIndexWatermark, ReindexAttempt,
     ReindexResult, ToolMeta, INDEX_STATE_SCHEMA_VERSION,
 };
 use context_protocol::{finalize_used_chars, BudgetTruncation};
@@ -92,10 +86,8 @@ use context_vector_store::{
     current_model_id, ChunkCorpus, DocumentKind, GraphNodeDoc, GraphNodeStore, GraphNodeStoreMeta,
     QueryKind, VectorIndex,
 };
-use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo};
-use rmcp::service::{RequestContext, RoleServer};
-use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
+use rmcp::model::{CallToolResult, Content};
+use rmcp::ErrorData as McpError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -107,6 +99,8 @@ mod budgets;
 use budgets::{mcp_default_budgets, AutoIndexPolicy};
 mod tool_router_hints;
 
+mod service;
+
 mod doctor_helpers;
 use doctor_helpers::{
     load_corpus_chunk_ids, load_index_chunk_ids, load_model_statuses, sample_file_paths,
@@ -116,9 +110,7 @@ mod cursor_store;
 use cursor_store::CursorStore;
 
 mod root;
-use root::{
-    canonicalize_root_path, root_path_from_mcp_uri, workspace_roots_preview, SessionDefaults,
-};
+use root::SessionDefaults;
 
 /// Context MCP Service
 #[derive(Clone)]
@@ -141,193 +133,7 @@ pub struct ContextFinderService {
     allow_cwd_root_fallback: bool,
 }
 
-impl ContextFinderService {
-    pub fn new() -> Self {
-        Self::new_with_policy(true)
-    }
-
-    pub fn new_daemon() -> Self {
-        // Shared daemon mode: never guess a root from the daemon process cwd. Require either:
-        // - explicit `path` on a tool call, or
-        // - MCP roots capability (via initialize -> roots/list), or
-        // - an explicit env override (CONTEXT_ROOT/CONTEXT_PROJECT_ROOT).
-        Self::new_with_policy(false)
-    }
-
-    fn new_with_policy(allow_cwd_root_fallback: bool) -> Self {
-        Self {
-            profile: load_profile_from_env(),
-            tool_router: tool_router_hints::ToolRouterWithParamHints::new(Self::tool_router()),
-            state: Arc::new(ServiceState::new()),
-            session: Arc::new(Mutex::new(SessionDefaults::default())),
-            roots_notify: Arc::new(Notify::new()),
-            allow_cwd_root_fallback,
-        }
-    }
-
-    pub fn clone_for_connection(&self) -> Self {
-        Self {
-            profile: self.profile.clone(),
-            tool_router: self.tool_router.clone(),
-            state: self.state.clone(),
-            session: Arc::new(Mutex::new(SessionDefaults::default())),
-            roots_notify: Arc::new(Notify::new()),
-            allow_cwd_root_fallback: self.allow_cwd_root_fallback,
-        }
-    }
-
-    // Root resolution methods are implemented in `crates/mcp-server/src/tools/dispatch/root/service.rs`.
-}
-
-fn load_profile_from_env() -> SearchProfile {
-    let profile_name = std::env::var("CONTEXT_PROFILE")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "quality".to_string());
-
-    if let Some(profile) = SearchProfile::builtin(&profile_name) {
-        return profile;
-    }
-
-    let candidate_path = PathBuf::from(&profile_name);
-    if candidate_path.exists() {
-        match SearchProfile::from_file(&profile_name, &candidate_path) {
-            Ok(profile) => return profile,
-            Err(err) => {
-                log::warn!(
-                    "Failed to load profile from {}: {err:#}; falling back to builtin 'quality'",
-                    candidate_path.display()
-                );
-            }
-        }
-    } else {
-        log::warn!("Unknown profile '{profile_name}', falling back to builtin 'quality'");
-    }
-
-    SearchProfile::builtin("quality").unwrap_or_else(SearchProfile::general)
-}
-
-#[tool_handler]
-impl ServerHandler for ContextFinderService {
-    #[allow(clippy::manual_async_fn)]
-    fn initialize(
-        &self,
-        request: rmcp::model::InitializeRequestParam,
-        context: RequestContext<RoleServer>,
-    ) -> impl std::future::Future<
-        Output = std::result::Result<rmcp::model::InitializeResult, McpError>,
-    > + Send
-           + '_ {
-        async move {
-            // Treat every initialize as a fresh logical MCP session. Some MCP clients reuse a
-            // long-lived server process (and/or transport) across multiple sessions, possibly in
-            // different working directories. Without a reset, the daemon can retain a previous
-            // session root and accidentally serve tool calls against the wrong project.
-            {
-                let mut session = self.session.lock().await;
-                session.reset_for_initialize(request.capabilities.roots.is_some());
-            }
-
-            // Codex MCP client may be strict about the protocolVersion it requested during
-            // initialization. rmcp defaults can lag behind, even when the tool surface is compatible.
-            //
-            // Agent-native behavior: echo the client's requested protocolVersion in the initialize
-            // result so the transport stays open.
-            if context.peer.peer_info().is_none() {
-                context.peer.set_peer_info(request.clone());
-            }
-
-            // Session root: prefer the client's declared workspace roots when available.
-            //
-            // Important: do NOT block the initialize handshake on roots/list. Some MCP clients
-            // cannot serve server->client requests until after initialization completes, and
-            // blocking here can cause startup timeouts ("context deadline exceeded").
-            if request.capabilities.roots.is_some() {
-                let peer = context.peer.clone();
-                let session = self.session.clone();
-                let roots_notify = self.roots_notify.clone();
-                tokio::spawn(async move {
-                    // Give the client a moment to process the initialize response first.
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-
-                    let roots = tokio::time::timeout(Duration::from_millis(800), peer.list_roots())
-                        .await
-                        .ok()
-                        .and_then(|r| r.ok());
-
-                    let mut candidates: Vec<PathBuf> = Vec::new();
-                    if let Some(roots) = roots.as_ref() {
-                        for root in &roots.roots {
-                            let Some(path) = root_path_from_mcp_uri(&root.uri) else {
-                                continue;
-                            };
-                            match canonicalize_root_path(&path) {
-                                Ok(root) => candidates.push(root),
-                                Err(err) => {
-                                    log::debug!("Ignoring invalid MCP root {path:?}: {err}");
-                                }
-                            }
-                        }
-                    }
-                    candidates.sort();
-                    candidates.dedup();
-
-                    let mut session = session.lock().await;
-                    session.set_mcp_workspace_roots(candidates.clone());
-
-                    // Workspace roots are the authoritative boundary when the client declares
-                    // roots support.
-                    if let Some((existing_root, existing_display)) = session.clone_root() {
-                        if !session.root_allowed_by_workspace(&existing_root) {
-                            let roots_preview = workspace_roots_preview(&candidates);
-                            session.set_root_mismatch_error(format!(
-                                "Missing project root: session root '{existing_display}' is outside MCP workspace roots [{roots_preview}]. Call `root_set` (recommended) or pass an explicit `path` within the workspace, or restart the session."
-                            ));
-                        }
-                    } else {
-                        match candidates.len() {
-                            1 => {
-                                let root = candidates.remove(0);
-                                let root_display = root.to_string_lossy().to_string();
-                                session.set_root(
-                                    root,
-                                    root_display,
-                                    None,
-                                    RootUpdateSource::McpRoots,
-                                    None,
-                                    None,
-                                );
-                            }
-                            n if n > 1 => {
-                                // Fail-closed: do not guess a root when the workspace is multi-root.
-                                // This prevents cross-project contamination in shared-backend mode.
-                                session.set_mcp_roots_ambiguous(true);
-                            }
-                            _ => {}
-                        }
-                    }
-                    session.set_roots_pending(false);
-                    drop(session);
-                    roots_notify.notify_waiters();
-                });
-            }
-
-            let mut info = self.get_info();
-            info.protocol_version = request.protocol_version;
-            Ok(info)
-        }
-    }
-
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(catalog::tool_instructions()),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation::from_build_env(),
-            ..Default::default()
-        }
-    }
-}
+// Constructors and MCP `ServerHandler` implementation live in `service.rs`.
 
 impl ContextFinderService {
     pub(super) async fn load_chunk_corpus(root: &Path) -> Result<Option<ChunkCorpus>> {
@@ -2162,428 +1968,6 @@ async fn build_project_engine(
 
 mod read_pack;
 mod router;
-
-fn strip_structured_content(mut result: CallToolResult) -> CallToolResult {
-    result.structured_content = None;
-    result
-}
-
-#[tool_router]
-impl ContextFinderService {
-    /// Tool capabilities handshake (versions, budgets, start route).
-    #[tool(
-        description = "Return tool capabilities: versions, default budgets, and the recommended start route for zero-guesswork onboarding."
-    )]
-    pub async fn capabilities(
-        &self,
-        Parameters(request): Parameters<CapabilitiesRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::capabilities::capabilities(self, request).await?,
-        ))
-    }
-
-    /// `.context` legend and tool usage notes.
-    #[tool(
-        description = "Explain the `.context` output legend (A/R/N/M) and recommended usage patterns. The only tool that returns a [LEGEND] block."
-    )]
-    pub async fn help(
-        &self,
-        Parameters(request): Parameters<HelpRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::help::help(self, request).await?,
-        ))
-    }
-
-    /// Session root status (per-connection) + workspace roots (when available).
-    #[tool(
-        description = "Get the current per-connection session root and MCP workspace roots (if available). Useful for multi-root workspaces and avoiding cross-project mixups."
-    )]
-    pub async fn root_get(
-        &self,
-        Parameters(request): Parameters<RootGetRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::root::root_get(self, request).await?,
-        ))
-    }
-
-    /// Explicitly set the per-connection session root.
-    #[tool(
-        description = "Explicitly set the per-connection session root. Use this to switch projects intentionally within one MCP session (or to disambiguate multi-root workspaces)."
-    )]
-    pub async fn root_set(
-        &self,
-        Parameters(request): Parameters<RootSetRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::root::root_set(self, request).await?,
-        ))
-    }
-
-    /// Project structure overview (tree-like).
-    #[tool(description = "Project structure overview with directories, files, and top symbols.")]
-    pub async fn tree(
-        &self,
-        Parameters(request): Parameters<MapRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::map::map(self, request).await?,
-        ))
-    }
-
-    /// Repo onboarding pack (map + key docs slices + next actions).
-    #[tool(
-        description = "Build a repo onboarding pack: map + key docs (via file slices) + next actions. Returns a single bounded `.context` response for fast project adoption."
-    )]
-    pub async fn repo_onboarding_pack(
-        &self,
-        Parameters(request): Parameters<RepoOnboardingPackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::repo_onboarding_pack::repo_onboarding_pack(self, request).await?,
-        ))
-    }
-
-    /// Meaning-first pack (facts-only map + evidence pointers, token-efficient).
-    #[tool(
-        description = "Meaning-first pack: returns a token-efficient Cognitive Pack (CP) with high-signal repo meaning (structure + candidates) and evidence pointers for on-demand verbatim reads."
-    )]
-    pub async fn meaning_pack(
-        &self,
-        Parameters(request): Parameters<MeaningPackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::meaning_pack::meaning_pack(self, request).await?,
-        ))
-    }
-
-    /// Meaning-first focus (semantic zoom): scoped candidates + evidence pointers.
-    #[tool(
-        description = "Meaning-first focus (semantic zoom): returns a token-efficient Cognitive Pack (CP) scoped to a file/dir, with evidence pointers for on-demand verbatim reads."
-    )]
-    pub async fn meaning_focus(
-        &self,
-        Parameters(request): Parameters<MeaningFocusRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::meaning_focus::meaning_focus(self, request).await?,
-        ))
-    }
-
-    /// Worktree atlas: list git worktrees/branches and what is being worked on.
-    #[tool(
-        description = "Worktree atlas: list git worktrees/branches and what is being worked on (bounded, deterministic). Provides next actions to drill down via meaning tools."
-    )]
-    pub async fn worktree_pack(
-        &self,
-        Parameters(request): Parameters<WorktreePackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::worktree_pack::worktree_pack(self, request).await?,
-        ))
-    }
-
-    /// One-call atlas: meaning-first CP + worktree overview (onboarding-first, evidence-backed).
-    #[tool(
-        description = "One-call atlas for agent onboarding: meaning-first CP (canon loop, CI/contracts/entrypoints) + worktree overview. Evidence-backed, bounded, deterministic."
-    )]
-    pub async fn atlas_pack(
-        &self,
-        Parameters(request): Parameters<AtlasPackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::atlas_pack::atlas_pack(self, request).await?,
-        ))
-    }
-
-    /// Notebook pack: list saved anchors/runbooks (cross-session, low-noise).
-    #[tool(
-        description = "Agent notebook pack: list durable anchors and runbooks for a repo (cross-session continuity)."
-    )]
-    pub async fn notebook_pack(
-        &self,
-        Parameters(request): Parameters<NotebookPackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::notebook_pack::notebook_pack(self, request).await?,
-        ))
-    }
-
-    /// Notebook edit: upsert/delete anchors and runbooks (explicit writes).
-    #[tool(
-        description = "Agent notebook edit: upsert/delete anchors and runbooks (explicit, durable writes; fail-closed)."
-    )]
-    pub async fn notebook_edit(
-        &self,
-        Parameters(request): Parameters<NotebookEditRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::notebook_edit::notebook_edit(self, request).await?,
-        ))
-    }
-
-    /// Notebook apply: one-click preview/apply/rollback for notebook_suggest output.
-    #[tool(
-        description = "Notebook apply: one-click preview/apply/rollback for notebook_suggest output (safe backup + rollback)."
-    )]
-    pub async fn notebook_apply_suggest(
-        &self,
-        Parameters(request): Parameters<NotebookApplySuggestRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::notebook_apply_suggest::notebook_apply_suggest(self, request).await?,
-        ))
-    }
-
-    /// Notebook suggest: propose anchors + runbooks (read-only; evidence-backed).
-    #[tool(
-        description = "Notebook suggest: propose evidence-backed anchors and runbooks (read-only). Designed to reduce tool-call count; apply via notebook_apply_suggest."
-    )]
-    pub async fn notebook_suggest(
-        &self,
-        Parameters(request): Parameters<NotebookSuggestRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::notebook_suggest::notebook_suggest(self, request).await?,
-        ))
-    }
-
-    /// Runbook pack: TOC by default, expand a section on demand (cursor-based).
-    #[tool(
-        description = "Runbook pack: returns a low-noise TOC by default, with freshness/staleness; expand sections on demand with cursor continuation."
-    )]
-    pub async fn runbook_pack(
-        &self,
-        Parameters(request): Parameters<RunbookPackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::runbook_pack::runbook_pack(self, request).await?,
-        ))
-    }
-
-    /// Bounded exact text search (literal substring), like `rg -F`.
-    #[tool(
-        description = "Search for an exact text pattern in project files with bounded output (like `rg -F`, but safe for agent context). Uses corpus if available, otherwise scans files without side effects."
-    )]
-    pub async fn text_search(
-        &self,
-        Parameters(request): Parameters<TextSearchRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::text_search::text_search(self, request).await?,
-        ))
-    }
-
-    /// Read a bounded slice of a file within the project root (cat-like, safe for agents).
-    #[tool(
-        description = "Read a bounded slice of a file (by line) within the project root. Safe replacement for `cat`/`sed -n`; enforces max_lines/max_chars and prevents path traversal."
-    )]
-    pub async fn cat(
-        &self,
-        Parameters(request): Parameters<FileSliceRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::file_slice::file_slice(self, &request).await?,
-        ))
-    }
-
-    /// Fetch exact evidence spans (verbatim) referenced by meaning packs.
-    #[tool(
-        description = "Evidence fetch (verbatim): read exact line windows for one or more evidence pointers. Intended as the on-demand 'territory' step after meaning-first navigation."
-    )]
-    pub async fn evidence_fetch(
-        &self,
-        Parameters(request): Parameters<EvidenceFetchRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::evidence_fetch::evidence_fetch(self, request).await?,
-        ))
-    }
-
-    /// Build a one-call semantic reading pack (cat / rg / context pack / onboarding / memory).
-    #[tool(
-        description = "One-call semantic reading pack. A cognitive facade over cat/rg/context_pack/repo_onboarding_pack (+ intent=memory for long-memory overview + key config/doc slices): returns the most relevant bounded slice(s) plus continuation cursors and next actions."
-    )]
-    pub async fn read_pack(
-        &self,
-        Parameters(request): Parameters<ReadPackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::read_pack::read_pack(self, request).await?,
-        ))
-    }
-
-    /// List directory entries (names-only, like `ls -a`).
-    #[tool(
-        description = "List directory entries (names-only, like `ls -a`) within the project root. Bounded output with cursor pagination; safe replacement for shell `ls` in agent loops."
-    )]
-    pub async fn ls(
-        &self,
-        Parameters(request): Parameters<LsRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::ls::ls(self, request).await?,
-        ))
-    }
-
-    /// List project file paths (find-like).
-    #[tool(
-        description = "List project file paths (relative to project root), like `find`/`rg --files` but bounded + cursor-based. Use this when you need recursive paths; use `ls` for directory entries."
-    )]
-    pub async fn find(
-        &self,
-        Parameters(request): Parameters<ListFilesRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::list_files::list_files(self, request).await?,
-        ))
-    }
-
-    /// Regex search with merged context hunks (rg-like).
-    #[tool(
-        description = "Search project files with a regex and return merged context hunks (N lines before/after). Designed to replace `rg -C/-A/-B` plus multiple cat calls with a single bounded response."
-    )]
-    pub async fn rg(
-        &self,
-        Parameters(request): Parameters<GrepContextRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::grep_context::grep_context(self, request).await?,
-        ))
-    }
-
-    /// Regex search with merged context hunks (grep-like).
-    #[tool(
-        description = "Alias for `rg`. Search project files with a regex and return merged context hunks (N lines before/after)."
-    )]
-    pub async fn grep(
-        &self,
-        Parameters(request): Parameters<GrepContextRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::grep_context::grep_context(self, request).await?,
-        ))
-    }
-
-    /// Execute multiple Context tools in a single call (agent-friendly batch).
-    #[tool(
-        description = "Execute multiple Context tools in one call. Returns a single bounded `.context` response with per-item status (partial success) and a global max_chars budget."
-    )]
-    pub async fn batch(
-        &self,
-        Parameters(request): Parameters<BatchRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::batch::batch(self, request).await?,
-        ))
-    }
-
-    /// Diagnose model/GPU/index configuration
-    #[tool(
-        description = "Show diagnostics for model directory, CUDA/ORT runtime, and per-project index/corpus status. Use this when something fails (e.g., GPU provider missing)."
-    )]
-    pub async fn doctor(
-        &self,
-        Parameters(request): Parameters<DoctorRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::doctor::doctor(self, request).await?,
-        ))
-    }
-
-    /// Semantic code search
-    #[tool(
-        description = "Search for code using natural language. Returns relevant code snippets with file locations and symbols."
-    )]
-    pub async fn search(
-        &self,
-        Parameters(request): Parameters<SearchRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::search::search(self, request).await?,
-        ))
-    }
-
-    /// Search with graph context
-    #[tool(
-        description = "Search for code with automatic graph-based context. Returns code plus related functions/types through call graphs and dependencies. Best for understanding how code connects."
-    )]
-    pub async fn context(
-        &self,
-        Parameters(request): Parameters<ContextRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::context::context(self, request).await?,
-        ))
-    }
-
-    /// Build a bounded context pack for agents (single-call context).
-    #[tool(
-        description = "Build a bounded context pack for a query: primary hits + graph-related halo, under a strict character budget. Intended as a single-call payload for AI agents."
-    )]
-    pub async fn context_pack(
-        &self,
-        Parameters(request): Parameters<ContextPackRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::context_pack::context_pack(self, request).await?,
-        ))
-    }
-
-    /// Find all usages of a symbol (impact analysis)
-    #[tool(
-        description = "Find all places where a symbol is used. Essential for refactoring - shows direct usages, transitive dependencies, and related tests."
-    )]
-    pub async fn impact(
-        &self,
-        Parameters(request): Parameters<ImpactRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::impact::impact(self, request).await?,
-        ))
-    }
-
-    /// Trace call path between two symbols
-    #[tool(
-        description = "Show call chain from one symbol to another. Essential for understanding code flow and debugging."
-    )]
-    pub async fn trace(
-        &self,
-        Parameters(request): Parameters<TraceRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::trace::trace(self, request).await?,
-        ))
-    }
-
-    /// Deep dive into a symbol
-    #[tool(
-        description = "Get complete information about a symbol: definition, dependencies, dependents, tests, and documentation."
-    )]
-    pub async fn explain(
-        &self,
-        Parameters(request): Parameters<ExplainRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::explain::explain(self, request).await?,
-        ))
-    }
-
-    /// Project architecture overview
-    #[tool(
-        description = "Get project architecture snapshot: layers, entry points, key types, and graph statistics. Use this first to understand a new codebase."
-    )]
-    pub async fn overview(
-        &self,
-        Parameters(request): Parameters<OverviewRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(strip_structured_content(
-            router::overview::overview(self, request).await?,
-        ))
-    }
-}
 
 fn finalize_read_pack_budget(result: &mut ReadPackResult) -> anyhow::Result<()> {
     finalize_used_chars(result, |inner, used| inner.budget.used_chars = used).map(|_| ())

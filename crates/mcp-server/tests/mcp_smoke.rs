@@ -3,47 +3,14 @@ use context_code_chunker::{ChunkMetadata, CodeChunk};
 use context_vector_store::{context_dir_for_project_root, ChunkCorpus};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    // Cargo doesn't always expose CARGO_BIN_EXE_* at runtime. Derive it from the test exe path:
-    // `.../target/{debug|release}/deps/<test>` → `.../target/{debug|release}/context-finder-mcp`
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 #[tokio::test]
 async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -289,7 +256,7 @@ async fn mcp_exposes_core_tools_and_map_has_no_side_effects() -> Result<()> {
 
 #[tokio::test]
 async fn mcp_batch_truncates_when_budget_is_too_small() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -364,7 +331,7 @@ async fn mcp_batch_truncates_when_budget_is_too_small() -> Result<()> {
 
 #[tokio::test]
 async fn mcp_cat_reads_bounded_lines_and_rejects_escape() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -483,7 +450,7 @@ async fn mcp_cat_reads_bounded_lines_and_rejects_escape() -> Result<()> {
 
 #[tokio::test]
 async fn mcp_ls_lists_paths_and_is_bounded() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");

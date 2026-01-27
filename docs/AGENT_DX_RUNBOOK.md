@@ -1,6 +1,6 @@
-# Agent DX Runbook (Context Finder MCP)
+# Agent DX Runbook (Context)
 
-This runbook is for **AI agent developers** integrating Context Finder into daily coding workflows across many repos, many sessions, and mixed tool stacks.
+This runbook is for **AI agent developers** integrating Context (via MCP) into daily coding workflows across many repos, many sessions, and mixed tool stacks.
 
 The goal: keep context retrieval **fresh, bounded, and trustworthy**, without regressing into `rg/cat` loops.
 
@@ -21,10 +21,10 @@ The goal: keep context retrieval **fresh, bounded, and trustworthy**, without re
 
 Best practice: **always pass `path`** on tool calls when your client can.
 
-When `path` is omitted, Context Finder resolves the project root in this order:
+When `path` is omitted, Context resolves the project root in this order:
 
 1) Per-connection session root (from MCP `roots/list` or an explicit `root_set`)
-2) `CONTEXT_ROOT` / `CONTEXT_PROJECT_ROOT` (legacy: `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`)
+2) `CONTEXT_ROOT` / `CONTEXT_PROJECT_ROOT`
 3) (Non-daemon only) server process cwd fallback
 
 Notes:
@@ -47,7 +47,7 @@ If a cursor continuation crosses roots, the `invalid_cursor` error includes deta
 `details.expected_root_fingerprint` and `details.cursor_root_fingerprint`.
 
 If a cursor continuation tries to change query-shaping parameters (e.g. `ls.file_pattern`,
-`ls.allow_secrets`, `tree.depth`), Context Finder **fails closed** with `cursor_mismatch` instead
+`ls.allow_secrets`, `tree.depth`), Context **fails closed** with `cursor_mismatch` instead
 of silently restarting pagination. The error includes actionable `next_actions` (see
 [contracts/command/v1/error.schema.json](../contracts/command/v1/error.schema.json)).
 
@@ -90,7 +90,7 @@ If a regex is invalid, `rg` returns an `invalid_request` error with a hint (and 
 - Semantic tools never serve silently stale results.
 - When the index is missing or stale, tools fall back to filesystem strategies and schedule refresh work in the background (when enabled).
 - For deterministic CI and local dev without models:
-  - Use `CONTEXT_FINDER_EMBEDDING_MODE=stub`.
+  - Use `CONTEXT_EMBEDDING_MODE=stub`.
 
 ## Safety model (secrets)
 

@@ -147,6 +147,10 @@ Notes:
 
 ```bash
 context serve-http --bind 127.0.0.1:7700
+
+# Non-loopback bind requires explicit opt-in + auth:
+# export CONTEXT_AUTH_TOKEN='replace-me'
+# context serve-http --public --bind 0.0.0.0:7700
 ```
 
 - `POST /command`
@@ -156,6 +160,10 @@ context serve-http --bind 127.0.0.1:7700
 
 ```bash
 context serve-grpc --bind 127.0.0.1:50051
+
+# Non-loopback bind requires explicit opt-in + auth:
+# export CONTEXT_AUTH_TOKEN='replace-me'
+# context serve-grpc --public --bind 0.0.0.0:50051
 ```
 
 ### MCP server
@@ -353,10 +361,11 @@ All integration surfaces are contract-first and versioned:
 ## Development
 
 ```bash
-scripts/validate_contracts.sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
+# One command (contracts + structure + fmt + clippy + stub tests + HTTP conformance + stub eval):
+bash scripts/validate_quality.sh
+
+# Optional (real embeddings smoke; requires models + CUDA/ORT, or CPU fallback via CONTEXT_ALLOW_CPU=1):
+bash scripts/validate_real_embeddings.sh
 ```
 
 ## License

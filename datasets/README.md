@@ -2,8 +2,10 @@
 
 This folder contains retrieval evaluation datasets used by:
 
-- `context-finder eval`
-- `context-finder eval-compare`
+- `context eval`
+- `context eval-compare`
+
+The legacy binary alias `context-finder` is also supported.
 
 Datasets are **offline-friendly** and CI-safe when run in stub mode.
 
@@ -24,4 +26,3 @@ Notes:
 
 - Datasets are for **positive** retrieval (they must have `expected_paths`).
 - Negative behaviors (e.g. “must not return unrelated hits”) are validated via targeted tests.
-

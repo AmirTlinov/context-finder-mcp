@@ -1,6 +1,6 @@
 # Agent Memory Playbook (`read_pack`)
 
-Context Finder is meant to feel like an AI agent’s **project memory**: one call produces a bounded, high-signal view of the repo; you continue with `cursor` when needed; and you do not burn the agent’s context window on tool chatter.
+Context is meant to feel like an AI agent’s **project memory**: one call produces a bounded, high-signal view of the repo; you continue with `cursor` when needed; and you do not burn the agent’s context window on tool chatter.
 
 If you still need `rg → open → grep → cat → repeat`, treat that as a product bug or a missing workflow pattern.
 
@@ -93,7 +93,7 @@ Tip: `help {"topic":"tools"}` lists the full tool inventory; `help {"topic":"top
 
 ## Secrets (safe by default)
 
-Agent context windows are “sticky” — once a secret is printed, it tends to spread. Context Finder therefore uses a conservative denylist by default:
+Agent context windows are “sticky” — once a secret is printed, it tends to spread. Context therefore uses a conservative denylist by default:
 
 - `cat` refuses to read common secret locations (e.g. `.env`, SSH keys, `*.pem`/`*.key`)
 - `rg` / `text_search` skip secret paths (and refuse explicit secret file reads)
@@ -128,7 +128,7 @@ snippet from that file on the **first memory page** (no cursor). This makes the 
 more like a “native working set” (stable repo anchors + the current file) without requiring an
 explicit `intent=file` call.
 
-If you are running Context Finder MCP from *inside* the repo you care about (typical agent session),
+If you are running Context (via MCP) from *inside* the repo you care about (typical agent session),
 you can omit `path` entirely — the shared-backend proxy will inject a default root from its current
 working directory (preferring the git root when available):
 
@@ -222,7 +222,7 @@ In shared-backend mode (the default), cursor aliases are stored in the long-live
 
 If you run many agent sessions in parallel, starting a full MCP server process per session is wasteful and makes cursor-only continuation fragile (because the server-side cursor store may be lost on restart).
 
-Context Finder uses a shared backend mode by default:
+Context uses a shared backend mode by default:
 
 - Each agent session starts a lightweight stdio proxy.
 - All proxies connect to **one** long-lived MCP daemon process.
@@ -232,13 +232,13 @@ Context Finder uses a shared backend mode by default:
 If you need an isolated in-process MCP server per session (mostly useful in tests), disable shared mode:
 
 ```text
-CONTEXT_FINDER_MCP_SHARED=0
+CONTEXT_MCP_SHARED=0
 ```
 
 Optional:
 
-- `CONTEXT_FINDER_MCP_SOCKET` to override the Unix socket path.
-- Keep the indexing daemon enabled (do **not** set `CONTEXT_FINDER_DISABLE_DAEMON=1`) if you want indexes to stay warm while you work.
+- `CONTEXT_MCP_SOCKET` to override the Unix socket path.
+- Keep the indexing daemon enabled (do **not** set `CONTEXT_DISABLE_DAEMON=1`) if you want indexes to stay warm while you work.
 
 ## What to avoid (anti-patterns)
 

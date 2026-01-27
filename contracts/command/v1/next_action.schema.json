@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "contracts/command/v1/next_action.schema.json",
-  "title": "Context Finder ToolNextAction (v1)",
+  "title": "Context ToolNextAction (v1)",
   "type": "object",
   "additionalProperties": false,
   "required": ["tool", "args", "reason"],

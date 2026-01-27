@@ -24,4 +24,18 @@ if [[ "$INSTALL_CLI" == "1" ]]; then
   cargo install --path crates/cli --locked
 fi
 
-echo "Done." >&2
+echo "" >&2
+echo "Installed." >&2
+echo "" >&2
+echo "Next (recommended):" >&2
+echo "  context --help" >&2
+echo "  context doctor" >&2
+echo "  context install-models" >&2
+echo "" >&2
+echo "Server modes:" >&2
+echo "  MCP:        context-mcp" >&2
+echo "  HTTP JSON:  context serve-http" >&2
+echo "  gRPC:       context serve-grpc" >&2
+echo "" >&2
+echo "Safety defaults:" >&2
+echo "  Non-loopback binds require --public + CONTEXT_AUTH_TOKEN." >&2

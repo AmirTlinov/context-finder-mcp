@@ -1,6 +1,6 @@
 # Philosophy
 
-Context Finder exists to make AI-assisted code work **predictable**:
+Context exists to make AI-assisted code work **predictable**:
 one query in, one bounded context out — with interfaces you can trust and automate against.
 
 ## The principles
@@ -33,7 +33,7 @@ Practical target UX:
 
 ## Product promise (v1)
 
-Context Finder is “done” when it is **objectively better** than ad‑hoc probing for a small set of daily agent workflows:
+Context is “done” when it is **objectively better** than ad‑hoc probing for a small set of daily agent workflows:
 
 1) **Onboarding / orientation** (repo of any size)
    - An agent gets a bounded, high-signal map of what matters and where to look next.

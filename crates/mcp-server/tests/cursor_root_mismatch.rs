@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
+
+mod support;
 
 fn extract_cursor_from_text(result: &rmcp::model::CallToolResult) -> Result<String> {
     let text = result
@@ -16,38 +17,6 @@ fn extract_cursor_from_text(result: &rmcp::model::CallToolResult) -> Result<Stri
         .find_map(|line| line.strip_prefix("M: ").map(str::trim))
         .map(str::to_string)
         .context("tool result missing M: cursor")
-}
-
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
 }
 
 async fn call_tool_allow_error(
@@ -72,7 +41,7 @@ async fn call_tool_allow_error(
 
 #[tokio::test]
 async fn ls_cursor_root_mismatch_includes_details() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env("CONTEXT_PROFILE", "quality");
@@ -191,7 +160,7 @@ async fn ls_cursor_root_mismatch_includes_details() -> Result<()> {
 
 #[tokio::test]
 async fn cat_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env("CONTEXT_PROFILE", "quality");
@@ -282,7 +251,7 @@ async fn cat_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Res
 
 #[tokio::test]
 async fn rg_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env("CONTEXT_PROFILE", "quality");
@@ -378,7 +347,7 @@ async fn rg_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Resu
 
 #[tokio::test]
 async fn text_search_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env("CONTEXT_PROFILE", "quality");
@@ -477,7 +446,7 @@ async fn text_search_cursor_only_does_not_switch_roots_when_session_root_is_set(
 
 #[tokio::test]
 async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env("CONTEXT_PROFILE", "quality");
@@ -574,7 +543,7 @@ async fn map_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Res
 
 #[tokio::test]
 async fn ls_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env("CONTEXT_PROFILE", "quality");
@@ -674,7 +643,7 @@ async fn ls_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Resu
 
 #[tokio::test]
 async fn read_pack_cursor_only_does_not_switch_roots_when_session_root_is_set() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env("CONTEXT_PROFILE", "quality");

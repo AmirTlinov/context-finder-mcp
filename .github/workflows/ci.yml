@@ -17,6 +17,7 @@ jobs:
       - name: Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.91.1
           components: rustfmt, clippy
 
       - name: Cache

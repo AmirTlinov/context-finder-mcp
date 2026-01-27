@@ -1,6 +1,6 @@
 # Benchmarks
 
-This folder contains a small benchmark harness for `context-finder` to measure:
+This folder contains a small benchmark harness for `context` to measure:
 
 - Indexing wall-clock time + max RSS (via `/usr/bin/time`)
 - Search latency + max RSS
@@ -19,4 +19,3 @@ python3 bench/run.py --profile general --model bge-small
 - `data/audit_candidates.local.json` — local dataset override (gitignored)
 
 The harness defaults to `data/audit_candidates.local.json` if it exists, otherwise it falls back to the example dataset.
-

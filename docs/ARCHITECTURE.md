@@ -1,11 +1,11 @@
-# Architecture: Context Finder
+# Architecture: Context
 
 ## Workspace layout
 
-Context Finder is implemented as a Rust workspace with a small set of focused crates:
+Context is implemented as a Rust workspace with a small set of focused crates:
 
 ```
-context-finder/
+context/
 ├── crates/
 │   ├── batch-ref/         # Batch $ref resolver (shared CLI/MCP)
 │   ├── code-chunker/      # AST-aware semantic chunking (tree-sitter)
@@ -122,7 +122,7 @@ Responsibility: embed chunks and build/load a vector index for fast semantic ret
 Key points:
 
 - Embeddings are computed via ONNX Runtime (CUDA by default).
-- CPU fallback is allowed only when `CONTEXT_FINDER_ALLOW_CPU=1`.
+- CPU fallback is allowed only when `CONTEXT_ALLOW_CPU=1`.
 - Index is stored per model id under `.agents/mcp/.context/indexes/<model_id>/` (preferred; legacy `.agents/mcp/context/.context/`, `.context/` and `.context-finder/` are supported).
 
 ### Search (`crates/search`)
@@ -167,9 +167,14 @@ Notable commands:
 - JSON API: `command`, `serve-http`, `serve-grpc`
 - Daemon: `daemon-loop` (keeps indexes warm)
 
+Server safety:
+
+- By default, `serve-http` / `serve-grpc` are intended for loopback binds.
+- Binding to a non-loopback address requires `--public` and an auth token (`--auth-token` or `CONTEXT_AUTH_TOKEN`).
+
 ### MCP server (`crates/mcp-server`)
 
-Responsibility: expose Context Finder capabilities as MCP tools for AI-agent integrations.
+Responsibility: expose Context capabilities as MCP tools for AI-agent integrations.
 
 Transport:
 
@@ -179,7 +184,8 @@ For the tool list and examples, see `README.md`.
 
 Internal layout (tool dispatch):
 
-- `crates/mcp-server/src/tools/dispatch/mod.rs` — tool wiring + `ContextFinderService` entrypoint.
+- `crates/mcp-server/src/tools/dispatch/mod.rs` — tool wiring + shared state.
+- `crates/mcp-server/src/tools/dispatch/service.rs` — `ContextFinderService` entrypoint + MCP handshake.
 - `crates/mcp-server/src/tools/dispatch/router/` — per-tool request routing.
 - `crates/mcp-server/src/tools/dispatch/read_pack/` — `read_pack` implementation.
 - `crates/mcp-server/src/tools/dispatch/cursor_store/` — shared cursor alias store (LRU + best-effort persistence).
@@ -210,7 +216,7 @@ Internal layout (tool dispatch):
 
 - Models: installed into `./models/` by default (`models/manifest.json` is the source of truth).
 - GPU: CUDA by default; no silent CPU fallback.
-- Deterministic tests: `CONTEXT_FINDER_EMBEDDING_MODE=stub`.
+- Deterministic tests: `CONTEXT_EMBEDDING_MODE=stub`.
 
 ### Tuning knobs
 

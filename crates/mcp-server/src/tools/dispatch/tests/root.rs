@@ -1,6 +1,7 @@
 use super::super::*;
 use crate::test_support::ENV_MUTEX;
 use crate::tools::dispatch::root::RootUpdateSource;
+use crate::tools::dispatch::root::{canonicalize_root_path, root_path_from_mcp_uri};
 use tempfile::tempdir;
 use tokio::time::Duration;
 

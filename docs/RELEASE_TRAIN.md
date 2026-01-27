@@ -1,6 +1,6 @@
 # Release Train (Contracts-First Delivery)
 
-This document defines how we ship Context Finder changes without breaking agents, integrations, or trust.
+This document defines how we ship Context changes without breaking agents, integrations, or trust.
 
 The core principle is simple:
 
@@ -62,7 +62,7 @@ We prefer short “behavioral deltas” over long prose.
    - move “Unreleased” changes into a dated version section
    - keep “Unreleased” empty (or remove it) after release
 3) Run mandatory gates:
-   - `scripts/validate_quality.sh` (includes contracts + fmt + clippy + stub tests + stub eval smoke)
+   - `scripts/validate_quality.sh` (includes contracts + fmt + clippy + stub tests + stub eval smoke + HTTP contract conformance)
 4) Bump the workspace version (`[workspace.package].version` in the root `Cargo.toml`) if releasing.
 5) Tag and publish the release (policy depends on the distribution channel).
 6) Post-release sanity:
@@ -89,4 +89,3 @@ When risk is non-trivial:
 - prefer **gated behavior** (flag/env/config) over silent global flips
 - keep a clear “off switch” path
 - treat regressions as release blockers (quality is a feature)
-

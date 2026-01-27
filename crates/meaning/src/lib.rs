@@ -1,4 +1,4 @@
-//! Meaning engine (lenses-first) for Context Finder.
+//! Meaning engine (lenses-first) for Context.
 //!
 //! This crate is intentionally **agent-first**:
 //! - deterministic, bounded outputs

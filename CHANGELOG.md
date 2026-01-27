@@ -11,6 +11,10 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
 
 - Install DX: added `scripts/install.sh` to install the MCP server (`context-mcp`) and CLI (`context`)
   in one step (minimizes setup friction).
+- Toolchain: added `rust-toolchain.toml` to pin the Rust toolchain used by CI and contributors.
+- Real embeddings: added a GPU/ORT smoke runner (`scripts/validate_real_embeddings.sh`) and an
+  opt-in CI workflow (`.github/workflows/ci-real-embeddings.yml`) to catch prod-embedding
+  regressions that stub-only CI cannot see.
 - Root hygiene: new `root_get` / `root_set` MCP tools to introspect and explicitly switch the
   per-connection session root (multi-root disambiguation, cross-project safety).
 - Root diagnostics: `root_get` now reports `last_root_set` / `last_root_update` snapshots to help
@@ -37,6 +41,11 @@ we prioritize **behavioral deltas**, **contracts**, and **quality gates** over p
   corrective `root_set` when the root diverges from the caller's cwd.
 - Root errors: `details.root_context` is attached for root-resolution failures to provide a
   machine-readable snapshot of session_root/cwd/last_root_* for automated triage.
+
+- Server safety: `serve-http` / `serve-grpc` now refuse non-loopback binds without `--public`.
+  `--public` requires an auth token (`--auth-token` or `CONTEXT_AUTH_TOKEN`) and enforces
+  `Authorization: Bearer <token>`.
+- HTTP contract: OpenAPI now declares an optional `BearerAuth` scheme for `/command` and `/health`.
 
 - MCP `search`/`context` output now includes lightweight metadata notes and trimmed doc comments per
   hit (type/scope/imports/tags + doc block) to improve agent context density.

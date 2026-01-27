@@ -1114,9 +1114,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 fn embed_cache_max_bytes_from_env() -> Option<u64> {
-    let raw = std::env::var("CONTEXT_EMBED_CACHE_MAX_MB")
-        .or_else(|_| std::env::var("CONTEXT_FINDER_EMBED_CACHE_MAX_MB"))
-        .ok()?;
+    let raw = std::env::var("CONTEXT_EMBED_CACHE_MAX_MB").ok()?;
     let mb: u64 = raw.trim().parse().ok()?;
     if mb == 0 {
         return None;

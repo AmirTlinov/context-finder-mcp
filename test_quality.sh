@@ -4,13 +4,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-CLI="${CLI:-./target/release/context-finder}"
-if [[ ! -x "${CLI}" ]]; then
-  echo "[test_quality] CLI not found at ${CLI}. Build it with: cargo build --release -p context-cli --bin context-finder" >&2
-  exit 1
+CLI="${CLI:-}"
+if [[ -z "${CLI}" ]]; then
+  if [[ -x "./target/release/context" ]]; then
+    CLI="./target/release/context"
+  elif [[ -x "./target/release/context-finder" ]]; then
+    CLI="./target/release/context-finder"
+  else
+    echo "[test_quality] CLI not found. Build it with:" >&2
+    echo "  cargo build --release -p context-cli --bin context" >&2
+    echo "  (or legacy) cargo build --release -p context-cli --bin context-finder" >&2
+    exit 1
+  fi
 fi
 
-EMBED_MODE="${CONTEXT_FINDER_EMBEDDING_MODE:-stub}"
+EMBED_MODE="${CONTEXT_EMBEDDING_MODE:-stub}"
 COMMON=(--quiet --embed-mode "${EMBED_MODE}")
 
 echo "=== QUALITY ANALYSIS ==="
@@ -36,12 +44,21 @@ echo "2. Coverage Analysis"
 total_files=$(find crates -name "*.rs" | wc -l | tr -d ' ')
 echo "   Total RS files: ${total_files}"
 
-index_path="$(ls .context-finder/indexes/*/index.json 2>/dev/null | head -n 1 || true)"
+index_path="$(ls .agents/mcp/.context/indexes/*/index.json 2>/dev/null | head -n 1 || true)"
+if [[ -z "${index_path}" ]]; then
+  index_path="$(ls .agents/mcp/context/.context/indexes/*/index.json 2>/dev/null | head -n 1 || true)"
+fi
+if [[ -z "${index_path}" ]]; then
+  index_path="$(ls .context/indexes/*/index.json 2>/dev/null | head -n 1 || true)"
+fi
+if [[ -z "${index_path}" ]]; then
+  index_path="$(ls .context-finder/indexes/*/index.json 2>/dev/null | head -n 1 || true)"
+fi
 if [[ -n "${index_path}" ]]; then
   total_chunks="$(jq -r '.id_map | length' "${index_path}" 2>/dev/null || echo 'N/A')"
   echo "   Total indexed chunks: ${total_chunks} (${index_path})"
 else
-  echo "   Total indexed chunks: N/A (no .context-finder/indexes/*/index.json found)"
+  echo "   Total indexed chunks: N/A (no index.json found under .agents/mcp/.context or legacy dirs)"
 fi
 echo ""
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "contracts/command/v1/index_state.schema.json",
-  "title": "Context Finder IndexState (v1)",
+  "title": "Context IndexState (v1)",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "model_id", "profile", "project_watermark", "index", "stale"],
@@ -68,4 +68,3 @@
     }
   }
 }
-

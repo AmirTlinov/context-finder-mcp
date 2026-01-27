@@ -4,7 +4,7 @@ use std::fs;
 use tempfile::tempdir;
 
 fn run_cli_raw(workdir: &std::path::Path, request: &str) -> (bool, Value) {
-    let output = cargo_bin_cmd!("context-finder")
+    let output = cargo_bin_cmd!("context")
         .current_dir(workdir)
         .env("CONTEXT_EMBEDDING_MODE", "stub")
         .arg("command")
@@ -70,7 +70,7 @@ fn text_search_uses_env_root_when_project_missing() {
     let workdir = tempdir().unwrap();
 
     let request = r#"{"action":"text_search","payload":{"pattern":"greet"}}"#;
-    let output = cargo_bin_cmd!("context-finder")
+    let output = cargo_bin_cmd!("context")
         .current_dir(workdir.path())
         .env("CONTEXT_EMBEDDING_MODE", "stub")
         .env("CONTEXT_ROOT", root)

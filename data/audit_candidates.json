@@ -1,6 +1,6 @@
 [
   {
-    "name": "context-finder (example)",
+    "name": "context (example)",
     "path": ".",
     "note": "Portable example dataset for running the benchmark harness against this repository.",
     "queries": [

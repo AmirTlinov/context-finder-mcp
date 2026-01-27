@@ -1,8 +1,8 @@
 # Quick Start: Context MCP
 
-## What is Context Finder MCP?
+## What is Context MCP?
 
-Context Finder MCP is a semantic code navigation tool designed for AI agents and coding assistants.
+Context MCP is a semantic code navigation tool designed for AI agents and coding assistants.
 
 Its core UX goal is **not** “yet another search command” — it is to feel like an agent’s **always fresh, bounded project memory**, so daily context gathering does *not* degrade into `rg/cat/grep` loops.
 
@@ -33,9 +33,15 @@ bash scripts/install.sh
 # cargo install --path crates/cli --locked
 ```
 
+If you use rustup, the pinned toolchain is automatic:
+
+```bash
+rustup show
+```
+
 ### Requirements
 
-- Rust 1.75+ (2021 edition)
+- Rust (pinned via `rust-toolchain.toml`) — currently 1.91.1
 - ONNX Runtime (via the Rust `ort` crate; CUDA provider by default)
 - NVIDIA GPU with CUDA (**required by default**, no silent CPU fallback)
 - `protoc` is **not** required on the system (vendored during build)
@@ -68,7 +74,7 @@ context doctor
 Model assets are downloaded once into `./models/` (gitignored) using `models/manifest.json`.
 
 ```bash
-# Run from repo root (or set CONTEXT_MODEL_DIR; legacy: CONTEXT_FINDER_MODEL_DIR)
+# Run from repo root (or set CONTEXT_MODEL_DIR)
 context install-models
 context doctor
 ```
@@ -79,7 +85,7 @@ context doctor
 
 **You do not need to manually index projects when using MCP.**
 
-Context Finder keeps an **incremental index in the background** and self-heals on semantic tool calls. If semantic search is unavailable (e.g., first warmup or embeddings temporarily unavailable), tools degrade to **filesystem-first fallbacks** so the agent can keep moving.
+Context keeps an **incremental index in the background** and self-heals on semantic tool calls. If semantic search is unavailable (e.g., first warmup or embeddings temporarily unavailable), tools degrade to **filesystem-first fallbacks** so the agent can keep moving.
 
 Start with one of these:
 
@@ -124,11 +130,11 @@ When you have multiple agent sessions (or multiple repos open at once), prefer e
 - After the session root is pinned (via MCP `roots/list` or `root_set`), prefer omitting `path` on subsequent calls.
 - In **shared-backend mode** (default), Context is **roots-first**: when the client supports MCP roots, the daemon pins each connection to a
   workspace root from `roots/list` (fail-closed for multi-root). The proxy does not guess from a potentially stale process cwd.
-- If `path` is omitted, Context Finder resolves roots in this order:
+- If `path` is omitted, Context resolves roots in this order:
   1) per-connection session root (from MCP `roots/list` or `root_set`), then
-  2) `CONTEXT_ROOT` / `CONTEXT_PROJECT_ROOT` (legacy: `CONTEXT_FINDER_ROOT` / `CONTEXT_FINDER_PROJECT_ROOT`), then
+  2) `CONTEXT_ROOT` / `CONTEXT_PROJECT_ROOT`, then
   3) (non-daemon only) server process cwd fallback.
-- If the client reports multiple workspace roots, Context Finder **does not guess** (fail-closed) and requires an explicit `path`.
+- If the client reports multiple workspace roots, Context **does not guess** (fail-closed) and requires an explicit `path`.
 - To explicitly switch projects within one MCP session, call `root_set { "path": "/abs/repo" }`, then omit `path` on subsequent calls.
 - Every tool response includes a `root_fingerprint` in tool meta so clients can detect cross-project mixups without exposing filesystem paths.
 - For human debugging, `response_mode=full` also prints `N: root_fingerprint=...` in the `.context` text output so you can eyeball provenance quickly.
@@ -240,11 +246,18 @@ context eval-compare . --dataset datasets/golden_smoke.json \
 ### HTTP Server (JSON API)
 
 ```bash
-# Start HTTP server on default port 7700
+# Start HTTP server on default port 7700 (loopback-only)
 context serve-http
 
-# Custom bind address
-context serve-http --bind 0.0.0.0:8080
+# Bind to a non-loopback address (explicit opt-in + auth)
+export CONTEXT_AUTH_TOKEN='replace-me'
+context serve-http --public --bind 0.0.0.0:8080
+```
+
+HTTP conformance smoke (recommended after changes to HTTP contracts or server behavior):
+
+```bash
+bash scripts/validate_http_conformance.sh
 ```
 
 API endpoint: `POST /command`
@@ -252,9 +265,26 @@ API endpoint: `POST /command`
 Health endpoint: `GET /health`
 
 Example request:
+
 ```bash
 curl -X POST http://localhost:7700/command \
   -H "Content-Type: application/json" \
+  -d '{
+    "action": "search",
+    "payload": {
+      "query": "error handling",
+      "limit": 10,
+      "project": "/path/to/project"
+    }
+  }'
+```
+
+If you started the server with `CONTEXT_AUTH_TOKEN`, add an Authorization header:
+
+```bash
+curl -X POST http://localhost:7700/command \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $CONTEXT_AUTH_TOKEN" \
   -d '{
     "action": "search",
     "payload": {
@@ -271,14 +301,22 @@ Example health request:
 curl http://localhost:7700/health
 ```
 
+If you started the server with `CONTEXT_AUTH_TOKEN`, add an Authorization header:
+
+```bash
+curl http://localhost:7700/health \
+  -H "Authorization: Bearer $CONTEXT_AUTH_TOKEN"
+```
+
 ### gRPC Server
 
 ```bash
 # Start gRPC server on default port 50051
 context serve-grpc
 
-# Custom bind address
-context serve-grpc --bind 0.0.0.0:50052
+# Bind to a non-loopback address (explicit opt-in + auth)
+export CONTEXT_AUTH_TOKEN='replace-me'
+context serve-grpc --public --bind 0.0.0.0:50052
 ```
 
 ### Background Daemon
@@ -304,19 +342,19 @@ If you have many agent sessions open, the MCP server defaults to a shared backen
 If you need an isolated in-process server per session (mostly useful in tests), disable shared mode:
 
 ```text
-CONTEXT_MCP_SHARED=0  # legacy: CONTEXT_FINDER_MCP_SHARED=0
+CONTEXT_MCP_SHARED=0
 ```
 
 In shared mode, each session runs a lightweight stdio proxy that connects to a single long-lived daemon process (`context-mcp daemon`) behind the scenes.
 
 Optional:
 
-- `CONTEXT_FINDER_MCP_SOCKET` overrides the Unix socket path for the daemon.
-- Keep the indexing daemon enabled (avoid `CONTEXT_FINDER_DISABLE_DAEMON=1`) if you want indexes to stay warm while you work.
-- `CONTEXT_FINDER_INDEX_CONCURRENCY` caps how many projects can be indexed in parallel in shared daemon mode (default: auto; range: 1–32). Requires restarting the daemon to take effect.
+- `CONTEXT_MCP_SOCKET` overrides the Unix socket path for the daemon.
+- Keep the indexing daemon enabled (avoid `CONTEXT_DISABLE_DAEMON=1`) if you want indexes to stay warm while you work.
+- `CONTEXT_INDEX_CONCURRENCY` caps how many projects can be indexed in parallel in shared daemon mode (default: auto; range: 1–32). Requires restarting the daemon to take effect.
 - `CONTEXT_WARM_WORKER_CAPACITY` caps how many hot project warm workers are kept in the daemon warm-indexer LRU (default: auto). Requires restarting the daemon to take effect.
 - `CONTEXT_WARM_WORKER_TTL_SECS` sets idle eviction TTL for warm workers (default: auto). Requires restarting the daemon to take effect.
-- `CONTEXT_FINDER_ENGINE_SEMANTIC_INDEX_CAPACITY` caps how many semantic indices are kept loaded per project engine (default: auto; minimum: 1). Lower values reduce RAM but may increase on-demand index loads. Requires restarting the daemon to take effect.
+- `CONTEXT_ENGINE_SEMANTIC_INDEX_CAPACITY` caps how many semantic indices are kept loaded per project engine (default: auto; minimum: 1). Lower values reduce RAM but may increase on-demand index loads. Requires restarting the daemon to take effect.
 
 Self-audit tool inventory (no MCP client required):
 
@@ -360,7 +398,7 @@ shared-backend proxy inject the project root from its current working directory:
 {}
 ```
 
-If you are using Context Finder as a daily navigation/memory tool, start with the playbook:
+If you are using Context as a daily navigation/memory tool, start with the playbook:
 
 - `docs/AGENT_MEMORY.md` — `read_pack` as the “apply_patch of context”
 
@@ -390,7 +428,7 @@ All MCP tool errors are reported in `.context` text (`A: error: <code>` + a shor
 External memory overlay (default convention):
 
 - BranchMind context pack file: `.agents/mcp/.context/branchmind/context_pack.json` (preferred; legacy `.agents/mcp/context/.context/…`, `.context/…` and `.context-finder/…` are supported).
-- Codex CLI worklog cache: stored under your Codex home (e.g. `~/.codex/.context-finder/external_memory/codex_cli/*`, keyed by project root), derived from `~/.codex/sessions` / `$CODEX_HOME/sessions` (project-scoped via session cwd prefix; deduped + bounded; never written into the repo).
+- Codex CLI worklog cache: stored under your Codex home (e.g. `~/.codex/.context/external_memory/codex_cli/*`, keyed by project root), derived from `~/.codex/sessions` / `$CODEX_HOME/sessions` (project-scoped via session cwd prefix; deduped + bounded; never written into the repo).
 
 ### Recall mini-language (per question)
 
@@ -672,7 +710,7 @@ All commands support these options:
 | `--quiet` | Only warnings/errors to stderr | off |
 | `--embed-mode` | Embedding backend: `fast` or `stub` | fast |
 | `--embed-model` | Override embedding model id | unset |
-| `--model-dir` | Model directory (overrides `CONTEXT_MODEL_DIR`; legacy: `CONTEXT_FINDER_MODEL_DIR`) | `./models` |
+| `--model-dir` | Model directory (overrides `CONTEXT_MODEL_DIR`) | `./models` |
 | `--cuda-device` | CUDA device ID | unset |
 | `--cuda-mem-limit-mb` | CUDA memory arena limit (MB) | unset |
 | `--cache-dir` | Cache directory | `.agents/mcp/.context/cache` |
@@ -684,13 +722,14 @@ All commands support these options:
 
 | Variable | Description |
 |----------|-------------|
-| `CONTEXT_MODEL_DIR` | Model cache directory (legacy: `CONTEXT_FINDER_MODEL_DIR`) |
-| `CONTEXT_EMBEDDING_MODEL` | Embedding model id (legacy: `CONTEXT_FINDER_EMBEDDING_MODEL`) |
-| `CONTEXT_CUDA_DEVICE` | CUDA device ID (legacy: `CONTEXT_FINDER_CUDA_DEVICE`) |
-| `CONTEXT_CUDA_MEM_LIMIT_MB` | CUDA memory limit (legacy: `CONTEXT_FINDER_CUDA_MEM_LIMIT_MB`) |
-| `CONTEXT_EMBEDDING_MODE` | Embedding mode (legacy: `CONTEXT_FINDER_EMBEDDING_MODE`) |
-| `CONTEXT_PROFILE` | Search profile (legacy: `CONTEXT_FINDER_PROFILE`) |
-| `CONTEXT_ALLOW_CPU` | Set to `1` to explicitly allow CPU fallback (legacy: `CONTEXT_FINDER_ALLOW_CPU`) |
+| `CONTEXT_MODEL_DIR` | Model cache directory |
+| `CONTEXT_EMBEDDING_MODEL` | Embedding model id |
+| `CONTEXT_CUDA_DEVICE` | CUDA device ID |
+| `CONTEXT_CUDA_MEM_LIMIT_MB` | CUDA memory limit |
+| `CONTEXT_EMBEDDING_MODE` | Embedding mode |
+| `CONTEXT_PROFILE` | Search profile |
+| `CONTEXT_ALLOW_CPU` | Set to `1` to explicitly allow CPU fallback |
+| `CONTEXT_AUTH_TOKEN` | Optional server auth token for `serve-http` / `serve-grpc` (requires `Authorization: Bearer <token>`) |
 
 ### Search Profiles
 
@@ -764,7 +803,7 @@ Supported placeholders: `{text}`, `{path}`, `{language}`, `{chunk_type}`, `{symb
 
 ### MCP integration
 
-Context Finder can be used as a context provider for AI coding assistants:
+Context can be used as a context provider for AI coding assistants:
 
 ```bash
 # Start HTTP API
@@ -839,15 +878,18 @@ Expected MCP tool names (primary):
 - `doctor`, `search`, `context`, `context_pack`
 - `text_search`, `explain`, `impact`, `trace`, `overview`
 
-Convenience aliases: `grep` (alias for `rg`), `find` (alias for `ls`).
+Convenience aliases: `grep` (alias for `rg`).
+
+Note: `find` lists project file paths (find-like). `ls` lists directory entries.
 
 ## Development checks
 
 ```bash
-scripts/validate_contracts.sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
+# One command (contracts + structure + fmt + clippy + stub tests + HTTP conformance + stub eval):
+bash scripts/validate_quality.sh
+
+# Optional (real embeddings smoke; requires models + CUDA/ORT, or CPU fallback via CONTEXT_ALLOW_CPU=1):
+bash scripts/validate_real_embeddings.sh
 
 # "Big audit" (includes contract-first gate + the checks above + extra reports)
 ./audit.sh

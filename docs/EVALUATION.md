@@ -1,6 +1,6 @@
 # Evaluation (Regression-Proof Quality)
 
-Context Finder is not “done” when it feels good on one repo.
+Context is not “done” when it feels good on one repo.
 It is “done” when quality is **measured**, **repeatable**, and **gated** against regressions.
 
 This doc explains the evaluation loop and how it connects to the contracts-first workflow.
@@ -11,7 +11,7 @@ This doc explains the evaluation loop and how it connects to the contracts-first
 
 Runs in CI and must be stable:
 
-- Uses `CONTEXT_FINDER_EMBEDDING_MODE=stub` (deterministic, no model downloads).
+- Uses `CONTEXT_EMBEDDING_MODE=stub` (deterministic, no model downloads).
 - Validates **boundedness**, **determinism**, **fallback behavior**, and **contracts**.
 - Uses small, focused golden datasets + synthetic repos in tests.
 
@@ -64,7 +64,7 @@ Datasets are JSON files with schema version `1`:
 
 Datasets are used by:
 
-- CLI: `context eval` and `context eval-compare` (alias: `context-finder`)
+- CLI: `context eval` and `context eval-compare` (legacy alias: `context-finder`)
 
 #### Philosophy
 

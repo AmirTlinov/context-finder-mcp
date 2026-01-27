@@ -36,3 +36,9 @@ pub(super) mod worktree_pack;
 
 #[cfg(test)]
 mod path_disambiguation_tests;
+mod tool_router;
+
+pub(super) fn build_tool_router_with_param_hints(
+) -> super::tool_router_hints::ToolRouterWithParamHints<super::ContextFinderService> {
+    tool_router::build_tool_router_with_param_hints()
+}

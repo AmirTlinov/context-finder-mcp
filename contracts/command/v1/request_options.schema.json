@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "contracts/command/v1/request_options.schema.json",
-  "title": "Context Finder CommandRequest Options (v1)",
+  "title": "Context CommandRequest Options (v1)",
   "type": "object",
   "additionalProperties": false,
   "properties": {

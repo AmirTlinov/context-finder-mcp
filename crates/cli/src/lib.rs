@@ -1,7 +1,7 @@
 use anyhow::{Context as AnyhowContext, Result};
 use axum::{
     body::Body,
-    http::{Response as HttpResponse, StatusCode},
+    http::{HeaderMap, Response as HttpResponse, StatusCode},
     response::Response,
     routing::{get, post},
     Router,
@@ -9,13 +9,12 @@ use axum::{
 use cache::{CacheBackend, CacheConfig};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use command::{
-    CommandAction, CommandRequest, CommandResponse, CommandStatus, ContextPackOutput,
-    ContextPackPayload, EvalCacheMode, EvalCompareOutput, EvalComparePayload, EvalOutput,
-    EvalPayload, IndexPayload, IndexResponse, ListSymbolsPayload, MapOutput, MapPayload,
-    ResponseMeta, SearchOutput, SearchPayload, SearchStrategy, SearchWithContextPayload,
-    SymbolsOutput,
+    CommandAction, CommandRequest, ContextPackOutput, ContextPackPayload, EvalCacheMode,
+    EvalCompareOutput, EvalComparePayload, EvalOutput, EvalPayload, IndexPayload, IndexResponse,
+    ListSymbolsPayload, MapOutput, MapPayload, SearchOutput, SearchPayload, SearchStrategy,
+    SearchWithContextPayload, SymbolsOutput,
 };
-use context_protocol::{serialize_json, ErrorEnvelope};
+use context_protocol::serialize_json;
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -30,8 +29,10 @@ mod command;
 mod graph_cache;
 mod grpc;
 mod heartbeat;
+mod http_api;
 mod models;
 mod report;
+mod server_security;
 
 fn print_stdout(text: &str) -> Result<()> {
     use std::io::Write;
@@ -189,6 +190,14 @@ struct ServeArgs {
     #[arg(long, default_value = "127.0.0.1:7700")]
     bind: String,
 
+    /// Allow binding to non-loopback addresses (requires --auth-token)
+    #[arg(long)]
+    public: bool,
+
+    /// Require Authorization: Bearer <token> on all requests (env: CONTEXT_AUTH_TOKEN)
+    #[arg(long)]
+    auth_token: Option<String>,
+
     /// Cache backend: file|memory
     #[arg(long, default_value = "file")]
     cache_backend: String,
@@ -199,6 +208,14 @@ struct ServeGrpcArgs {
     /// Bind address, e.g. 127.0.0.1:50051
     #[arg(long, default_value = "127.0.0.1:50051")]
     bind: String,
+
+    /// Allow binding to non-loopback addresses (requires --auth-token)
+    #[arg(long)]
+    public: bool,
+
+    /// Require authorization metadata on all requests (env: CONTEXT_AUTH_TOKEN)
+    #[arg(long)]
+    auth_token: Option<String>,
 }
 
 #[derive(Args)]
@@ -1385,40 +1402,102 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
 }
 
 async fn serve_http(args: ServeArgs, cache_cfg: CacheConfig) -> Result<()> {
+    let addrs = server_security::resolve_guarded_bind_addrs(&args.bind, args.public).await?;
+    let auth_token_raw = args
+        .auth_token
+        .as_deref()
+        .map(|v| v.to_string())
+        .or_else(|| std::env::var(server_security::AUTH_TOKEN_ENV).ok());
+    let auth_token = server_security::AuthToken::parse(auth_token_raw.as_deref())?;
+    if args.public && auth_token.is_none() {
+        anyhow::bail!(
+            "--public requires an auth token: set --auth-token or export CONTEXT_AUTH_TOKEN"
+        );
+    }
+
     let state = std::sync::Arc::new(HttpState {
         cache: cache_cfg,
         health: HealthPort,
+        auth_token,
     });
     let app = Router::new()
         .route(
             "/command",
             post({
                 let state = state.clone();
-                move |body| http_handler(body, state.clone())
+                move |headers, body| http_handler(headers, body, state.clone())
             }),
         )
         .route(
             "/health",
             get({
                 let state = state.clone();
-                move || http_health(state.clone())
+                move |headers| http_health(headers, state.clone())
             }),
         )
-        .with_state(state);
+        .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
+    let local_addr = listener.local_addr()?;
+    let base_url = format!("http://{local_addr}");
+
+    print_stdout(&format!("Serving Command API: {base_url}/command"))?;
+    print_stdout(&format!("Health endpoint: {base_url}/health"))?;
+
+    if state.auth_token.is_some() {
+        print_stdout("Auth enabled: add header 'Authorization: Bearer $CONTEXT_AUTH_TOKEN'")?;
+    }
+    if args.public {
+        let addrs = addrs
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        print_stdout(&format!(
+            "Public bind enabled (--public). Resolved addresses: {addrs}"
+        ))?;
+    }
+
+    print_stdout(&format!("Try: curl {base_url}/health"))?;
     print_stdout(&format!(
-        "Serving Command API on http://{}/command",
-        args.bind
+        "Try: curl -X POST {base_url}/command -H 'Content-Type: application/json' -d '<CommandRequest JSON>'"
     ))?;
     axum::serve(listener, app).await?;
     Ok(())
 }
 
 async fn serve_grpc(args: ServeGrpcArgs, cache_cfg: CacheConfig) -> Result<()> {
-    let addr = args.bind.parse()?;
-    let server = grpc::GrpcServer::new(cache_cfg);
+    let addrs = server_security::resolve_guarded_bind_addrs(&args.bind, args.public).await?;
+    let addr = server_security::choose_preferred_bind_addr(&addrs).ok_or_else(|| {
+        anyhow::anyhow!("Bind address resolved to zero socket addrs: {}", args.bind)
+    })?;
+    let auth_token_raw = args
+        .auth_token
+        .as_deref()
+        .map(|v| v.to_string())
+        .or_else(|| std::env::var(server_security::AUTH_TOKEN_ENV).ok());
+    let auth_token = server_security::AuthToken::parse(auth_token_raw.as_deref())?;
+    if args.public && auth_token.is_none() {
+        anyhow::bail!(
+            "--public requires an auth token: set --auth-token or export CONTEXT_AUTH_TOKEN"
+        );
+    }
+
+    let server = grpc::GrpcServer::new(cache_cfg, auth_token);
     print_stdout(&format!("Serving gRPC Command API on {addr}"))?;
+    if server.auth_is_enabled() {
+        print_stdout("Auth enabled: send authorization metadata 'authorization: Bearer <token>'")?;
+    }
+    if args.public {
+        let addrs = addrs
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        print_stdout(&format!(
+            "Public bind enabled (--public). Resolved addresses: {addrs}"
+        ))?;
+    }
     Server::builder()
         .add_service(server.into_server())
         .serve(addr)
@@ -1427,54 +1506,46 @@ async fn serve_grpc(args: ServeGrpcArgs, cache_cfg: CacheConfig) -> Result<()> {
 }
 
 async fn http_handler(
+    headers: HeaderMap,
     body: axum::body::Bytes,
     state: std::sync::Arc<HttpState>,
 ) -> Result<Response, StatusCode> {
+    if let Some(token) = &state.auth_token {
+        if !http_api::is_authorized(&headers, token) {
+            let response = http_api::error_response(
+                "unauthorized",
+                "Missing or invalid Authorization header".to_string(),
+            );
+            return http_api::build_response(StatusCode::UNAUTHORIZED, response);
+        }
+    }
+
     let request: CommandRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(err) => {
             let response =
-                http_error_response("invalid_request", format!("Invalid JSON request: {err}"));
-            return build_http_response(StatusCode::BAD_REQUEST, response);
+                http_api::error_response("invalid_request", format!("Invalid JSON request: {err}"));
+            return http_api::build_response(StatusCode::BAD_REQUEST, response);
         }
     };
     let response = command::execute(request, state.cache.clone()).await;
-    build_http_response(StatusCode::OK, response)
+    http_api::build_response(StatusCode::OK, response)
 }
 
-fn http_error_response(code: &str, message: String) -> CommandResponse {
-    CommandResponse {
-        status: CommandStatus::Error,
-        message: Some(message.clone()),
-        error: Some(ErrorEnvelope {
-            code: code.to_string(),
-            message,
-            details: None,
-            hint: Some("Check the JSON body against the Command API schema.".to_string()),
-            next_actions: Vec::new(),
-        }),
-        hints: Vec::new(),
-        next_actions: Vec::new(),
-        data: serde_json::Value::Null,
-        meta: ResponseMeta::default(),
-    }
-}
-
-fn build_http_response(
-    status: StatusCode,
-    response: CommandResponse,
+async fn http_health(
+    headers: HeaderMap,
+    state: std::sync::Arc<HttpState>,
 ) -> Result<Response, StatusCode> {
-    let bytes = serialize_json(&response)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .into_bytes();
-    Ok(HttpResponse::builder()
-        .status(status)
-        .header("content-type", "application/json")
-        .body(Body::from(bytes))
-        .expect("valid HTTP response"))
-}
+    if let Some(token) = &state.auth_token {
+        if !http_api::is_authorized(&headers, token) {
+            let response = http_api::error_response(
+                "unauthorized",
+                "Missing or invalid Authorization header".to_string(),
+            );
+            return http_api::build_response(StatusCode::UNAUTHORIZED, response);
+        }
+    }
 
-async fn http_health(state: std::sync::Arc<HttpState>) -> Result<Response, StatusCode> {
     let root = std::env::current_dir().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let report = state
         .health
@@ -1510,4 +1581,5 @@ fn bootstrap_gpu_env() -> Result<()> {
 struct HttpState {
     cache: CacheConfig,
     health: HealthPort,
+    auth_token: Option<server_security::AuthToken>,
 }

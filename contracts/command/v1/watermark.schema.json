@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "contracts/command/v1/watermark.schema.json",
-  "title": "Context Finder Watermark (v1)",
+  "title": "Context Watermark (v1)",
   "type": "object",
   "additionalProperties": false,
   "required": ["kind"],
@@ -51,4 +51,3 @@
     }
   ]
 }
-

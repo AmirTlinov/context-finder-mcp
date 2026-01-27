@@ -1,44 +1,13 @@
 use anyhow::{Context, Result};
 use rmcp::{model::CallToolRequestParam, service::ServiceExt, transport::TokioChildProcess};
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 #[tokio::test]
 async fn impact_falls_back_to_text_matches_when_graph_has_no_edges() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -105,7 +74,7 @@ async fn impact_falls_back_to_text_matches_when_graph_has_no_edges() -> Result<(
 
 #[tokio::test]
 async fn impact_returns_text_matches_when_symbol_is_missing_from_graph() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -172,7 +141,7 @@ async fn impact_returns_text_matches_when_symbol_is_missing_from_graph() -> Resu
 
 #[tokio::test]
 async fn impact_finds_symbols_only_mentioned_in_docs_via_filesystem_fallback() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");

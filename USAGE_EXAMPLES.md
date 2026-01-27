@@ -1,4 +1,4 @@
-# Context Finder — Usage Examples (agent-first)
+# Context — Usage Examples (agent-first)
 
 This document focuses on agent-friendly workflows. In MCP mode, **indexing is automatic and incremental** (no manual “index step” for the agent). The CLI examples below keep `index` because it’s useful for automation/debugging and “force rebuild” scenarios.
 

@@ -95,14 +95,14 @@
     },
     {
       "id": "cli_entrypoint_main",
-      "query": "where is the context-finder CLI entrypoint main",
-      "expected_paths": ["crates/cli/src/main.rs"],
+      "query": "where is the context CLI entrypoint main",
+      "expected_paths": ["crates/cli/src/bin/context.rs", "crates/cli/src/bin/context_finder.rs"],
       "intent": "conceptual"
     },
     {
       "id": "cli_default_profile",
       "query": "where is the default profile set (quality / fast / general)",
-      "expected_paths": ["crates/cli/src/main.rs", "crates/cli/src/command/context.rs"],
+      "expected_paths": ["crates/cli/src/lib.rs", "crates/cli/src/command/context.rs"],
       "intent": "conceptual"
     },
     {
@@ -140,7 +140,7 @@
     },
     {
       "id": "embedding_mode_env",
-      "query": "CONTEXT_FINDER_EMBEDDING_MODE fast stub",
+      "query": "CONTEXT_EMBEDDING_MODE fast stub",
       "expected_paths": ["crates/vector-store/src/embeddings.rs"],
       "intent": "conceptual"
     },
@@ -152,7 +152,7 @@
     },
     {
       "id": "model_registry_capacity_env",
-      "query": "CONTEXT_FINDER_MODEL_REGISTRY_CAPACITY LRU cache",
+      "query": "CONTEXT_MODEL_REGISTRY_CAPACITY LRU cache",
       "expected_paths": ["crates/vector-store/src/embeddings.rs"],
       "intent": "conceptual"
     },
@@ -221,13 +221,13 @@
     {
       "id": "doctor_index_drift_detection",
       "query": "Index drift detected vs corpus for models",
-      "expected_paths": ["crates/mcp-server/src/tools.rs"],
+      "expected_paths": ["crates/mcp-server/src/tools/dispatch/router/doctor.rs"],
       "intent": "conceptual"
     },
     {
       "id": "doctor_project_drift_struct",
       "query": "DoctorIndexDrift DoctorProjectResult drift fields",
-      "expected_paths": ["crates/mcp-server/src/tools.rs"],
+      "expected_paths": ["crates/mcp-server/src/tools/schemas/doctor.rs", "crates/mcp-server/src/tools/dispatch/router/doctor.rs"],
       "expected_symbols": ["DoctorIndexDrift", "DoctorProjectResult"],
       "intent": "identifier"
     },

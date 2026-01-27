@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for your interest in contributing to Context Finder.
+Thanks for your interest in contributing to Context.
 
 ## Development setup
 
-Requirements:
+Requirements (Rust is pinned via `rust-toolchain.toml`):
 
-- Rust (stable)
+- Rust
 - A working C/C++ toolchain for native deps (standard Rust setup)
 
 Model assets are optional for most development tasks. For deterministic, model-free tests:
@@ -20,10 +20,10 @@ CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
 Run these before opening a PR:
 
 ```bash
-scripts/validate_contracts.sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-CONTEXT_EMBEDDING_MODE=stub cargo test --workspace
+bash scripts/validate_quality.sh
+
+# Optional (real embeddings smoke; requires models + CUDA/ORT, or CPU fallback via CONTEXT_ALLOW_CPU=1):
+bash scripts/validate_real_embeddings.sh
 ```
 
 ## Documentation

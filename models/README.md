@@ -1,6 +1,6 @@
 # Models
 
-This directory stores **downloaded** embedding model assets used by Context Finder.
+This directory stores **downloaded** embedding model assets used by Context.
 
 - Binaries under `models/**` are **not committed** to git.
 - `models/manifest.json` is the source of truth for what to download and verify.
@@ -8,9 +8,11 @@ This directory stores **downloaded** embedding model assets used by Context Find
 Common workflow:
 
 ```bash
-context-finder install-models
-context-finder doctor --json
+context install-models
+context doctor --json
 ```
+
+The legacy binary alias `context-finder` is also supported.
 
 Optional Python downloader (useful when you prefer `huggingface_hub`):
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Benchmark harness for context-finder.
+"""Benchmark harness for Context.
 
 Loads an audit candidates dataset and iterates through repositories, running:
-  1. context-finder index <repo>
-  2. context-finder search <query> for each positive query.
-  3. context-finder search <query> for negative examples.
+  1. context command --json '{"action":"index", ...}'
+  2. context command --json '{"action":"search", ...}' for each positive query.
+  3. context command --json '{"action":"search", ...}' for negative examples.
 
 Outputs consolidated metrics (time_ms, max_rss_kb, precision@k, false positives)
 to JSON (bench/results/<timestamp>.json by default) and stores raw logs.
@@ -27,7 +27,14 @@ from typing import Any, Dict, List, Set
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-DEFAULT_CLI = REPO_ROOT / "target/release/context-finder"
+
+def default_cli_path() -> Path:
+    preferred = REPO_ROOT / "target/release/context"
+    legacy = REPO_ROOT / "target/release/context-finder"
+    return preferred if preferred.exists() else legacy
+
+
+DEFAULT_CLI = default_cli_path()
 DEFAULT_CANDIDATES_EXAMPLE = REPO_ROOT / "data/audit_candidates.json"
 DEFAULT_CANDIDATES_LOCAL = REPO_ROOT / "data/audit_candidates.local.json"
 DEFAULT_RESULTS_DIR = REPO_ROOT / "bench/results"
@@ -43,8 +50,10 @@ def default_candidates_path() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run context-finder benchmark harness")
-    parser.add_argument("--cli", type=Path, default=DEFAULT_CLI, help="Path to context-finder binary")
+    parser = argparse.ArgumentParser(description="Run Context benchmark harness")
+    parser.add_argument(
+        "--cli", type=Path, default=DEFAULT_CLI, help="Path to context binary"
+    )
     parser.add_argument(
         "--candidates",
         type=Path,
@@ -59,10 +68,28 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to final JSON report (defaults to bench/results/<timestamp>.json)",
     )
-    parser.add_argument("--skip-index", action="store_true", help="Skip indexing step (reuse existing index)")
-    parser.add_argument("--reset-index", action="store_true", help="Remove .context-finder before indexing for deterministic full builds")
-    parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR, help="Directory for raw command logs")
-    parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR, help="Directory for reports when --output omitted")
+    parser.add_argument(
+        "--skip-index",
+        action="store_true",
+        help="Skip indexing step (reuse existing index)",
+    )
+    parser.add_argument(
+        "--reset-index",
+        action="store_true",
+        help="Remove local index dirs before indexing for deterministic full builds",
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=Path,
+        default=DEFAULT_LOG_DIR,
+        help="Directory for raw command logs",
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=DEFAULT_RESULTS_DIR,
+        help="Directory for reports when --output omitted",
+    )
     parser.add_argument(
         "--include",
         nargs="*",
@@ -95,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--trace",
         action="store_true",
-        help="Pass --trace to each context-finder search to inspect scoring",
+        help="Pass --trace to each search to inspect scoring",
     )
     parser.add_argument(
         "--model",
@@ -203,7 +230,9 @@ def run_command(
         with open(time_file.name, "r", encoding="utf-8") as fh:
             content = fh.read().strip()
             if content:
-                digits = [line for line in content.splitlines() if line.strip().isdigit()]
+                digits = [
+                    line for line in content.splitlines() if line.strip().isdigit()
+                ]
                 if digits:
                     max_kb = int(digits[-1])
     finally:
@@ -257,7 +286,9 @@ def compute_precision(
     }
 
 
-def evaluate_negative(results: List[Dict[str, Any]], repo_root: Path, k: int) -> Dict[str, Any]:
+def evaluate_negative(
+    results: List[Dict[str, Any]], repo_root: Path, k: int
+) -> Dict[str, Any]:
     top = results[:k]
     normalized = [normalize_relative(r.get("file", ""), repo_root) for r in top]
     return {
@@ -268,13 +299,27 @@ def evaluate_negative(results: List[Dict[str, Any]], repo_root: Path, k: int) ->
 
 def ensure_executable(path: Path) -> None:
     if not path.exists():
-        raise FileNotFoundError(f"context-finder binary not found at {path}")
+        raise FileNotFoundError(f"context binary not found at {path}")
     if not os.access(path, os.X_OK):
-        raise PermissionError(f"context-finder binary not executable: {path}")
+        raise PermissionError(f"context binary not executable: {path}")
+
+
+def resolve_cli_path(path: Path) -> Path:
+    if path.exists():
+        return path
+
+    # Convenience: if the default points to the preferred name but only the legacy
+    # alias is built, transparently fall back.
+    if path.name == "context":
+        legacy = path.with_name("context-finder")
+        if legacy.exists():
+            return legacy
+    return path
 
 
 def main() -> None:
     args = parse_args()
+    args.cli = resolve_cli_path(args.cli)
     ensure_executable(args.cli)
     candidates = load_candidates(args.candidates)
     args.log_dir.mkdir(parents=True, exist_ok=True)
@@ -349,7 +394,9 @@ def main() -> None:
     for libdir in nvidia_libs:
         if libdir.exists():
             ld_path = base_env.get("LD_LIBRARY_PATH", "")
-            base_env["LD_LIBRARY_PATH"] = f"{libdir}:{ld_path}" if ld_path else str(libdir)
+            base_env["LD_LIBRARY_PATH"] = (
+                f"{libdir}:{ld_path}" if ld_path else str(libdir)
+            )
 
     filtered = candidates
     if args.include:
@@ -393,9 +440,15 @@ def main() -> None:
         }
 
         if args.reset_index and not args.skip_index:
-            index_dir = repo_path / ".context-finder"
-            if index_dir.exists():
-                shutil.rmtree(index_dir)
+            candidates = [
+                repo_path / ".agents/mcp/.context",
+                repo_path / ".agents/mcp/context/.context",
+                repo_path / ".context",
+                repo_path / ".context-finder",
+            ]
+            for index_dir in candidates:
+                if index_dir.exists():
+                    shutil.rmtree(index_dir)
 
         if not args.skip_index:
             idx_cmd = [str(args.cli)]
@@ -422,7 +475,9 @@ def main() -> None:
             (repo_log_dir / "index_stdout.json").write_text(
                 idx_result["stdout"], encoding="utf-8"
             )
-            (repo_log_dir / "index_stderr.log").write_text(idx_result["stderr"], encoding="utf-8")
+            (repo_log_dir / "index_stderr.log").write_text(
+                idx_result["stderr"], encoding="utf-8"
+            )
             parsed_index = {}
             status_ok = False
             if idx_result["returncode"] == 0 and idx_result["stdout"].strip():
@@ -579,7 +634,9 @@ def summarize_repo(repo_record: Dict[str, Any]) -> Dict[str, Any]:
         for q in queries
         if isinstance(q, dict)
     ]
-    avg_precision = sum(precision_values) / len(precision_values) if precision_values else 0.0
+    avg_precision = (
+        sum(precision_values) / len(precision_values) if precision_values else 0.0
+    )
 
     neg_examples = repo_record.get("negative_examples", [])
     false_positive = sum(

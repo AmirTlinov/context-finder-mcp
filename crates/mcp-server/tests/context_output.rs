@@ -4,41 +4,10 @@ use rmcp::{
     service::{RunningService, Service, ServiceExt},
     transport::TokioChildProcess,
 };
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 async fn call_tool_text(
     service: &RunningService<rmcp::RoleClient, impl Service<rmcp::RoleClient>>,
@@ -87,7 +56,7 @@ fn assert_is_low_noise_context_doc(text: &str) {
 
 #[tokio::test]
 async fn read_tools_return_low_noise_context_docs() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -173,7 +142,7 @@ async fn read_tools_return_low_noise_context_docs() -> Result<()> {
 
 #[tokio::test]
 async fn default_output_is_low_noise_context() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -213,7 +182,7 @@ async fn default_output_is_low_noise_context() -> Result<()> {
 
 #[tokio::test]
 async fn text_search_context_output_uses_budget_effectively() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -279,7 +248,7 @@ async fn text_search_context_output_uses_budget_effectively() -> Result<()> {
 
 #[tokio::test]
 async fn cat_context_output_respects_max_chars() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -334,7 +303,7 @@ async fn cat_context_output_respects_max_chars() -> Result<()> {
 
 #[tokio::test]
 async fn cat_handles_long_paths_under_tight_budgets() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");
@@ -391,7 +360,7 @@ async fn cat_handles_long_paths_under_tight_budgets() -> Result<()> {
 
 #[tokio::test]
 async fn find_context_output_respects_max_chars_and_keeps_cursor() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let mut cmd = Command::new(bin);
     cmd.env_remove("CONTEXT_MODEL_DIR");

@@ -4,16 +4,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-CLI="${CLI:-./target/debug/context-finder}"
-if [[ ! -x "${CLI}" ]]; then
-  CLI="./target/release/context-finder"
-fi
-if [[ ! -x "${CLI}" ]]; then
-  echo "[test_batch_search] CLI not found. Build it with: cargo build -p context-cli --bin context-finder" >&2
-  exit 1
+CLI="${CLI:-}"
+if [[ -z "${CLI}" ]]; then
+  if [[ -x "./target/debug/context" ]]; then
+    CLI="./target/debug/context"
+  elif [[ -x "./target/release/context" ]]; then
+    CLI="./target/release/context"
+  elif [[ -x "./target/debug/context-finder" ]]; then
+    CLI="./target/debug/context-finder"
+  elif [[ -x "./target/release/context-finder" ]]; then
+    CLI="./target/release/context-finder"
+  else
+    echo "[test_batch_search] CLI not found. Build it with: cargo build -p context-cli --bin context" >&2
+    exit 1
+  fi
 fi
 
-EMBED_MODE="${CONTEXT_FINDER_EMBEDDING_MODE:-stub}"
+EMBED_MODE="${CONTEXT_EMBEDDING_MODE:-stub}"
 COMMON=(--quiet --embed-mode "${EMBED_MODE}")
 
 echo "=== Testing Multi-Query Search (get-context) ==="

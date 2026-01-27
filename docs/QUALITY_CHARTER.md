@@ -1,7 +1,7 @@
 # Quality Charter (Premium Daily Driver)
 
 This document defines **non-negotiable invariants**, **measurable SLOs**, and **release gates**
-that keep Context Finder reliable for **daily AI-agent use** across repos of any size.
+that keep Context reliable for **daily AI-agent use** across repos of any size.
 
 This is intentionally contract-aligned:
 
@@ -22,7 +22,7 @@ Context must never come from the wrong project root.
 
 - All tools that can return large content MUST honor a hard budget (`max_chars` or equivalent).
 - Truncation MUST be deterministic and cursor-continuable where applicable.
-- Stub mode (`CONTEXT_FINDER_EMBEDDING_MODE=stub`) MUST be deterministic and used in CI.
+- Stub mode (`CONTEXT_EMBEDDING_MODE=stub`) MUST be deterministic and used in CI.
 
 ### I3 — No silent correctness fallbacks
 
@@ -142,7 +142,7 @@ These are mandatory for any change that affects external behavior:
 - `scripts/validate_quality.sh` (convenience wrapper: gates + stub eval smoke)
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `CONTEXT_FINDER_EMBEDDING_MODE=stub cargo test --workspace`
+- `CONTEXT_EMBEDDING_MODE=stub cargo test --workspace`
 - Eval smoke on golden datasets (see `context eval` in `docs/QUICK_START.md`)
 
 Breaking behavior changes require a new contract version line under `contracts/**/v(N+1)/`.

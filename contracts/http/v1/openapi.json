@@ -11,6 +11,7 @@
       "post": {
         "summary": "Execute a Command API request",
         "operationId": "commandExecute",
+        "security": [{ "BearerAuth": [] }, {}],
         "requestBody": {
           "required": true,
           "content": {
@@ -22,6 +23,17 @@
         "responses": {
           "200": {
             "description": "CommandResponse envelope",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CommandResponse" }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (CommandResponse error envelope)",
+            "headers": {
+              "WWW-Authenticate": { "schema": { "type": "string" } }
+            },
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/CommandResponse" }
@@ -51,6 +63,7 @@
       "get": {
         "summary": "Health snapshot for the current working directory",
         "operationId": "healthGet",
+        "security": [{ "BearerAuth": [] }, {}],
         "responses": {
           "200": {
             "description": "Health report",
@@ -60,12 +73,30 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized (CommandResponse error envelope)",
+            "headers": {
+              "WWW-Authenticate": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CommandResponse" }
+              }
+            }
+          },
           "500": { "description": "Internal server error" }
         }
       }
     }
   },
   "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque"
+      }
+    },
     "schemas": {
       "CommandRequest": {
         "$ref": "../../command/v1/command_request.schema.json"

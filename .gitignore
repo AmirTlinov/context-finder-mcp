@@ -21,6 +21,7 @@ __pycache__/
 .agents/
 .context/
 .context-finder/
+.context-mcp/
 .fastembed_cache/
 .tasks/
 .serena/
@@ -40,6 +41,7 @@ bench/results/.current_bench
 bench/results/*.json
 .deps/
 .context-finder/cache/ort_cuda/
+.context/cache/ort_cuda/
 
 # Local embedding models (downloaded once; keep binaries out of git)
 models/*

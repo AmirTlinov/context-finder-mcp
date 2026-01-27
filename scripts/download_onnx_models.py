@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Download Context Finder embedding model assets using models/manifest.json.
+Download Context embedding model assets using models/manifest.json.
 
 This script is an optional convenience for end users. The CLI equivalent is:
-  context-finder install-models
+  context install-models
 
 Examples:
   python scripts/download_onnx_models.py --list
@@ -11,7 +11,7 @@ Examples:
   python scripts/download_onnx_models.py --all
 
 Notes:
-  - Defaults to downloading into ./models (or $CONTEXT_FINDER_MODEL_DIR).
+  - Defaults to downloading into ./models (or $CONTEXT_MODEL_DIR).
   - For HuggingFace sources, requires: python -m pip install huggingface_hub
 """
 
@@ -42,7 +42,7 @@ def repo_root() -> Path:
 
 
 def default_model_dir(root: Path) -> Path:
-    env = os.environ.get("CONTEXT_FINDER_MODEL_DIR")
+    env = os.environ.get("CONTEXT_MODEL_DIR")
     if env:
         return Path(env)
     return root / "models"
@@ -51,7 +51,9 @@ def default_model_dir(root: Path) -> Path:
 def safe_join(base: Path, rel: str) -> Path:
     rel_path = Path(rel)
     if rel_path.is_absolute() or ".." in rel_path.parts:
-        raise ValueError(f"asset path must be relative and must not contain '..': {rel}")
+        raise ValueError(
+            f"asset path must be relative and must not contain '..': {rel}"
+        )
 
     base_resolved = base.resolve()
     full = (base_resolved / rel_path).resolve()
@@ -81,7 +83,11 @@ def download_url(url: str, out_path: Path, expected_sha256: str | None) -> None:
                     break
                 fh.write(chunk)
                 digest.update(chunk)
-    if expected_sha256 is not None and expected_sha256 and digest.hexdigest() != expected_sha256:
+    if (
+        expected_sha256 is not None
+        and expected_sha256
+        and digest.hexdigest() != expected_sha256
+    ):
         raise ValueError(f"sha256 mismatch for {url}")
 
 
@@ -109,7 +115,7 @@ def download_huggingface(
 ) -> None:
     hf_hub_download = try_import_hf()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="context-finder-models-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="context-models-") as tmp:
         downloaded = Path(
             hf_hub_download(
                 repo_id=repo_id,
@@ -161,12 +167,12 @@ def parse_assets(manifest: dict[str, Any]) -> dict[str, list[Asset]]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download Context Finder model assets")
+    parser = argparse.ArgumentParser(description="Download Context model assets")
     parser.add_argument(
         "--model-dir",
         type=Path,
         default=None,
-        help="Model directory (overrides CONTEXT_FINDER_MODEL_DIR; defaults to ./models)",
+        help="Model directory (overrides CONTEXT_MODEL_DIR; defaults to ./models)",
     )
     parser.add_argument(
         "--manifest",
@@ -236,14 +242,20 @@ def main() -> int:
         raw = []
         for item in args.model:
             raw.extend([s.strip() for s in item.split(",") if s.strip()])
-        requested = raw or (["bge-small"] if "bge-small" in assets_by_model else [next(iter(assets_by_model))])
+        requested = raw or (
+            ["bge-small"]
+            if "bge-small" in assets_by_model
+            else [next(iter(assets_by_model))]
+        )
 
     verify = not args.no_verify
 
     # If the model_dir differs from the manifest's directory, ensure the manifest exists in model_dir
-    # so `context-finder` can use it later with CONTEXT_FINDER_MODEL_DIR.
+    # so `context` can use it later with CONTEXT_MODEL_DIR.
     model_dir.mkdir(parents=True, exist_ok=True)
-    if (model_dir / "manifest.json") != manifest_path and not (model_dir / "manifest.json").exists():
+    if (model_dir / "manifest.json") != manifest_path and not (
+        model_dir / "manifest.json"
+    ).exists():
         shutil.copy2(manifest_path, model_dir / "manifest.json")
 
     for model_id in requested:
@@ -270,7 +282,9 @@ def main() -> int:
                 repo = str(asset.source.get("repo"))
                 revision = str(asset.source.get("revision", "main"))
                 filename = str(asset.source.get("filename"))
-                print(f"[download] {asset.local_rel_path} from hf:{repo}@{revision}:{filename}")
+                print(
+                    f"[download] {asset.local_rel_path} from hf:{repo}@{revision}:{filename}"
+                )
                 download_huggingface(repo, revision, filename, local, expected)
                 continue
             if source_type == "url":
@@ -281,7 +295,9 @@ def main() -> int:
                 os.replace(tmp_local, local)
                 continue
 
-            raise ValueError(f"Unsupported source type: {source_type!r} for {asset.local_rel_path}")
+            raise ValueError(
+                f"Unsupported source type: {source_type!r} for {asset.local_rel_path}"
+            )
 
     print(f"[ok] model_dir={model_dir}")
     return 0

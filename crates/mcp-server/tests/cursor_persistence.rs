@@ -10,37 +10,7 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::Barrier;
 
-fn locate_context_finder_mcp_bin() -> Result<PathBuf> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_context-finder-mcp") {
-        return Ok(PathBuf::from(path));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(target_profile_dir) = exe.parent().and_then(|p| p.parent()) {
-            let candidate = target_profile_dir.join("context-finder-mcp");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .ancestors()
-        .nth(2)
-        .context("failed to resolve repo root from CARGO_MANIFEST_DIR")?;
-    for rel in [
-        "target/debug/context-finder-mcp",
-        "target/release/context-finder-mcp",
-    ] {
-        let candidate = repo_root.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!("failed to locate context-finder-mcp binary")
-}
+mod support;
 
 async fn spawn_server(
     bin: &Path,
@@ -66,7 +36,7 @@ async fn spawn_server(
 
 #[tokio::test]
 async fn cursor_alias_survives_process_restart() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let cursor_store_dir = tempfile::tempdir().context("temp cursor store dir")?;
     let cursor_store_path = cursor_store_dir.path().join("cursor_store.json");
@@ -146,7 +116,7 @@ async fn cursor_alias_survives_process_restart() -> Result<()> {
 
 #[tokio::test]
 async fn cursor_aliases_do_not_collide_across_concurrent_servers() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let cursor_store_dir = tempfile::tempdir().context("temp cursor store dir")?;
     let cursor_store_path = cursor_store_dir.path().join("cursor_store.json");
@@ -260,7 +230,7 @@ async fn cursor_aliases_do_not_collide_across_concurrent_servers() -> Result<()>
 
 #[tokio::test]
 async fn cursor_alias_signature_mismatch_fails_closed() -> Result<()> {
-    let bin = locate_context_finder_mcp_bin()?;
+    let bin = support::locate_context_mcp_bin()?;
 
     let cursor_store_dir = tempfile::tempdir().context("temp cursor store dir")?;
     let cursor_store_path = cursor_store_dir.path().join("cursor_store.json");

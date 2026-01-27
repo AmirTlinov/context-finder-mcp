@@ -7,9 +7,39 @@
 # - Fail only when we make them worse (line count grows past the current baseline).
 # - As we refactor, reduce these numbers.
 
-crates/mcp-server/src/tools/dispatch/mod.rs 3505
-crates/mcp-server/src/tools/dispatch/read_pack/mod.rs 6670
-crates/mcp-server/src/tools/dispatch/read_pack/cursors.rs 247
+crates/mcp-server/src/tools/dispatch/mod.rs 2731
+crates/mcp-server/src/tools/dispatch/read_pack/mod.rs 90
+crates/mcp-server/src/tools/dispatch/read_pack/cursors/normalize.rs 176
 crates/mcp-server/src/tools/dispatch/read_pack/recall.rs 178
 crates/mcp-server/src/tools/dispatch/cursor_store/mod.rs 293
-crates/mcp-server/src/tools/dispatch/cursor_store/persist.rs 160
+crates/mcp-server/src/tools/dispatch/cursor_store/persist.rs 151
+
+# Router modules: keep these from growing while we refactor.
+crates/mcp-server/src/tools/dispatch/router/context_pack/mod.rs 23
+crates/mcp-server/src/tools/dispatch/router/context_pack/handler.rs 301
+crates/mcp-server/src/tools/dispatch/router/context_pack/response.rs 141
+crates/mcp-server/src/tools/dispatch/router/context_pack/render.rs 141
+crates/mcp-server/src/tools/dispatch/router/context_pack/fallback.rs 253
+crates/mcp-server/src/tools/dispatch/router/context_pack/graph_nodes.rs 219
+crates/mcp-server/src/tools/dispatch/router/context_pack/inputs.rs 150
+crates/mcp-server/src/tools/dispatch/router/context_pack/budget.rs 81
+crates/mcp-server/src/tools/dispatch/router/context_pack/trace.rs 45
+crates/mcp-server/src/tools/dispatch/router/text_search/mod.rs 23
+crates/mcp-server/src/tools/dispatch/router/text_search/handler.rs 520
+crates/mcp-server/src/tools/dispatch/router/text_search/cursor.rs 170
+crates/mcp-server/src/tools/dispatch/router/text_search/scan_corpus.rs 156
+crates/mcp-server/src/tools/dispatch/router/text_search/scan_filesystem.rs 150
+crates/mcp-server/src/tools/dispatch/router/text_search/types.rs 64
+crates/mcp-server/src/tools/dispatch/router/text_search/budget.rs 51
+crates/mcp-server/src/tools/dispatch/router/text_search/tests.rs 24
+crates/mcp-server/src/tools/dispatch/router/grep_context.rs 922
+crates/mcp-server/src/tools/dispatch/router/batch.rs 803
+crates/mcp-server/src/tools/dispatch/router/search.rs 704
+crates/mcp-server/src/tools/dispatch/router/doctor.rs 641
+crates/mcp-server/src/tools/dispatch/router/path_disambiguation_tests.rs 608
+crates/mcp-server/src/tools/dispatch/router/list_files.rs 498
+crates/mcp-server/src/tools/dispatch/router/overview.rs 492
+crates/mcp-server/src/tools/dispatch/router/tool_router.rs 433
+
+# CLI glue: lock size while we split it.
+crates/cli/src/lib.rs 1593

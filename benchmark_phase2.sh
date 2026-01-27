@@ -4,9 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-CLI="${CLI:-./target/release/context-finder}"
+CLI="${CLI:-}"
+if [[ -z "${CLI}" ]]; then
+  if [[ -x "./target/release/context" ]]; then
+    CLI="./target/release/context"
+  else
+    CLI="./target/release/context-finder"
+  fi
+fi
 if [[ ! -x "${CLI}" ]]; then
-  echo "[benchmark_phase2] CLI not found at ${CLI}. Build it with: cargo build --release -p context-cli --bin context-finder" >&2
+  echo "[benchmark_phase2] CLI not found. Build it with: cargo build --release -p context-cli --bin context" >&2
   exit 1
 fi
 
@@ -32,8 +39,8 @@ echo -e "${BLUE}[1/4] Incremental Indexing Performance${NC}"
 echo "────────────────────────────────────────"
 echo
 
-# Clean state
-rm -rf .context-finder/
+# Clean state (preferred + legacy)
+rm -rf .agents/mcp/.context/ .agents/mcp/context/.context/ .context/ .context-finder/
 
 echo "Test 1.1: Full index (cold start)"
 "${CLI}" "${COMMON[@]}" index . --json | jq -r '.data.stats | "files=\(.files) chunks=\(.chunks) time_ms=\(.time_ms)"'
@@ -138,6 +145,10 @@ echo
 
 echo "Test 4.2: Memory efficiency"
 echo "Index size:"
+du -h .agents/mcp/.context/indexes/*/index.json 2>/dev/null || true
+du -h .agents/mcp/.context/indexes/*/mtimes.json 2>/dev/null || true
+du -h .agents/mcp/.context/corpus.json 2>/dev/null || true
+# legacy
 du -h .context-finder/indexes/*/index.json 2>/dev/null || true
 du -h .context-finder/indexes/*/mtimes.json 2>/dev/null || true
 du -h .context-finder/corpus.json 2>/dev/null || true

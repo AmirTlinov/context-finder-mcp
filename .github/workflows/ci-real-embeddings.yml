@@ -1,0 +1,30 @@
+name: CI (Real Embeddings)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  real_embeddings:
+    # Requires a Linux self-hosted runner with CUDA/ORT configured.
+    # If you explicitly want CPU fallback, set CONTEXT_ALLOW_CPU=1 on the runner.
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 60
+    env:
+      CONTEXT_EMBEDDING_MODE: fast
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.1
+          components: rustfmt, clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Real embeddings smoke
+        run: bash scripts/validate_real_embeddings.sh

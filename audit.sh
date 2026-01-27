@@ -10,7 +10,8 @@ echo
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
-AUDIT_DIR="$PROJECT_ROOT/.context-finder/audit"
+# Store audit artifacts under the preferred repo-local cache root.
+AUDIT_DIR="$PROJECT_ROOT/.agents/mcp/.context/audit"
 mkdir -p "$AUDIT_DIR"
 
 AUDIT_CONTRACTS_LOG="$AUDIT_DIR/audit_contracts.log"
@@ -19,6 +20,7 @@ AUDIT_CLIPPY_LOG="$AUDIT_DIR/audit_clippy.log"
 AUDIT_CLIPPY_STRICT_LOG="$AUDIT_DIR/audit_clippy_strict.log"
 AUDIT_SECURITY_LOG="$AUDIT_DIR/audit_security.log"
 AUDIT_TESTS_LOG="$AUDIT_DIR/audit_tests.log"
+AUDIT_HTTP_CONFORMANCE_LOG="$AUDIT_DIR/audit_http_conformance.log"
 AUDIT_COMPLEXITY_LOG="$AUDIT_DIR/audit_complexity.log"
 AUDIT_DEPS_LOG="$AUDIT_DIR/audit_deps.log"
 AUDIT_BUILD_LOG="$AUDIT_DIR/audit_build.log"
@@ -63,51 +65,51 @@ run_step() {
     echo
 }
 
-TOTAL_STEPS=10
+TOTAL_STEPS=12
 
 # ============================================================================
-# 0. CONTRACTS - scripts/validate_contracts.sh (quality gate)
+# 1. CONTRACTS - scripts/validate_contracts.sh (quality gate)
 # ============================================================================
 
-run_step 0 "$TOTAL_STEPS" "Contract Validation (contract-first)" "$AUDIT_CONTRACTS_LOG" gate \
+run_step 1 "$TOTAL_STEPS" "Contract Validation (contract-first)" "$AUDIT_CONTRACTS_LOG" gate \
     scripts/validate_contracts.sh
 
 # ============================================================================
-# 1. FORMATTING - Rustfmt (quality gate)
+# 2. FORMATTING - Rustfmt (quality gate)
 # ============================================================================
 
-run_step 1 "$TOTAL_STEPS" "Rustfmt Check" "$AUDIT_FMT_LOG" gate \
+run_step 2 "$TOTAL_STEPS" "Rustfmt Check" "$AUDIT_FMT_LOG" gate \
     cargo fmt --all -- --check
 
 # ============================================================================
-# 2. CODE QUALITY - Clippy (quality gate)
+# 3. CODE QUALITY - Clippy (quality gate)
 # ============================================================================
 
-run_step 2 "$TOTAL_STEPS" "Clippy (project gate: -D warnings)" "$AUDIT_CLIPPY_LOG" gate \
+run_step 3 "$TOTAL_STEPS" "Clippy (project gate: -D warnings)" "$AUDIT_CLIPPY_LOG" gate \
     cargo clippy --workspace --all-targets -- -D warnings
 
 # ============================================================================
-# 3. TESTS - cargo test (quality gate)
+# 4. TESTS - cargo test (quality gate)
 # ============================================================================
 
-run_step 3 "$TOTAL_STEPS" "Tests (stub embeddings)" "$AUDIT_TESTS_LOG" gate \
+run_step 4 "$TOTAL_STEPS" "Tests (stub embeddings)" "$AUDIT_TESTS_LOG" gate \
     env CONTEXT_EMBEDDING_MODE="${CONTEXT_EMBEDDING_MODE:-stub}" \
         cargo test --workspace
 
 # ============================================================================
-# 4. BUILD VERIFICATION - release build (quality gate)
+# 5. BUILD VERIFICATION - release build (quality gate)
 # ============================================================================
 
-run_step 4 "$TOTAL_STEPS" "Build Verification (release)" "$AUDIT_BUILD_LOG" gate \
+run_step 5 "$TOTAL_STEPS" "Build Verification (release)" "$AUDIT_BUILD_LOG" gate \
     cargo build --workspace --release
 
 # ============================================================================
-# 5. CLIPPY (STRICT) - core targets (optional gate)
+# 6. CLIPPY (STRICT) - core targets (optional gate)
 # ============================================================================
 
 if [ "${AUDIT_STRICT_CLIPPY:-0}" = "1" ]; then
-    run_step 5 "$TOTAL_STEPS" "Clippy (strict: core targets)" "$AUDIT_CLIPPY_STRICT_LOG" gate \
-        cargo clippy -q -p context-finder-mcp --bin context-finder-mcp --message-format=short -- \
+    run_step 6 "$TOTAL_STEPS" "Clippy (strict: core targets)" "$AUDIT_CLIPPY_STRICT_LOG" gate \
+        cargo clippy -q -p context-mcp --bin context-mcp --message-format=short -- \
             -D warnings \
             -D clippy::all \
             -D clippy::pedantic \
@@ -116,7 +118,7 @@ if [ "${AUDIT_STRICT_CLIPPY:-0}" = "1" ]; then
             -A clippy::missing_panics_doc \
             -A clippy::module_name_repetitions
 else
-    echo -e "${BLUE}[5/${TOTAL_STEPS}] Clippy (strict: core targets)${NC}"
+    echo -e "${BLUE}[6/${TOTAL_STEPS}] Clippy (strict: core targets)${NC}"
     echo "────────────────────────────────────────"
     echo -e "${YELLOW}⚠ Skipped (set AUDIT_STRICT_CLIPPY=1 to enable)${NC}"
     echo "Skipped strict clippy (set AUDIT_STRICT_CLIPPY=1 to enable)." > "$AUDIT_CLIPPY_STRICT_LOG"
@@ -124,10 +126,10 @@ else
 fi
 
 # ============================================================================
-# 6. SECURITY AUDIT - cargo audit (advisory)
+# 7. SECURITY AUDIT - cargo audit (advisory)
 # ============================================================================
 
-echo -e "${BLUE}[6/${TOTAL_STEPS}] Security Audit (dependencies)${NC}"
+echo -e "${BLUE}[7/${TOTAL_STEPS}] Security Audit (dependencies)${NC}"
 echo "────────────────────────────────────────"
 
 if command -v cargo-audit &> /dev/null; then
@@ -146,20 +148,20 @@ if command -v cargo-audit &> /dev/null; then
         echo -e "${GREEN}✓ Security Audit (dependencies)${NC}"
     else
         echo -e "${YELLOW}⚠ Security Audit (dependencies)${NC}"
-        WARNINGS+=("6: Security Audit (dependencies)")
+        WARNINGS+=("7: Security Audit (dependencies)")
     fi
 else
     echo "cargo-audit not installed (run: cargo install cargo-audit)" > "$AUDIT_SECURITY_LOG"
     echo -e "${YELLOW}⚠ cargo-audit not installed (run: cargo install cargo-audit)${NC}"
-    WARNINGS+=("6: Security Audit (dependencies) (cargo-audit not installed)")
+    WARNINGS+=("7: Security Audit (dependencies) (cargo-audit not installed)")
 fi
 echo
 
 # ============================================================================
-# 7. CODE COMPLEXITY - tokei (advisory)
+# 8. CODE COMPLEXITY - tokei (advisory)
 # ============================================================================
 
-echo -e "${BLUE}[7/${TOTAL_STEPS}] Code Complexity Analysis${NC}"
+echo -e "${BLUE}[8/${TOTAL_STEPS}] Code Complexity Analysis${NC}"
 echo "────────────────────────────────────────"
 
 if command -v tokei &> /dev/null; then
@@ -179,10 +181,10 @@ fi
 echo
 
 # ============================================================================
-# 8. DEPENDENCY TREE (advisory)
+# 9. DEPENDENCY TREE (advisory)
 # ============================================================================
 
-echo -e "${BLUE}[8/${TOTAL_STEPS}] Dependency Analysis${NC}"
+echo -e "${BLUE}[9/${TOTAL_STEPS}] Dependency Analysis${NC}"
 echo "────────────────────────────────────────"
 
 cargo tree --workspace --depth 1 2>&1 | head -50 | tee "$AUDIT_DEPS_LOG"
@@ -190,10 +192,10 @@ echo -e "${GREEN}✓ Dependencies checked${NC}"
 echo
 
 # ============================================================================
-# 9. DOCUMENTATION (advisory)
+# 10. DOCUMENTATION (advisory)
 # ============================================================================
 
-echo -e "${BLUE}[9/${TOTAL_STEPS}] Documentation Check${NC}"
+echo -e "${BLUE}[10/${TOTAL_STEPS}] Documentation Check${NC}"
 echo "────────────────────────────────────────"
 
 cargo doc --workspace --no-deps 2>&1 | tee "$AUDIT_DOCS_LOG"
@@ -202,15 +204,15 @@ if [ ${PIPESTATUS[0]} -eq 0 ]; then
     echo -e "${GREEN}✓ Documentation builds${NC}"
 else
     echo -e "${YELLOW}⚠ Documentation warnings${NC}"
-    WARNINGS+=("9: Documentation Check")
+    WARNINGS+=("10: Documentation Check")
 fi
 echo
 
 # ============================================================================
-# 10. ARCHITECTURAL REVIEW (info)
+# 11. ARCHITECTURAL REVIEW (info)
 # ============================================================================
 
-echo -e "${BLUE}[10/${TOTAL_STEPS}] Architectural Review${NC}"
+echo -e "${BLUE}[11/${TOTAL_STEPS}] Architectural Review${NC}"
 echo "────────────────────────────────────────"
 
 echo "Crate structure:"
@@ -223,6 +225,13 @@ find crates/*/src/lib.rs -exec echo "{}:" \; -exec grep "^pub " {} \; | head -50
 echo
 echo -e "${GREEN}✓ Architecture reviewed${NC}"
 echo
+
+# ============================================================================
+# 12. HTTP CONFORMANCE - validate_http_conformance.sh (quality gate)
+# ============================================================================
+
+run_step 12 "$TOTAL_STEPS" "HTTP Contract Conformance" "$AUDIT_HTTP_CONFORMANCE_LOG" gate \
+    bash scripts/validate_http_conformance.sh
 
 # ============================================================================
 # SUMMARY
@@ -252,6 +261,7 @@ echo "  - $AUDIT_CLIPPY_LOG (clippy gate)"
 echo "  - $AUDIT_CLIPPY_STRICT_LOG (strict clippy, optional)"
 echo "  - $AUDIT_SECURITY_LOG (security)"
 echo "  - $AUDIT_TESTS_LOG (test results)"
+echo "  - $AUDIT_HTTP_CONFORMANCE_LOG (http conformance)"
 echo "  - $AUDIT_COMPLEXITY_LOG (code metrics)"
 echo "  - $AUDIT_DEPS_LOG (dependencies)"
 echo "  - $AUDIT_BUILD_LOG (build output)"

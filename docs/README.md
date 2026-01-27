@@ -21,6 +21,7 @@ If you are integrating Context programmatically, treat the **contracts** as the 
 - [docs/RELEASE_TRAIN.md](RELEASE_TRAIN.md) — contracts-first delivery and “how we ship without breaking trust”
 - [docs/ARCHITECTURE.md](ARCHITECTURE.md) — crate map + data flow + on-disk layout
 - [PHILOSOPHY.md](../PHILOSOPHY.md) — why the project is contract-first and agent-first
+- [docs/adr/README.md](adr/README.md) — architectural decision records (ADRs)
 
 ## API references (prose)
 

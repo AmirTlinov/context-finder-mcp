@@ -73,7 +73,6 @@ dialoguer = "0.11"
 walkdir = "2.5"
 ignore = "0.4"
 hyper = { version = "0.14", features = ["full"] }
-prometheus = "0.13"
 globset = "0.4"
 notify = "6.1"
 

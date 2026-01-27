@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "contracts/command/v1/error.schema.json",
-  "title": "Context Finder Error Envelope (v1)",
+  "title": "Context Error Envelope (v1)",
   "type": "object",
   "additionalProperties": false,
   "required": ["code", "message", "details", "hint", "next_actions"],

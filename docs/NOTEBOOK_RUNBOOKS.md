@@ -1,6 +1,6 @@
 # Notebook + Runbooks (Agent Memory Without Noise)
 
-Context Finder’s meaning tools help agents navigate a repo quickly, but real work is rarely a single session.
+Context’s meaning tools help agents navigate a repo quickly, but real work is rarely a single session.
 This feature set makes context **durable**, **evidence-backed**, and **refreshable** across `/compact`,
 new sessions, and multiple agents.
 
