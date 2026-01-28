@@ -89,7 +89,7 @@ Context keeps an **incremental index in the background** and self-heals on seman
 
 Start with one of these:
 
-- `atlas_pack` — onboarding atlas: meaning-first CP + worktrees (answers “how to run/verify”, “where are CI gates/contracts/entrypoints”).
+- `atlas_pack` — onboarding atlas: meaning-first CP + worktrees (answers “how to run/verify”, “where are CI gates/contracts/entrypoints”). It also inlines a small verbatim `evidence_preview` when budgets allow, so the first call is already grounded (use `evidence_fetch` for full fidelity).
 - `read_pack` — daily “project memory”: stable repo facts + key snippets under one `max_chars` budget.
 - `repo_onboarding_pack` — onboarding: map + a few key docs under one budget.
 - `meaning_pack` — meanings-first orientation: a compact “Cognitive Pack (CP)” with evidence pointers (high signal, low tokens).
@@ -195,6 +195,11 @@ Notes:
 - `--prefer-code` / `--prefer-docs` controls whether markdown docs are ranked after/before code.
 - `--exclude-docs` removes `*.md/*.mdx` from both primary and related items.
 - `--related-mode focus` gates related items by query hits; use `--related-mode explore` for broader exploration.
+- Anchor guardrail (strong anchors): when enabled, Context fail-closes “confident but wrong” context packs and suggests a grounding `text_search`.
+  - CLI: `--anchor-policy off` (available on `context search` and `context context-pack`)
+  - Kill switch (all surfaces): `CONTEXT_ANCHOR_POLICY=off`
+  - Details + schema links: `docs/CONTEXT_PACK.md` and `contracts/command/v1/request_options.schema.json`
+  - MCP tool UX (optional): `context_pack` supports `format_version=2` to always include PROVENANCE/GUARANTEES/NEXT in `.context` output.
 
 ### 4. Get Context for Multiple Queries
 

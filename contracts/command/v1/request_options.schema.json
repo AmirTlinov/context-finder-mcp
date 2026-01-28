@@ -5,6 +5,12 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "anchor_policy": {
+      "type": "string",
+      "description": "Anchor guardrail policy. When enabled and a strong anchor is detected in the query, the tool enforces a fail-closed guarantee: never return unrelated hits that do not mention the anchor. 'auto' is recommended; 'off' disables the guarantee.",
+      "enum": ["auto", "off"],
+      "default": "auto"
+    },
     "stale_policy": {
       "type": "string",
       "description": "How to handle a missing/stale index for read operations that depend on it.",

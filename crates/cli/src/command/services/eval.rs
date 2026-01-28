@@ -376,6 +376,8 @@ async fn evaluate_run_warm(
     let mut mrrs = Vec::with_capacity(dataset.cases.len());
     let mut recalls = Vec::with_capacity(dataset.cases.len());
     let mut overlaps = Vec::with_capacity(dataset.cases.len());
+    let mut anchor_cases = 0usize;
+    let mut anchor_hit_cases = 0usize;
 
     for case in &dataset.cases {
         let start = Instant::now();
@@ -398,6 +400,13 @@ async fn evaluate_run_warm(
                 score: r.score,
             })
             .collect();
+
+        if let Some(anchor) = context_search::detect_primary_anchor(&case.query) {
+            anchor_cases = anchor_cases.saturating_add(1);
+            if eval_anchor_hit(&results, limit, &anchor) {
+                anchor_hit_cases = anchor_hit_cases.saturating_add(1);
+            }
+        }
 
         let formatted = results
             .into_iter()
@@ -445,6 +454,14 @@ async fn evaluate_run_warm(
             p50_latency_ms: percentile_u64(&mut latencies, 0.50),
             p95_latency_ms: percentile_u64(&mut latencies, 0.95),
             mean_bytes: mean_usize(&bytes),
+            anchor_cases,
+            anchor_hit_cases,
+            anchorless_cases: anchor_cases.saturating_sub(anchor_hit_cases),
+            anchorless_rate: if anchor_cases == 0 {
+                0.0
+            } else {
+                anchor_cases.saturating_sub(anchor_hit_cases) as f64 / anchor_cases as f64
+            },
         },
         cases: case_results,
     })
@@ -471,6 +488,8 @@ async fn evaluate_run_cold(
     let mut mrrs = Vec::with_capacity(dataset.cases.len());
     let mut recalls = Vec::with_capacity(dataset.cases.len());
     let mut overlaps = Vec::with_capacity(dataset.cases.len());
+    let mut anchor_cases = 0usize;
+    let mut anchor_hit_cases = 0usize;
 
     for case in &dataset.cases {
         let start = Instant::now();
@@ -501,6 +520,13 @@ async fn evaluate_run_cold(
                 score: r.score,
             })
             .collect();
+
+        if let Some(anchor) = context_search::detect_primary_anchor(&case.query) {
+            anchor_cases = anchor_cases.saturating_add(1);
+            if eval_anchor_hit(&results, limit, &anchor) {
+                anchor_hit_cases = anchor_hit_cases.saturating_add(1);
+            }
+        }
 
         let formatted = results
             .into_iter()
@@ -548,6 +574,14 @@ async fn evaluate_run_cold(
             p50_latency_ms: percentile_u64(&mut latencies, 0.50),
             p95_latency_ms: percentile_u64(&mut latencies, 0.95),
             mean_bytes: mean_usize(&bytes),
+            anchor_cases,
+            anchor_hit_cases,
+            anchorless_cases: anchor_cases.saturating_sub(anchor_hit_cases),
+            anchorless_rate: if anchor_cases == 0 {
+                0.0
+            } else {
+                anchor_cases.saturating_sub(anchor_hit_cases) as f64 / anchor_cases as f64
+            },
         },
         cases: case_results,
     })
@@ -558,6 +592,30 @@ struct CaseMetrics {
     recall: f64,
     overlap_ratio: f64,
     first_rank: Option<usize>,
+}
+
+fn eval_anchor_hit(
+    results: &[context_vector_store::SearchResult],
+    limit: usize,
+    anchor: &context_search::DetectedAnchor,
+) -> bool {
+    results.iter().take(limit).any(|result| {
+        let item = context_search::ContextPackItem {
+            id: result.id.clone(),
+            role: "primary".to_string(),
+            file: result.chunk.file_path.clone(),
+            start_line: result.chunk.start_line,
+            end_line: result.chunk.end_line,
+            symbol: None,
+            chunk_type: None,
+            score: result.score,
+            imports: Vec::new(),
+            content: result.chunk.content.clone(),
+            relationship: None,
+            distance: None,
+        };
+        context_search::item_mentions_anchor(&item, anchor)
+    })
 }
 
 fn score_case(
@@ -616,6 +674,10 @@ fn run_summary(run: &EvalRun) -> EvalRunSummary {
             p50_latency_ms: run.summary.p50_latency_ms,
             p95_latency_ms: run.summary.p95_latency_ms,
             mean_bytes: run.summary.mean_bytes,
+            anchor_cases: run.summary.anchor_cases,
+            anchor_hit_cases: run.summary.anchor_hit_cases,
+            anchorless_cases: run.summary.anchorless_cases,
+            anchorless_rate: run.summary.anchorless_rate,
         },
     }
 }

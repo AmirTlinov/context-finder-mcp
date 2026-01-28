@@ -126,6 +126,28 @@ pub(in crate::tools::dispatch) async fn atlas_pack(
         }
     }
 
+    if response_mode != ResponseMode::Minimal && !result.evidence_preview.is_empty() {
+        doc.push_blank();
+        doc.push_note("evidence_preview:");
+        for item in &result.evidence_preview {
+            doc.push_ref_header(
+                &item.evidence.file,
+                item.evidence.start_line,
+                Some("evidence_preview"),
+            );
+            if let Some(hash) = item.evidence.source_hash.as_deref() {
+                if !hash.trim().is_empty() {
+                    doc.push_note(&format!("source_hash={hash}"));
+                }
+            }
+            if item.stale {
+                doc.push_note("stale=true");
+            }
+            doc.push_block_smart(&item.content);
+            doc.push_blank();
+        }
+    }
+
     doc.push_blank();
     doc.push_note("worktrees:");
     if result.worktrees.is_empty() {

@@ -63,6 +63,7 @@ impl MeaningService {
             meta: context_indexer::ToolMeta {
                 index_state: None,
                 root_fingerprint: Some(root_fp),
+                trust: None,
             },
         };
 
@@ -132,6 +133,7 @@ impl MeaningService {
             meta: context_indexer::ToolMeta {
                 index_state: None,
                 root_fingerprint: Some(root_fp),
+                trust: None,
             },
         };
 
@@ -259,6 +261,7 @@ impl MeaningService {
             meta: context_indexer::ToolMeta {
                 index_state: None,
                 root_fingerprint: Some(root_fp),
+                trust: None,
             },
         };
 

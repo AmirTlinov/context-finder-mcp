@@ -157,12 +157,14 @@ impl ContextFinderService {
             Ok(index_state) => ToolMeta {
                 index_state: Some(index_state),
                 root_fingerprint: Some(root_fp),
+                trust: None,
             },
             Err(err) => {
                 log::debug!("index_state unavailable for {}: {err:#}", root.display());
                 ToolMeta {
                     index_state: None,
                     root_fingerprint: Some(root_fp),
+                    trust: None,
                 }
             }
         };
@@ -181,6 +183,7 @@ impl ContextFinderService {
                 return ToolMeta {
                     index_state: None,
                     root_fingerprint: Some(root_fp),
+                    trust: None,
                 };
             }
         };
@@ -251,6 +254,7 @@ impl ContextFinderService {
         let meta = ToolMeta {
             index_state: Some(index_state),
             root_fingerprint: Some(root_fp),
+            trust: None,
         };
         self.state.tool_meta_cache_put(root, meta.clone()).await;
         meta
@@ -1326,8 +1330,8 @@ mod meta_cache_tests {
                 false,
             )),
             root_fingerprint: Some(1),
+            trust: None,
         };
-
         let state = ServiceState::new();
         state.tool_meta_cache_put(root, meta).await;
 
@@ -1370,8 +1374,8 @@ mod meta_cache_tests {
                 true,
             )),
             root_fingerprint: Some(1),
+            trust: None,
         };
-
         let state = ServiceState::new();
         state.tool_meta_cache_put(root, meta).await;
 

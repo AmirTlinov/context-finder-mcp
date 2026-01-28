@@ -40,7 +40,7 @@ PY
 
 wait_http() {
   local url="$1"
-  for _ in $(seq 1 80); do
+  for _ in $(seq 1 200); do
     if curl -sS "${url}" >/dev/null 2>&1; then
       return 0
     fi
@@ -327,9 +327,14 @@ EOF
 
 port="$(pick_port)"
 
+# Build the HTTP server binary once so readiness checks don't race `cargo run` compile/link
+# time (especially in fresh CI environments).
+CONTEXT_EMBEDDING_MODE=stub cargo build -q -p context-cli --bin context
+context_bin="target/debug/context"
+
 # No-auth mode: loopback bind, no token.
 CONTEXT_EMBEDDING_MODE=stub \
-  cargo run -q -p context-cli --bin context -- serve-http \
+  "${context_bin}" serve-http \
   --bind "127.0.0.1:${port}" \
   --cache-backend memory \
   >/dev/null 2>&1 &
@@ -364,7 +369,7 @@ port="$(pick_port)"
 export CONTEXT_AUTH_TOKEN="test-token"
 
 CONTEXT_EMBEDDING_MODE=stub \
-  cargo run -q -p context-cli --bin context -- serve-http \
+  "${context_bin}" serve-http \
   --bind "127.0.0.1:${port}" \
   --cache-backend memory \
   >/dev/null 2>&1 &

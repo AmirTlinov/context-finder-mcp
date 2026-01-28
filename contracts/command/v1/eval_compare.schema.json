@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/eval_compare.schema.json",
+  "title": "Eval Compare Output (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dataset", "cache_mode", "a", "b", "summary", "cases"],
+  "properties": {
+    "dataset": { "$ref": "#/$defs/dataset_meta" },
+    "cache_mode": { "$ref": "#/$defs/cache_mode" },
+    "a": { "$ref": "#/$defs/run_summary" },
+    "b": { "$ref": "#/$defs/run_summary" },
+    "summary": { "$ref": "#/$defs/compare_summary" },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/compare_case" }
+    }
+  },
+  "$defs": {
+    "dataset_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "cases"],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 0 },
+        "name": { "type": ["string", "null"] },
+        "cases": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cache_mode": {
+      "type": "string",
+      "enum": ["warm", "cold"]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mean_mrr",
+        "mean_recall",
+        "mean_overlap_ratio",
+        "mean_latency_ms",
+        "p50_latency_ms",
+        "p95_latency_ms",
+        "mean_bytes",
+        "anchor_cases",
+        "anchor_hit_cases",
+        "anchorless_cases",
+        "anchorless_rate"
+      ],
+      "properties": {
+        "mean_mrr": { "type": "number" },
+        "mean_recall": { "type": "number" },
+        "mean_overlap_ratio": { "type": "number" },
+        "mean_latency_ms": { "type": "number" },
+        "p50_latency_ms": { "type": "integer", "minimum": 0 },
+        "p95_latency_ms": { "type": "integer", "minimum": 0 },
+        "mean_bytes": { "type": "number" },
+        "anchor_cases": { "type": "integer", "minimum": 0 },
+        "anchor_hit_cases": { "type": "integer", "minimum": 0 },
+        "anchorless_cases": { "type": "integer", "minimum": 0 },
+        "anchorless_rate": { "type": "number", "minimum": 0.0 }
+      }
+    },
+    "run_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "models", "limit", "cache_mode", "summary"],
+      "properties": {
+        "profile": { "type": "string" },
+        "models": { "type": "array", "items": { "type": "string" } },
+        "limit": { "type": "integer", "minimum": 0 },
+        "cache_mode": { "$ref": "#/$defs/cache_mode" },
+        "summary": { "$ref": "#/$defs/summary" }
+      }
+    },
+    "compare_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delta_mean_mrr",
+        "delta_mean_recall",
+        "delta_mean_overlap_ratio",
+        "delta_mean_latency_ms",
+        "delta_p95_latency_ms",
+        "delta_mean_bytes",
+        "a_wins",
+        "b_wins",
+        "ties"
+      ],
+      "properties": {
+        "delta_mean_mrr": { "type": "number" },
+        "delta_mean_recall": { "type": "number" },
+        "delta_mean_overlap_ratio": { "type": "number" },
+        "delta_mean_latency_ms": { "type": "number" },
+        "delta_p95_latency_ms": { "type": "integer" },
+        "delta_mean_bytes": { "type": "number" },
+        "a_wins": { "type": "integer", "minimum": 0 },
+        "b_wins": { "type": "integer", "minimum": 0 },
+        "ties": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "compare_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "query",
+        "expected_paths",
+        "a_mrr",
+        "b_mrr",
+        "delta_mrr",
+        "a_recall",
+        "b_recall",
+        "delta_recall",
+        "a_overlap_ratio",
+        "b_overlap_ratio",
+        "delta_overlap_ratio",
+        "a_latency_ms",
+        "b_latency_ms",
+        "delta_latency_ms",
+        "a_bytes",
+        "b_bytes",
+        "delta_bytes"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "query": { "type": "string" },
+        "expected_paths": { "type": "array", "items": { "type": "string" } },
+        "a_mrr": { "type": "number" },
+        "b_mrr": { "type": "number" },
+        "delta_mrr": { "type": "number" },
+        "a_recall": { "type": "number" },
+        "b_recall": { "type": "number" },
+        "delta_recall": { "type": "number" },
+        "a_overlap_ratio": { "type": "number" },
+        "b_overlap_ratio": { "type": "number" },
+        "delta_overlap_ratio": { "type": "number" },
+        "a_latency_ms": { "type": "integer", "minimum": 0 },
+        "b_latency_ms": { "type": "integer", "minimum": 0 },
+        "delta_latency_ms": { "type": "integer" },
+        "a_bytes": { "type": "integer", "minimum": 0 },
+        "b_bytes": { "type": "integer", "minimum": 0 },
+        "delta_bytes": { "type": "integer" },
+        "a_first_rank": { "type": ["integer", "null"], "minimum": 0 },
+        "b_first_rank": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    }
+  },
+  "$comment": "Rust source of truth: crates/cli/src/command/domain.rs::{EvalCompareOutput,EvalRunSummary,EvalCompareSummary,EvalCompareCase}"
+}
+

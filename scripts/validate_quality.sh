@@ -59,6 +59,8 @@ summary = run["summary"]
 
 mean_recall = float(summary["mean_recall"])
 mean_mrr = float(summary["mean_mrr"])
+anchor_cases = int(summary.get("anchor_cases", 0))
+anchorless_rate = float(summary.get("anchorless_rate", 0.0))
 
 min_recall = 0.95
 min_mrr = 0.80
@@ -67,6 +69,12 @@ if mean_recall < min_recall or mean_mrr < min_mrr:
     print("ERROR: eval regression on datasets/golden_stub_smoke.json", file=sys.stderr)
     print(f"mean_recall={mean_recall:.4f} (min {min_recall})", file=sys.stderr)
     print(f"mean_mrr={mean_mrr:.4f} (min {min_mrr})", file=sys.stderr)
+    sys.exit(1)
+
+if anchor_cases > 0 and anchorless_rate > 0.0:
+    print("ERROR: anchor guardrail regression on datasets/golden_stub_smoke.json", file=sys.stderr)
+    print(f"anchor_cases={anchor_cases}", file=sys.stderr)
+    print(f"anchorless_rate={anchorless_rate:.4f} (expected 0.0)", file=sys.stderr)
     sys.exit(1)
 
 print(f"OK: eval stub smoke mean_recall={mean_recall:.4f} mean_mrr={mean_mrr:.4f}")

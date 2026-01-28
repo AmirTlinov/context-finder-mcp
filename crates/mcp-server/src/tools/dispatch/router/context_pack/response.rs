@@ -1,8 +1,9 @@
-use super::{budget, fallback, render, trace};
-use crate::tools::schemas::ToolNextAction;
-
 use super::super::super::{ContextFinderService, ResponseMode};
 use super::inputs::ContextPackInputs;
+use super::{budget, render, trace};
+
+#[path = "next_actions.rs"]
+mod next_actions;
 
 pub(super) struct FinalizeContextPackArgs<'a> {
     pub(super) service: &'a ContextFinderService,
@@ -31,78 +32,21 @@ pub(super) async fn finalize_context_pack(
 
     match inputs.response_mode {
         ResponseMode::Minimal => {
-            output.meta.index_state = None;
+            // v2 explicitly opts into a small trust envelope even under "minimal".
+            if inputs.format_version != 2 {
+                output.meta.index_state = None;
+                output.meta.trust = None;
+            }
         }
         ResponseMode::Facts => {}
         ResponseMode::Full => {
-            if output.items.is_empty() && semantic_disabled_reason.is_some() {
-                let budgets = super::super::super::mcp_default_budgets();
-                let pattern = inputs
-                    .query_tokens
-                    .iter()
-                    .max_by_key(|t| t.len())
-                    .cloned()
-                    .unwrap_or_else(|| query.trim().to_string());
-                output.next_actions.push(ToolNextAction {
-                    tool: "rg".to_string(),
-                    args: serde_json::json!({
-                        "path": root_display,
-                        "pattern": pattern,
-                        "literal": true,
-                        "case_sensitive": false,
-                        "context": 2,
-                        "max_chars": budgets.grep_context_max_chars,
-                        "max_hunks": 8,
-                        "format": "numbered",
-                        "response_mode": "facts"
-                    }),
-                    reason: "Semantic search is disabled; fall back to rg on the most relevant query token.".to_string(),
-                });
-            }
-
-            if output.items.is_empty() {
-                let pattern = fallback::choose_fallback_token(&inputs.query_tokens)
-                    .or_else(|| inputs.query_tokens.iter().max_by_key(|t| t.len()).cloned())
-                    .unwrap_or_else(|| query.trim().to_string());
-
-                output.next_actions.push(ToolNextAction {
-                    tool: "text_search".to_string(),
-                    args: serde_json::json!({
-                        "path": root_display,
-                        "pattern": pattern,
-                        "max_results": 80,
-                        "case_sensitive": false,
-                        "whole_word": true,
-                        "response_mode": "facts"
-                    }),
-                    reason: "No semantic hits; verify the strongest query anchor via text_search (detects typos, wrong root, or stale index).".to_string(),
-                });
-
-                output.next_actions.push(ToolNextAction {
-                    tool: "repo_onboarding_pack".to_string(),
-                    args: serde_json::json!({
-                        "path": root_display,
-                        "max_chars": 12000,
-                        "response_mode": "facts"
-                    }),
-                    reason: "No semantic hits; re-onboard the repo to confirm the effective root and key docs.".to_string(),
-                });
-            } else if let Some(token) = fallback::choose_fallback_token(&inputs.query_tokens) {
-                if !fallback::items_mention_token(&output.items, &token) {
-                    output.next_actions.push(ToolNextAction {
-                        tool: "text_search".to_string(),
-                        args: serde_json::json!({
-                            "path": root_display,
-                            "pattern": token,
-                            "max_results": 80,
-                            "case_sensitive": false,
-                            "whole_word": true,
-                            "response_mode": "facts"
-                        }),
-                        reason: "Semantic hits do not mention the key query token; verify the exact term via text_search (often reveals wrong root or stale index).".to_string(),
-                    });
-                }
-            }
+            next_actions::add_full_mode_next_actions(
+                inputs,
+                root_display,
+                query,
+                &mut output,
+                semantic_disabled_reason.as_deref(),
+            );
 
             let retry_action = render::build_retry_action(root_display, query, inputs, &output);
             if output.budget.truncated {
@@ -116,6 +60,11 @@ pub(super) async fn finalize_context_pack(
                 if let Err(result) = budget::enforce_context_pack_budget(&mut output) {
                     return Ok(result);
                 }
+            }
+
+            next_actions::maybe_cap_next_actions_for_v2(inputs, &mut output);
+            if let Err(result) = budget::enforce_context_pack_budget(&mut output) {
+                return Ok(result);
             }
 
             let mut contents =
@@ -132,6 +81,14 @@ pub(super) async fn finalize_context_pack(
             return Ok(render::finish_result(contents, output));
         }
     }
+
+    next_actions::maybe_add_low_noise_next_actions(
+        inputs,
+        root_display,
+        query,
+        &mut output,
+        semantic_disabled_reason.as_deref(),
+    );
 
     if let Err(result) = budget::enforce_context_pack_budget(&mut output) {
         return Ok(result);

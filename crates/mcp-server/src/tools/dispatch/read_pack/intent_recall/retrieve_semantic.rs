@@ -31,6 +31,8 @@ pub(super) async fn semantic_snippets(
         ContextPackRequest {
             path: Some(ctx.root_display.clone()),
             query: build_semantic_query(&question.clean_question, topics),
+            format_version: None,
+            anchor_policy: None,
             language: None,
             strategy: None,
             limit: Some(question.snippet_limit),

@@ -17,6 +17,8 @@ pub(super) async fn fetch_context_pack_json(
         ContextPackRequest {
             path: Some(ctx.root_display.clone()),
             query: query.to_string(),
+            format_version: None,
+            anchor_policy: None,
             language: None,
             strategy: None,
             limit: None,

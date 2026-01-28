@@ -26,6 +26,31 @@
       "id": "indexer",
       "query": "crates/indexer/src/indexer.rs",
       "expected_paths": ["crates/indexer/src/indexer.rs"]
+    },
+    {
+      "id": "anchor_identifier",
+      "query": "AnchorPolicyFlag enum",
+      "expected_paths": ["crates/cli/src/flags.rs"]
+    },
+    {
+      "id": "anchor_quoted",
+      "query": "find \"X11Window\" struct definition",
+      "expected_paths": ["crates/search/src/anchor.rs"]
+    },
+    {
+      "id": "anchor_namespaced",
+      "query": "AnchorPolicyFlag::Auto mapping",
+      "expected_paths": ["crates/cli/src/flags.rs"]
+    },
+    {
+      "id": "anchor_env_var",
+      "query": "\"CONTEXT_EMBEDDING_MODE\" env::var",
+      "expected_paths": ["crates/cli/src/lib.rs"]
+    },
+    {
+      "id": "anchor_constant",
+      "query": "MAX_EVIDENCE_PREVIEW_ITEMS constant",
+      "expected_paths": ["crates/mcp-server/src/tools/atlas_pack.rs"]
     }
   ]
 }

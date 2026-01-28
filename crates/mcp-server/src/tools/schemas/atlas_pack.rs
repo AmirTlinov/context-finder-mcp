@@ -3,6 +3,7 @@ use context_protocol::{BudgetTruncation, ToolNextAction};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
+use super::evidence_fetch::EvidenceFetchItem;
 use super::response_mode::ResponseMode;
 use super::worktree_pack::WorktreeInfo;
 
@@ -60,6 +61,11 @@ pub struct AtlasPackResult {
     pub meaning_truncation: Option<BudgetTruncation>,
     /// Meaning pack (CPV1): evidence-backed “map of sense”.
     pub meaning_pack: String,
+    /// Best-effort preview of verbatim evidence (bounded) to reduce follow-up calls.
+    ///
+    /// Full fidelity evidence reads are available via the `evidence_fetch` tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_preview: Vec<EvidenceFetchItem>,
     /// Worktree list (bounded); in full mode may include per-worktree purpose summaries.
     pub worktrees: Vec<WorktreeInfo>,
     pub worktrees_truncated: bool,

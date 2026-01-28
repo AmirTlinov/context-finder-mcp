@@ -8,6 +8,8 @@ use context_search::{ContextPackBudget, ContextPackItem, ContextPackOutput};
 fn candidate_limit_expands_for_docs_first() {
     let request = ContextPackRequest {
         query: "README".to_string(),
+        format_version: None,
+        anchor_policy: None,
         path: None,
         limit: Some(5),
         max_chars: None,
@@ -33,6 +35,8 @@ fn candidate_limit_expands_for_docs_first() {
 fn candidate_limit_expands_for_code_first() {
     let request = ContextPackRequest {
         query: "EmbeddingCache".to_string(),
+        format_version: None,
+        anchor_policy: None,
         path: None,
         limit: Some(10),
         max_chars: None,

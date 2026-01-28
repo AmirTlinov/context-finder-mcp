@@ -209,6 +209,10 @@ mod tests {
                     p50_latency_ms: 5,
                     p95_latency_ms: 6,
                     mean_bytes: 123.0,
+                    anchor_cases: 0,
+                    anchor_hit_cases: 0,
+                    anchorless_cases: 0,
+                    anchorless_rate: 0.0,
                 },
                 cases: vec![EvalCaseResult {
                     id: "case1".to_string(),
@@ -261,6 +265,10 @@ mod tests {
                     p50_latency_ms: 10,
                     p95_latency_ms: 11,
                     mean_bytes: 100.0,
+                    anchor_cases: 0,
+                    anchor_hit_cases: 0,
+                    anchorless_cases: 0,
+                    anchorless_rate: 0.0,
                 },
             },
             b: EvalRunSummary {
@@ -276,6 +284,10 @@ mod tests {
                     p50_latency_ms: 9,
                     p95_latency_ms: 9,
                     mean_bytes: 110.0,
+                    anchor_cases: 0,
+                    anchor_hit_cases: 0,
+                    anchorless_cases: 0,
+                    anchorless_rate: 0.0,
                 },
             },
             summary: EvalCompareSummary {

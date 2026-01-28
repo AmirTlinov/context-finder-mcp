@@ -9,7 +9,10 @@ use context_meaning as meaning;
 use super::cpv1::{
     parse_cpv1_anchor_details, parse_cpv1_dict, parse_cpv1_evidence, parse_cpv1_steps,
 };
+use super::evidence_fetch::compute_evidence_fetch_result;
 use super::schemas::atlas_pack::{AtlasPackBudget, AtlasPackRequest, AtlasPackResult};
+use super::schemas::evidence_fetch::EvidenceFetchItem;
+use super::schemas::evidence_fetch::EvidenceFetchRequest;
 use super::schemas::evidence_fetch::EvidencePointer;
 use super::schemas::response_mode::ResponseMode;
 use super::schemas::worktree_pack::WorktreePackRequest;
@@ -30,6 +33,8 @@ const MAX_WORKTREE_LIMIT: usize = 50;
 
 const DEFAULT_QUERY: &str =
     "canon loop (run/test/verify), CI gates, contracts, entrypoints, artifacts";
+
+const MAX_EVIDENCE_PREVIEW_ITEMS: usize = 2;
 
 fn normalize_query(query: Option<&str>) -> Option<String> {
     query
@@ -258,7 +263,24 @@ pub(super) async fn compute_atlas_pack_result(
     // Budget split: prefer meaning pack first; include worktrees only if we can afford the
     // worktree_pack minimum (it clamps to >=800 chars internally).
     let reserve_overhead = 280usize;
-    let content_budget = max_chars.saturating_sub(reserve_overhead).max(1);
+    let mut content_budget = max_chars.saturating_sub(reserve_overhead).max(1);
+
+    // Calls-to-territory guardrail: when budgets allow, inline a tiny evidence preview so agents
+    // can ground quickly without an extra `evidence_fetch` round-trip.
+    let mut evidence_preview_max_chars = 0usize;
+    if response_mode != ResponseMode::Minimal {
+        // `evidence_fetch` clamps max_chars to >=800; only reserve when we can still afford a
+        // useful meaning pack.
+        let available_for_preview = content_budget.saturating_sub(900);
+        let candidate = (content_budget / 4).clamp(800, 1600);
+        evidence_preview_max_chars = candidate.min(available_for_preview);
+        if evidence_preview_max_chars >= 800 {
+            content_budget = content_budget.saturating_sub(evidence_preview_max_chars);
+        } else {
+            evidence_preview_max_chars = 0;
+        }
+    }
+
     let mut meaning_max_chars = (content_budget * 2 / 3).max(900).min(content_budget);
     let mut worktree_max_chars = content_budget.saturating_sub(meaning_max_chars);
     let include_worktrees = worktree_max_chars >= 800;
@@ -276,6 +298,29 @@ pub(super) async fn compute_atlas_pack_result(
     let meaning_result = meaning::meaning_pack(root, root_display, &meaning_request)
         .await
         .with_context(|| "build meaning pack")?;
+
+    let evidence_preview: Vec<EvidenceFetchItem> = if evidence_preview_max_chars == 0 {
+        Vec::new()
+    } else {
+        let mut items = derive_evidence_items(&meaning_result.pack);
+        items.truncate(MAX_EVIDENCE_PREVIEW_ITEMS);
+        if items.is_empty() {
+            Vec::new()
+        } else {
+            let preview_request = EvidenceFetchRequest {
+                path: None,
+                items,
+                max_chars: Some(evidence_preview_max_chars),
+                max_lines: Some(60),
+                strict_hash: Some(false),
+                response_mode: Some(ResponseMode::Facts),
+            };
+            match compute_evidence_fetch_result(root, &preview_request).await {
+                Ok(result) => result.items,
+                Err(_) => Vec::new(),
+            }
+        }
+    };
 
     let mut worktrees: Vec<super::schemas::worktree_pack::WorktreeInfo> = Vec::new();
     let mut worktrees_truncated = false;
@@ -331,6 +376,7 @@ pub(super) async fn compute_atlas_pack_result(
         meaning_truncated: meaning_result.budget.truncated,
         meaning_truncation: meaning_result.budget.truncation,
         meaning_pack: meaning_result.pack,
+        evidence_preview,
         worktrees,
         worktrees_truncated: worktrees_truncated || !include_worktrees,
         worktrees_next_cursor,

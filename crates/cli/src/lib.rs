@@ -7,12 +7,12 @@ use axum::{
     Router,
 };
 use cache::{CacheBackend, CacheConfig};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use command::{
-    CommandAction, CommandRequest, ContextPackOutput, ContextPackPayload, EvalCacheMode,
-    EvalCompareOutput, EvalComparePayload, EvalOutput, EvalPayload, IndexPayload, IndexResponse,
-    ListSymbolsPayload, MapOutput, MapPayload, SearchOutput, SearchPayload, SearchStrategy,
-    SearchWithContextPayload, SymbolsOutput,
+    CommandAction, CommandRequest, ContextPackOutput, ContextPackPayload, EvalCompareOutput,
+    EvalComparePayload, EvalOutput, EvalPayload, IndexPayload, IndexResponse, ListSymbolsPayload,
+    MapOutput, MapPayload, SearchOutput, SearchPayload, SearchStrategy, SearchWithContextPayload,
+    SymbolsOutput,
 };
 use context_protocol::serialize_json;
 use std::env;
@@ -22,10 +22,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tonic::transport::Server;
 
+use flags::{AnchorPolicyFlag, EmbedMode, EvalCacheModeFlag};
+
 use crate::command::infra::HealthPort;
 
 mod cache;
 mod command;
+mod flags;
 mod graph_cache;
 mod grpc;
 mod heartbeat;
@@ -258,6 +261,10 @@ struct SearchArgs {
     #[arg(long)]
     with_graph: bool,
 
+    /// Anchor guardrail policy: auto (default) or off
+    #[arg(long, value_enum)]
+    anchor_policy: Option<AnchorPolicyFlag>,
+
     /// Output JSON format
     #[arg(long)]
     json: bool,
@@ -378,6 +385,10 @@ struct ContextPackArgs {
     /// Include debug hints and trace output in the JSON CommandResponse
     #[arg(long)]
     trace: bool,
+
+    /// Anchor guardrail policy: auto (default) or off
+    #[arg(long, value_enum)]
+    anchor_policy: Option<AnchorPolicyFlag>,
 
     /// Output JSON format
     #[arg(long)]
@@ -513,36 +524,6 @@ struct ListSymbolsArgs {
     /// Output JSON format
     #[arg(long)]
     json: bool,
-}
-
-#[derive(Copy, Clone, ValueEnum)]
-enum EmbedMode {
-    Fast,
-    Stub,
-}
-
-#[derive(Copy, Clone, ValueEnum)]
-enum EvalCacheModeFlag {
-    Warm,
-    Cold,
-}
-
-impl EvalCacheModeFlag {
-    const fn as_domain(self) -> EvalCacheMode {
-        match self {
-            EvalCacheModeFlag::Warm => EvalCacheMode::Warm,
-            EvalCacheModeFlag::Cold => EvalCacheMode::Cold,
-        }
-    }
-}
-
-impl EmbedMode {
-    const fn as_str(self) -> &'static str {
-        match self {
-            EmbedMode::Fast => "fast",
-            EmbedMode::Stub => "stub",
-        }
-    }
 }
 
 fn parse_cache_backend(value: &str) -> Result<CacheBackend> {
@@ -966,10 +947,16 @@ async fn run_search(args: SearchArgs, cache_cfg: CacheConfig) -> Result<()> {
         project: Some(path.clone()),
         trace: None,
     };
+    let options = args
+        .anchor_policy
+        .map(|policy| crate::command::domain::RequestOptions {
+            anchor_policy: policy.as_domain(),
+            ..Default::default()
+        });
     let request = CommandRequest {
         action: CommandAction::Search,
         payload: serde_json::to_value(payload)?,
-        options: None,
+        options,
         config: None,
     };
 
@@ -999,6 +986,13 @@ async fn run_search(args: SearchArgs, cache_cfg: CacheConfig) -> Result<()> {
                 result.start_line, result.end_line
             ))?;
             print_stdout("")?;
+        }
+        if search_out.results.is_empty() && !response.next_actions.is_empty() {
+            eprintln!("Next actions:");
+            for action in response.next_actions.iter().take(3) {
+                let args = serde_json::to_string(&action.args).unwrap_or_else(|_| "{}".to_string());
+                eprintln!(" - {} {args}", action.tool);
+            }
         }
     }
     Ok(())
@@ -1292,10 +1286,16 @@ async fn run_context_pack(args: ContextPackArgs, cache_cfg: CacheConfig) -> Resu
         language: args.language.clone(),
         reuse_graph: Some(true),
     };
+    let options = args
+        .anchor_policy
+        .map(|policy| crate::command::domain::RequestOptions {
+            anchor_policy: policy.as_domain(),
+            ..Default::default()
+        });
     let request = CommandRequest {
         action: CommandAction::ContextPack,
         payload: serde_json::to_value(payload)?,
-        options: None,
+        options,
         config: None,
     };
 
@@ -1317,6 +1317,13 @@ async fn run_context_pack(args: ContextPackArgs, cache_cfg: CacheConfig) -> Resu
             pack.budget.max_chars
         );
         eprintln!("Model: {}, profile: {}", pack.model_id, pack.profile);
+        if pack.items.is_empty() && !pack.next_actions.is_empty() {
+            eprintln!("Next actions:");
+            for action in pack.next_actions.iter().take(3) {
+                let args = serde_json::to_string(&action.args).unwrap_or_else(|_| "{}".to_string());
+                eprintln!(" - {} {args}", action.tool);
+            }
+        }
     }
 
     Ok(())

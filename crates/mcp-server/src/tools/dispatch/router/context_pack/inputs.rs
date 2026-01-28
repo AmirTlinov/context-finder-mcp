@@ -5,6 +5,11 @@ use super::super::error::invalid_request;
 use super::ToolResult;
 use crate::tools::schemas::context_pack::ContextPackRequest;
 
+#[path = "inputs_parse.rs"]
+mod parse;
+
+use self::parse::{parse_related_mode, parse_strategy};
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ContextPackFlags(pub(super) u8);
 
@@ -29,6 +34,7 @@ impl ContextPackFlags {
 #[derive(Clone, Debug)]
 pub(super) struct ContextPackInputs {
     pub(super) path: Option<String>,
+    pub(super) format_version: u32,
     pub(super) limit: usize,
     pub(super) max_chars: usize,
     pub(super) max_related_per_primary: usize,
@@ -44,47 +50,16 @@ pub(super) struct ContextPackInputs {
     pub(super) query_tokens: Vec<String>,
 }
 
-fn parse_strategy(
-    raw: Option<&str>,
-    docs_intent: bool,
-    query_type: QueryType,
-) -> context_graph::AssemblyStrategy {
-    match raw {
-        Some("direct") => context_graph::AssemblyStrategy::Direct,
-        Some("deep") => context_graph::AssemblyStrategy::Deep,
-        Some(_) => context_graph::AssemblyStrategy::Extended,
-        None => {
-            if !docs_intent && matches!(query_type, QueryType::Identifier | QueryType::Path) {
-                context_graph::AssemblyStrategy::Direct
-            } else {
-                context_graph::AssemblyStrategy::Extended
-            }
-        }
-    }
-}
-
-fn parse_related_mode(
-    raw: Option<&str>,
-    docs_intent: bool,
-    query_type: QueryType,
-) -> ToolResult<RelatedMode> {
-    let default = if !docs_intent && matches!(query_type, QueryType::Identifier | QueryType::Path) {
-        "focus"
-    } else {
-        "explore"
-    };
-    match raw.unwrap_or(default) {
-        "explore" => Ok(RelatedMode::Explore),
-        "focus" => Ok(RelatedMode::Focus),
-        _ => Err(invalid_request(
-            "Error: related_mode must be 'explore' or 'focus'",
-        )),
-    }
-}
-
 pub(super) fn parse_inputs(request: &ContextPackRequest) -> ToolResult<ContextPackInputs> {
     if request.query.trim().is_empty() {
         return Err(invalid_request("Error: Query cannot be empty"));
+    }
+
+    let format_version = request.format_version.unwrap_or(1);
+    if format_version != 1 && format_version != 2 {
+        return Err(invalid_request(
+            "Error: format_version must be 1 (default) or 2 (trust-first envelope)",
+        ));
     }
 
     let limit = request.limit.unwrap_or(10).clamp(1, 50);
@@ -133,6 +108,7 @@ pub(super) fn parse_inputs(request: &ContextPackRequest) -> ToolResult<ContextPa
 
     Ok(ContextPackInputs {
         path: request.path.clone(),
+        format_version,
         limit,
         max_chars,
         max_related_per_primary,

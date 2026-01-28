@@ -225,6 +225,7 @@ pub(in crate::tools::dispatch) async fn root_set(
     let meta = ToolMeta {
         index_state: None,
         root_fingerprint: Some(root_fingerprint(&root_display)),
+        trust: None,
     };
 
     let mut doc = ContextDocBuilder::new();

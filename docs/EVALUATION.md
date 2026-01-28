@@ -26,7 +26,7 @@ Runs on representative repos to catch “it works in prod” issues:
 We also recommend a **real-repo “zoo” for MCP tool UX** (meaning/atlas/worktree packs):
 
 - Runner: `context-mcp-eval-zoo` (package `context-mcp`, binary `context-mcp-eval-zoo`)
-- Measures UX regressions: **stability** (same CP twice), **latency**, **noise ratio**, and **token_saved**
+- Measures UX regressions: **stability** (same CP twice), **latency**, **noise ratio**, **token_saved**, and **calls_to_territory** (did we inline at least one verbatim `R:` block like `atlas_pack` `evidence_preview`, or do we force an extra `evidence_fetch` hop?)
 - Includes multi-branch/worktree visibility via `worktree_pack` (bounded + deterministic)
 - Designed to be safe on messy repos: bounded scanning, noise suppression, and binary-safe baseline estimation
 - Outputs: JSON and Markdown summary tables (for tracking over time)

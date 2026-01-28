@@ -29,6 +29,27 @@ pub(super) async fn grep_fallback_hunks(
     max_hunks: usize,
     max_chars: usize,
 ) -> anyhow::Result<Vec<GrepContextHunk>> {
+    grep_fallback_hunks_scoped(
+        root,
+        root_display,
+        pattern,
+        None,
+        response_mode,
+        max_hunks,
+        max_chars,
+    )
+    .await
+}
+
+pub(super) async fn grep_fallback_hunks_scoped(
+    root: &Path,
+    root_display: &str,
+    pattern: &str,
+    file_pattern: Option<&str>,
+    response_mode: ResponseMode,
+    max_hunks: usize,
+    max_chars: usize,
+) -> anyhow::Result<Vec<GrepContextHunk>> {
     let pattern = pattern.trim();
     anyhow::ensure!(!pattern.is_empty(), "fallback pattern must not be empty");
 
@@ -50,7 +71,10 @@ pub(super) async fn grep_fallback_hunks(
         pattern: Some(pattern.to_string()),
         literal: Some(literal),
         file: None,
-        file_pattern: None,
+        file_pattern: file_pattern
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(|p| p.to_string()),
         context: None,
         before: Some(before),
         after: Some(after),

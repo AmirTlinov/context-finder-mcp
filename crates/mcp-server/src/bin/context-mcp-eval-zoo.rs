@@ -334,6 +334,21 @@ fn parse_ev_file_and_range(ev_line: &str) -> Option<(&str, usize, usize)> {
     Some((file, start, end))
 }
 
+fn count_verbatim_refs(block: &str) -> usize {
+    block.lines().filter(|line| line.starts_with("R: ")).count()
+}
+
+fn count_labeled_refs(block: &str, label: &str) -> usize {
+    if label.trim().is_empty() {
+        return 0;
+    }
+    let needle = format!(" {label}");
+    block
+        .lines()
+        .filter(|line| line.starts_with("R: ") && line.ends_with(&needle))
+        .count()
+}
+
 #[derive(Debug, Default)]
 struct WorktreeStats {
     worktrees_returned: usize,
@@ -792,6 +807,9 @@ struct ToolMetrics {
     output_area_entries: usize,
     ev_slices: usize,
     anchor_files: usize,
+    verbatim_refs: usize,
+    evidence_preview_refs: usize,
+    calls_to_territory: Option<usize>,
     used_chars: usize,
     baseline_chars: Option<usize>,
     token_saved: Option<f64>,
@@ -878,6 +896,10 @@ fn render_md(report: &ZooReport) -> String {
     let mut token_saved_defined_calls = 0usize;
     let mut token_saved_negative_calls = 0usize;
     let mut token_saved_sum = 0.0f64;
+    let mut atlas_pack_calls = 0usize;
+    let mut atlas_pack_with_evidence_preview = 0usize;
+    let mut atlas_calls_to_territory_defined = 0usize;
+    let mut atlas_calls_to_territory_sum = 0usize;
     let mut worktree_pack_calls = 0usize;
     let mut worktrees_returned_total = 0usize;
     let mut worktrees_with_digest_total = 0usize;
@@ -920,6 +942,18 @@ fn render_md(report: &ZooReport) -> String {
                     m.used_chars,
                 ));
             }
+            if tool.as_str() == "atlas_pack" && m.ok {
+                atlas_pack_calls = atlas_pack_calls.saturating_add(1);
+                if m.evidence_preview_refs > 0 {
+                    atlas_pack_with_evidence_preview =
+                        atlas_pack_with_evidence_preview.saturating_add(1);
+                }
+                if let Some(v) = m.calls_to_territory {
+                    atlas_calls_to_territory_defined =
+                        atlas_calls_to_territory_defined.saturating_add(1);
+                    atlas_calls_to_territory_sum = atlas_calls_to_territory_sum.saturating_add(v);
+                }
+            }
             if tool.as_str() == "worktree_pack" && m.ok {
                 worktree_pack_calls = worktree_pack_calls.saturating_add(1);
                 worktrees_returned_total =
@@ -952,10 +986,15 @@ fn render_md(report: &ZooReport) -> String {
     } else {
         Some(token_saved_sum / token_saved_defined_calls as f64)
     };
+    let atlas_calls_to_territory_mean = if atlas_calls_to_territory_defined == 0 {
+        None
+    } else {
+        Some(atlas_calls_to_territory_sum as f64 / atlas_calls_to_territory_defined as f64)
+    };
 
     out.push_str("## Summary\n\n");
     out.push_str(&format!(
-        "- tool_calls: `{}` (ok: `{}`)\n- strict_bad_calls: `{}`\n- latency_ms: p50=`{}` p95=`{}` max=`{}`\n- map_rows_nonzero_calls: `{}`\n- noise_ratio_defined_calls: `{}` (mean: `{}`)\n- token_saved_defined_calls: `{}` (mean: `{}`; negative: `{}`)\n- worktree_pack_calls: `{}` (worktrees: `{}`; digest: `{}`; dirty: `{}`; touches: `{}`; purpose_truncated: `{}`)\n- worktree_repos: `{}`\n\n",
+        "- tool_calls: `{}` (ok: `{}`)\n- strict_bad_calls: `{}`\n- latency_ms: p50=`{}` p95=`{}` max=`{}`\n- map_rows_nonzero_calls: `{}`\n- noise_ratio_defined_calls: `{}` (mean: `{}`)\n- token_saved_defined_calls: `{}` (mean: `{}`; negative: `{}`)\n- atlas_pack_evidence_preview_calls: `{}`/`{}` (mean calls_to_territory: `{}`)\n- worktree_pack_calls: `{}` (worktrees: `{}`; digest: `{}`; dirty: `{}`; touches: `{}`; purpose_truncated: `{}`)\n- worktree_repos: `{}`\n\n",
         tool_calls,
         ok_calls,
         strict_bad_calls,
@@ -972,6 +1011,11 @@ fn render_md(report: &ZooReport) -> String {
             .map(|v| format!("{:.4}", v))
             .unwrap_or_else(|| "-".to_string()),
         token_saved_negative_calls,
+        atlas_pack_with_evidence_preview,
+        atlas_pack_calls,
+        atlas_calls_to_territory_mean
+            .map(|v| format!("{:.2}", v))
+            .unwrap_or_else(|| "-".to_string()),
         worktree_pack_calls,
         worktrees_returned_total,
         worktrees_with_digest_total,
@@ -1015,17 +1059,17 @@ fn render_md(report: &ZooReport) -> String {
     out.push('\n');
 
     out.push_str(
-        "| repo | head | archetypes | tool | ok | strict_ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | baseline | used | token_saved | wt_n | wt_digest_n | wt_dirty_n | violations |\n",
+        "| repo | head | archetypes | tool | ok | strict_ok | stable | latency_ms | areas_n | map_n | noise_ratio | outputs_n | ev_n | anchor_n | verbatim_n | evidence_preview_n | calls_to_territory | baseline | used | token_saved | wt_n | wt_digest_n | wt_dirty_n | violations |\n",
     );
     out.push_str(
-        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n",
     );
     for repo in repos_sorted {
         let mut tools_sorted: Vec<(&String, &ToolMetrics)> = repo.tools.iter().collect();
         tools_sorted.sort_by(|a, b| a.0.cmp(b.0));
         for (tool, m) in tools_sorted {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 repo.path,
                 repo.head.clone().unwrap_or_else(|| "-".to_string()),
                 if repo.archetypes.is_empty() {
@@ -1046,6 +1090,11 @@ fn render_md(report: &ZooReport) -> String {
                 m.output_area_entries,
                 m.ev_slices,
                 m.anchor_files,
+                m.verbatim_refs,
+                m.evidence_preview_refs,
+                m.calls_to_territory
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
                 m.baseline_chars
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "-".to_string()),
@@ -1148,6 +1197,9 @@ async fn main() -> Result<()> {
                             output_area_entries: 0,
                             ev_slices: 0,
                             anchor_files: 0,
+                            verbatim_refs: 0,
+                            evidence_preview_refs: 0,
+                            calls_to_territory: None,
                             used_chars: 0,
                             baseline_chars: None,
                             token_saved: None,
@@ -1181,6 +1233,9 @@ async fn main() -> Result<()> {
                 output_area_entries: 0,
                 ev_slices: 0,
                 anchor_files: 0,
+                verbatim_refs: 0,
+                evidence_preview_refs: 0,
+                calls_to_territory: None,
                 used_chars: 0,
                 baseline_chars: None,
                 token_saved: None,
@@ -1278,6 +1333,10 @@ async fn main() -> Result<()> {
                     all_noise.push(ratio);
                 }
 
+                let verbatim_refs = count_verbatim_refs(&first_block);
+                m.verbatim_refs = verbatim_refs;
+                m.evidence_preview_refs = count_labeled_refs(&first_block, "evidence_preview");
+
                 let tok = compute_token_saved(&repo, &first_block, &dict)?;
                 m.used_chars = tok.used_chars;
                 m.ev_slices = tok.ev_slices;
@@ -1287,6 +1346,18 @@ async fn main() -> Result<()> {
                     m.token_saved = Some(saved);
                     all_token_saved.push(saved);
                 }
+
+                // Heuristic: if we already got at least one verbatim `R:` reference in the pack
+                // (e.g. `atlas_pack` evidence_preview), then the first call is already grounded.
+                // Otherwise, if the pack contains evidence pointers (`EV ...`), an `evidence_fetch`
+                // follow-up would be required to reach territory.
+                m.calls_to_territory = if verbatim_refs > 0 {
+                    Some(1)
+                } else if m.ev_slices > 0 {
+                    Some(2)
+                } else {
+                    None
+                };
             }
 
             if args.strict {

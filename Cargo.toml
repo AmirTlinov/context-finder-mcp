@@ -79,6 +79,7 @@ notify = "6.1"
 # Testing
 pretty_assertions = "1.4"
 tempfile = "3.13"
+proptest = "1.6"
 
 # Embeddings (GPU via ONNX Runtime)
 ort = { version = "2.0.0-rc.10", features = ["cuda"] }

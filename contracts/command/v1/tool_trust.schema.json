@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/tool_trust.schema.json",
+  "title": "Tool Trust Meta (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "Low-noise trust and retrieval signals intended for agents. Fields are best-effort and may be omitted.",
+  "properties": {
+    "retrieval_mode": {
+      "type": "string",
+      "description": "Retrieval strategy used to produce the result.",
+      "enum": ["semantic", "hybrid", "lexical"]
+    },
+    "fallback_used": {
+      "type": "boolean",
+      "description": "Whether the tool used a fallback strategy (e.g. filesystem grep) to satisfy trust or freshness guardrails."
+    },
+    "anchor_policy": {
+      "type": "string",
+      "description": "Effective anchor policy applied by the tool (after environment/request overrides).",
+      "enum": ["auto", "off"]
+    },
+    "anchor_detected": {
+      "type": "boolean",
+      "description": "Whether a strong anchor was detected in the query (quoted/path/identifier)."
+    },
+    "anchor_kind": {
+      "type": "string",
+      "description": "Kind of the primary anchor used for guardrails (when detected).",
+      "enum": ["quoted", "path", "identifier"]
+    },
+    "anchor_primary": {
+      "type": "string",
+      "description": "Primary normalized anchor value used for the anchor guarantee (when detected)."
+    },
+    "anchor_hits": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many returned snippets/items mention the primary anchor (best-effort)."
+    },
+    "anchor_not_found": {
+      "type": "boolean",
+      "description": "When true, the tool detected an anchor but could not find any grounded snippet for it under the current constraints."
+    }
+  }
+}

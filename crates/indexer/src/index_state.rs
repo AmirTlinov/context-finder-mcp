@@ -93,6 +93,50 @@ pub struct StaleAssessment {
     pub reasons: Vec<StaleReason>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalMode {
+    Semantic,
+    Hybrid,
+    Lexical,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AnchorPolicy {
+    #[default]
+    Auto,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AnchorKind {
+    Quoted,
+    Path,
+    Identifier,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+pub struct ToolTrustMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval_mode: Option<RetrievalMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_used: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_policy: Option<AnchorPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_detected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_kind: Option<AnchorKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_primary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_hits: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_not_found: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub struct ToolMeta {
     #[serde(default)]
@@ -103,6 +147,8 @@ pub struct ToolMeta {
     /// without exposing filesystem paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_fingerprint: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust: Option<ToolTrustMeta>,
 }
 
 /// Stable 64-bit fingerprint for root identification fields.

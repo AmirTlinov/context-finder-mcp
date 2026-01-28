@@ -165,6 +165,10 @@ jobs:
         text.contains("worktree_coverage:"),
         "expected worktree_coverage summary line in facts mode output"
     );
+    assert!(
+        text.lines().any(|line| line.starts_with("R: ")),
+        "expected atlas_pack facts output to include an inline evidence preview (R: ...), got:\n{text}"
+    );
 
     let full = call_tool_text(
         &service,

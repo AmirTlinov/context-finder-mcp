@@ -33,6 +33,9 @@ here first, then implemented in code.
 - `contracts/command/v1/context_pack.schema.json` (schema for `data` when action is `context_pack`)
 - `contracts/command/v1/task_pack.schema.json` (schema for `data` when action is `task_pack`)
 - `contracts/command/v1/text_search.schema.json` (schema for `data` when action is `text_search`)
+- `contracts/command/v1/eval.schema.json` (schema for `data` when action is `eval`)
+- `contracts/command/v1/eval_compare.schema.json` (schema for `data` when action is `eval_compare`)
+- `contracts/command/v1/tool_trust.schema.json` (schema for `data.meta.trust` across tool outputs)
 
 ### Agent Notebook (durable anchors + runbooks)
 

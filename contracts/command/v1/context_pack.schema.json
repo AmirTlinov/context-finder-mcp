@@ -76,6 +76,9 @@
           "type": "integer",
           "minimum": 0,
           "description": "Stable fingerprint of the resolved project root (useful to detect cross-project context mixups without exposing paths)."
+        },
+        "trust": {
+          "$ref": "./tool_trust.schema.json"
         }
       }
     }

@@ -193,6 +193,8 @@ pub struct ErrorClassification {
 #[derive(Debug, Deserialize, Clone)]
 pub struct RequestOptions {
     #[serde(default)]
+    pub anchor_policy: context_indexer::AnchorPolicy,
+    #[serde(default)]
     pub stale_policy: StalePolicy,
     #[serde(default = "default_max_reindex_ms")]
     pub max_reindex_ms: u64,
@@ -209,6 +211,7 @@ pub struct RequestOptions {
 impl Default for RequestOptions {
     fn default() -> Self {
         Self {
+            anchor_policy: context_indexer::AnchorPolicy::default(),
             stale_policy: StalePolicy::default(),
             max_reindex_ms: default_max_reindex_ms(),
             allow_filesystem_fallback: default_true(),
@@ -469,6 +472,14 @@ pub struct EvalSummary {
     pub p50_latency_ms: u64,
     pub p95_latency_ms: u64,
     pub mean_bytes: f64,
+    #[serde(default)]
+    pub anchor_cases: usize,
+    #[serde(default)]
+    pub anchor_hit_cases: usize,
+    #[serde(default)]
+    pub anchorless_cases: usize,
+    #[serde(default)]
+    pub anchorless_rate: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

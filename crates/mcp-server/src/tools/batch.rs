@@ -291,6 +291,7 @@ mod tests {
                 }),
             }),
             root_fingerprint: Some(1),
+            trust: None,
         }
     }
 

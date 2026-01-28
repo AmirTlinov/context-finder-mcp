@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/command/v1/eval.schema.json",
+  "title": "Eval Output (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dataset", "runs"],
+  "properties": {
+    "dataset": { "$ref": "#/$defs/dataset_meta" },
+    "runs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/run" }
+    }
+  },
+  "$defs": {
+    "dataset_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "cases"],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 0 },
+        "name": { "type": ["string", "null"] },
+        "cases": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cache_mode": {
+      "type": "string",
+      "enum": ["warm", "cold"]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mean_mrr",
+        "mean_recall",
+        "mean_overlap_ratio",
+        "mean_latency_ms",
+        "p50_latency_ms",
+        "p95_latency_ms",
+        "mean_bytes",
+        "anchor_cases",
+        "anchor_hit_cases",
+        "anchorless_cases",
+        "anchorless_rate"
+      ],
+      "properties": {
+        "mean_mrr": { "type": "number" },
+        "mean_recall": { "type": "number" },
+        "mean_overlap_ratio": { "type": "number" },
+        "mean_latency_ms": { "type": "number" },
+        "p50_latency_ms": { "type": "integer", "minimum": 0 },
+        "p95_latency_ms": { "type": "integer", "minimum": 0 },
+        "mean_bytes": { "type": "number" },
+        "anchor_cases": { "type": "integer", "minimum": 0 },
+        "anchor_hit_cases": { "type": "integer", "minimum": 0 },
+        "anchorless_cases": { "type": "integer", "minimum": 0 },
+        "anchorless_rate": { "type": "number", "minimum": 0.0 }
+      }
+    },
+    "hit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "file", "start_line", "end_line", "score"],
+      "properties": {
+        "id": { "type": "string" },
+        "file": { "type": "string" },
+        "start_line": { "type": "integer", "minimum": 0 },
+        "end_line": { "type": "integer", "minimum": 0 },
+        "score": { "type": "number" }
+      }
+    },
+    "case_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "query",
+        "expected_paths",
+        "mrr",
+        "recall",
+        "overlap_ratio",
+        "latency_ms",
+        "bytes",
+        "hits"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "query": { "type": "string" },
+        "expected_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "expected_symbols": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "intent": { "type": ["string", "null"] },
+        "mrr": { "type": "number" },
+        "recall": { "type": "number" },
+        "overlap_ratio": { "type": "number" },
+        "first_rank": { "type": ["integer", "null"], "minimum": 0 },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "hits": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/hit" }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "models", "limit", "cache_mode", "summary", "cases"],
+      "properties": {
+        "profile": { "type": "string" },
+        "models": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "limit": { "type": "integer", "minimum": 0 },
+        "cache_mode": { "$ref": "#/$defs/cache_mode" },
+        "summary": { "$ref": "#/$defs/summary" },
+        "cases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/case_result" }
+        }
+      }
+    }
+  },
+  "$comment": "Rust source of truth: crates/cli/src/command/domain.rs::{EvalOutput,EvalRun,EvalSummary,EvalCaseResult,EvalHit}"
+}
+

@@ -3,91 +3,17 @@ use super::super::super::{
     ResponseMode, CONTEXT_PACK_VERSION,
 };
 use super::super::error::{internal_error_with_meta, invalid_request};
-use super::super::semantic_fallback::grep_fallback_hunks;
 use super::budget::enforce_context_pack_budget;
 use super::inputs::ContextPackInputs;
+use super::render;
 use crate::tools::context_doc::ContextDocBuilder;
 use context_protocol::{BudgetTruncation, ToolNextAction};
-use context_search::{ContextPackBudget, ContextPackItem, ContextPackOutput};
+use context_search::{
+    count_anchor_hits, ContextPackBudget, ContextPackItem, ContextPackOutput, DetectedAnchor,
+};
 use std::path::Path;
 
-pub(super) fn choose_fallback_token(tokens: &[String]) -> Option<String> {
-    fn is_low_value(token_lc: &str) -> bool {
-        matches!(
-            token_lc,
-            "struct"
-                | "definition"
-                | "define"
-                | "defined"
-                | "fn"
-                | "function"
-                | "method"
-                | "class"
-                | "type"
-                | "enum"
-                | "trait"
-                | "impl"
-                | "module"
-                | "file"
-                | "path"
-                | "usage"
-                | "usages"
-                | "reference"
-                | "references"
-                | "what"
-                | "where"
-                | "find"
-                | "show"
-        )
-    }
-
-    let mut best: Option<String> = None;
-    for token in tokens {
-        let token = token.trim();
-        if token.len() < 4 {
-            continue;
-        }
-        let token_lc = token.to_lowercase();
-        if is_low_value(&token_lc) {
-            continue;
-        }
-        let looks_like_identifier = token
-            .chars()
-            .any(|ch| ch.is_ascii_uppercase() || ch == '_' || ch == '-');
-        if !looks_like_identifier && token.len() < 8 {
-            continue;
-        }
-        if best.as_ref().is_none_or(|b| token.len() > b.len()) {
-            best = Some(token.to_string());
-        }
-    }
-
-    best.or_else(|| {
-        tokens
-            .iter()
-            .map(|t| t.trim())
-            .filter(|t| !t.is_empty())
-            .max_by_key(|t| t.len())
-            .map(|t| t.to_string())
-    })
-}
-
-pub(super) fn items_mention_token(items: &[ContextPackItem], token: &str) -> bool {
-    let token = token.trim();
-    if token.is_empty() {
-        return true;
-    }
-    let token_lc = token.to_lowercase();
-    items.iter().take(6).any(|item| {
-        item.symbol
-            .as_deref()
-            .is_some_and(|s| s.eq_ignore_ascii_case(token))
-            || item.file.contains(token)
-            || item.file.to_lowercase().contains(&token_lc)
-            || item.content.contains(token)
-            || item.content.to_lowercase().contains(&token_lc)
-    })
-}
+pub(super) use super::fallback_helpers::{choose_fallback_token, items_mention_token};
 
 pub(super) struct LexicalFallbackArgs<'a> {
     pub(super) query: &'a str,
@@ -106,12 +32,11 @@ pub(super) async fn build_lexical_fallback_result(
     let budgets = mcp_default_budgets();
     let fallback_max_chars = inputs.max_chars.min(budgets.grep_context_max_chars);
     let max_hunks = inputs.limit.min(10);
-
-    let hunks = grep_fallback_hunks(
+    let all_hunks = super::fallback_helpers::collect_scoped_fallback_hunks(
         root,
         root_display,
         args.fallback_pattern,
-        inputs.response_mode,
+        inputs,
         max_hunks,
         fallback_max_chars,
     )
@@ -125,7 +50,7 @@ pub(super) async fn build_lexical_fallback_result(
     let mut used_chars = 0usize;
     let mut dropped_items = 0usize;
 
-    for (idx, hunk) in hunks.into_iter().enumerate() {
+    for (idx, hunk) in all_hunks.into_iter().enumerate() {
         if items.len() >= inputs.limit {
             dropped_items += 1;
             continue;
@@ -164,7 +89,24 @@ pub(super) async fn build_lexical_fallback_result(
     };
 
     let mut next_actions = Vec::new();
-    if inputs.response_mode == ResponseMode::Full {
+    let include_next_actions =
+        inputs.format_version == 2 || inputs.response_mode != ResponseMode::Minimal;
+    if include_next_actions {
+        if let Some(top) = items.first() {
+            next_actions.push(ToolNextAction {
+                tool: "file_slice".to_string(),
+                args: serde_json::json!({
+                    "path": root_display,
+                    "file": top.file.clone(),
+                    "start_line": top.start_line.saturating_sub(40).max(1),
+                    "max_lines": 200,
+                    "format": "numbered",
+                    "response_mode": "facts"
+                }),
+                reason: "Open the top hunk as verbatim code (territory) via file_slice."
+                    .to_string(),
+            });
+        }
         next_actions.push(ToolNextAction {
             tool: "text_search".to_string(),
             args: serde_json::json!({
@@ -188,8 +130,9 @@ pub(super) async fn build_lexical_fallback_result(
         });
     }
 
-    if inputs.response_mode == ResponseMode::Minimal {
+    if inputs.response_mode == ResponseMode::Minimal && inputs.format_version != 2 {
         args.meta.index_state = None;
+        args.meta.trust = None;
     }
 
     let mut output = ContextPackOutput {
@@ -203,6 +146,25 @@ pub(super) async fn build_lexical_fallback_result(
         meta: args.meta,
     };
 
+    if let Some(trust) = output.meta.trust.as_mut() {
+        trust.retrieval_mode = Some(context_indexer::RetrievalMode::Lexical);
+        trust.fallback_used = Some(true);
+        if trust.anchor_detected.unwrap_or(false) {
+            if let (Some(kind), Some(primary)) =
+                (trust.anchor_kind, trust.anchor_primary.as_deref())
+            {
+                let anchor = DetectedAnchor {
+                    kind,
+                    raw: primary.to_string(),
+                    normalized: primary.to_string(),
+                };
+                let hits = count_anchor_hits(&output.items, &anchor);
+                trust.anchor_hits = Some(hits);
+                trust.anchor_not_found = Some(hits == 0);
+            }
+        }
+    }
+
     enforce_context_pack_budget(&mut output)?;
 
     let mut doc = ContextDocBuilder::new();
@@ -212,8 +174,17 @@ pub(super) async fn build_lexical_fallback_result(
         format!("context_pack: {} items", output.items.len())
     };
     doc.push_answer(&answer);
-    if inputs.response_mode != ResponseMode::Minimal {
-        doc.push_root_fingerprint(output.meta.root_fingerprint);
+    if inputs.format_version == 2 {
+        render::push_v2_envelope(&mut doc, &output, None);
+        render::push_next_actions_v2(&mut doc, &output);
+    } else {
+        if inputs.response_mode != ResponseMode::Minimal {
+            doc.push_root_fingerprint(output.meta.root_fingerprint);
+        }
+        render::maybe_push_trust_micro_meta(&mut doc, inputs.response_mode, &output, None);
+        if inputs.response_mode != ResponseMode::Minimal {
+            render::push_next_actions(&mut doc, &output);
+        }
     }
     if inputs.response_mode == ResponseMode::Full {
         if let Some(note) = args.reason_note {

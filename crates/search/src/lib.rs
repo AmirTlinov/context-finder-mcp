@@ -1,3 +1,4 @@
+mod anchor;
 mod context_pack;
 mod context_search;
 mod error;
@@ -12,6 +13,7 @@ pub use context_vector_store::SearchResult;
 mod query_classifier;
 mod query_expansion;
 
+pub use anchor::{count_anchor_hits, detect_primary_anchor, item_mentions_anchor, DetectedAnchor};
 pub use context_pack::{
     ContextPackBudget, ContextPackItem, ContextPackOutput, CONTEXT_PACK_VERSION,
 };

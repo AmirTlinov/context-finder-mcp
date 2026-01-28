@@ -539,6 +539,8 @@ impl SearchService {
         let related_mode =
             parse_related_mode(payload.related_mode.as_deref(), docs_intent, query_type)?;
         let query_tokens = tokenize_focus_query(&payload.query);
+        let primary_anchor = context_search::detect_primary_anchor(&payload.query);
+        let anchor_policy = effective_anchor_policy(request_options.anchor_policy);
 
         let load_index_start = Instant::now();
         let loaded = load_semantic_indexes(&project_ctx.root, &project_ctx.profile)
@@ -809,9 +811,64 @@ impl SearchService {
             meta: context_indexer::ToolMeta {
                 index_state: None,
                 root_fingerprint: Some(context_indexer::root_fingerprint(&project_root)),
+                trust: None,
             },
         };
         enforce_context_pack_budget(&mut output)?;
+
+        let anchor_hits = primary_anchor
+            .as_ref()
+            .map(|anchor| context_search::count_anchor_hits(&output.items, anchor))
+            .unwrap_or(0);
+        output.meta.trust = Some(match primary_anchor.as_ref() {
+            Some(anchor) => context_indexer::ToolTrustMeta {
+                retrieval_mode: Some(context_indexer::RetrievalMode::Hybrid),
+                fallback_used: Some(false),
+                anchor_policy: Some(anchor_policy),
+                anchor_detected: Some(true),
+                anchor_kind: Some(anchor.kind),
+                anchor_primary: Some(anchor.normalized.clone()),
+                anchor_hits: Some(anchor_hits),
+                anchor_not_found: Some(anchor_hits == 0 && output.items.is_empty()),
+            },
+            None => context_indexer::ToolTrustMeta {
+                retrieval_mode: Some(context_indexer::RetrievalMode::Hybrid),
+                fallback_used: Some(false),
+                anchor_policy: Some(anchor_policy),
+                anchor_detected: Some(false),
+                anchor_kind: None,
+                anchor_primary: None,
+                anchor_hits: None,
+                anchor_not_found: None,
+            },
+        });
+
+        if anchor_policy != context_indexer::AnchorPolicy::Off {
+            if let Some(anchor) = primary_anchor.as_ref() {
+                if anchor_hits == 0 {
+                    output.items.clear();
+                    output.budget.used_chars = 0;
+                    output.budget.truncated = false;
+                    output.budget.dropped_items = 0;
+                    output.budget.truncation = None;
+                    if let Some(trust) = output.meta.trust.as_mut() {
+                        trust.anchor_hits = Some(0);
+                        trust.anchor_not_found = Some(true);
+                    }
+                    output.next_actions.push(ToolNextAction {
+                        tool: "text_search".to_string(),
+                        args: serde_json::json!({
+                            "project": project_root.clone(),
+                            "pattern": anchor.normalized.clone(),
+                            "max_results": 80,
+                            "case_sensitive": false,
+                            "whole_word": true,
+                        }),
+                        reason: "Anchor guardrail: semantic hits did not mention the anchor; verify the exact term via text_search (often reveals typos, wrong root, or stale index).".to_string(),
+                    });
+                }
+            }
+        }
 
         let debug_hints = if trace {
             let query_kind = match query_type {
@@ -2035,6 +2092,24 @@ fn choose_strategy(query: &str) -> (SearchStrategy, Option<String>) {
             SearchStrategy::Extended
         };
     (strategy, reason)
+}
+
+fn effective_anchor_policy(
+    requested: context_indexer::AnchorPolicy,
+) -> context_indexer::AnchorPolicy {
+    let override_raw = std::env::var("CONTEXT_ANCHOR_POLICY").ok();
+    match override_raw
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" => requested,
+        "auto" => context_indexer::AnchorPolicy::Auto,
+        "off" => context_indexer::AnchorPolicy::Off,
+        _ => requested,
+    }
 }
 
 fn choose_task_hint(query: &str) -> (Option<String>, Option<String>) {

@@ -9,6 +9,28 @@ pub struct ContextPackRequest {
     #[schemars(description = "Natural language search query")]
     pub query: String,
 
+    /// Output text format version (MCP)
+    ///
+    /// - `1` (default): current low-noise `.context` output.
+    /// - `2`: trust-first envelope that always includes PROVENANCE/GUARANTEES/NEXT sections.
+    ///
+    /// Note: this affects the *text* `.context` content. `structured_content` remains the same
+    /// JSON shape (additive fields only, when applicable).
+    #[schemars(
+        description = "Text output format version for `.context`: 1 (default) or 2 (trust-first envelope with PROVENANCE/GUARANTEES/NEXT)."
+    )]
+    pub format_version: Option<u32>,
+
+    /// Anchor guardrail policy (default: auto)
+    ///
+    /// When enabled and a strong anchor is detected (quoted/path/identifier), Context will
+    /// enforce a fail-closed guarantee: never return unrelated hits that do not mention the
+    /// anchor. Use "off" to disable the guarantee for this request.
+    #[schemars(
+        description = "Anchor guardrail policy: 'auto' (default) enforces fail-closed for strong anchors; 'off' disables."
+    )]
+    pub anchor_policy: Option<context_indexer::AnchorPolicy>,
+
     /// Project directory path
     #[schemars(
         description = "Project directory path (defaults to session root; fallback: CONTEXT_ROOT/CONTEXT_PROJECT_ROOT; non-daemon fallback: cwd). DX: when a session root is already set and `include_paths`/`exclude_paths`/`file_pattern` are omitted, a relative `path` is treated as an in-project scope hint instead of switching the project root; use `root_set` for explicit project switching."
@@ -64,7 +86,9 @@ pub struct ContextPackRequest {
     pub language: Option<String>,
 
     /// Response mode:
-    /// - "facts" (default): keeps meta/index_state for freshness, strips next_actions to reduce noise.
+    /// - "facts" (default): payload-focused; keeps freshness meta/index_state. Next actions are
+    ///   normally omitted, but may be included on anomalies (e.g. anchor_not_found/truncation)
+    ///   or when `format_version=2` is requested.
     /// - "full": includes meta/index_state and next_actions.
     /// - "minimal": strips meta/index_state and next_actions to reduce noise. When not "full", `trace` is ignored.
     #[schemars(description = "Response mode: 'facts' (default), 'full', or 'minimal'")]

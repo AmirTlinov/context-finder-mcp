@@ -10,6 +10,7 @@ For machine-readable workflows (automation / batching / `$ref` fan-out), use the
 Canonical schema (source of truth):
 
 - [contracts/command/v1/context_pack.schema.json](../contracts/command/v1/context_pack.schema.json)
+- [contracts/command/v1/tool_trust.schema.json](../contracts/command/v1/tool_trust.schema.json) (optional `meta.trust`)
 
 ## Filtering (recommended)
 
@@ -24,6 +25,13 @@ Semantics:
 - `file_pattern`: substring match, or `glob` when it contains `*` / `?`
 
 These filters are applied during pack assembly (so they affect `budget` deterministically).
+
+Lexical fallback notes:
+
+- When Context falls back to filesystem grep (e.g. semantic unavailable, or anchor fail-closed),
+  it applies the same filters **best-effort** to avoid scanning unrelated areas.
+- `GrepContext` supports only a single `file_pattern`; when multiple `include_paths` are provided,
+  fallback scans each prefix (bounded) until it collects enough hunks.
 
 ## Code vs docs preference (agent ergonomics)
 
@@ -71,7 +79,8 @@ Defaults are chosen heuristically for agent workflows:
     "dropped_items": 0
   },
   "meta": {
-    "index_state": { /* best-effort, see index_state.schema.json */ }
+    "index_state": { /* best-effort, see index_state.schema.json */ },
+    "trust": { /* best-effort, see tool_trust.schema.json */ }
   }
 }
 ```
@@ -102,9 +111,49 @@ For the Command API, use `options.stale_policy` and `options.max_reindex_ms` ins
 For agent workflows that need the smallest possible payload (maximum signal per token),
 the MCP tool supports a noise-reduction switch:
 
-- `response_mode: "facts"` (default): keeps freshness `meta.index_state` but stays low-noise
+- `response_mode: "facts"` (default): keeps freshness `meta.index_state` but stays low-noise.
+  Next actions are normally omitted, but may be included on anomalies (anchor_not_found/truncation)
+  or when `format_version=2` is requested.
 - `response_mode: "full"`: includes `meta.index_state` plus extra diagnostics
-- `response_mode: "minimal"`: strips `meta.index_state`; `trace` is ignored
+- `response_mode: "minimal"`: strips `meta.index_state` and `meta.trust`; `trace` is ignored
+
+## MCP text format version (format_version)
+
+The MCP tool returns a `.context` text document. To keep trust signals compact but explicit, the
+tool supports a text format knob:
+
+- `format_version: 1` (default): current low-noise text output.
+- `format_version: 2`: trust-first envelope that always includes:
+  - `PROVENANCE` (root_fingerprint + retrieval_mode/fallback/index_state)
+  - `GUARANTEES` (anchor fail-closed + truncation)
+  - `NEXT` (1-3 suggested actions)
+
+This affects only the `.context` text output; the machine-readable `structured_content` JSON stays
+the same shape (additive fields only).
+
+## Anchor policy (strong anchors)
+
+When the query contains a **strong anchor** (a quoted string, a path-like token, or an identifier-like token),
+Context can enforce an **output gate**:
+
+- If the returned snippets do not mention the anchor, the result is **fail-closed** (empty) and
+  the tool suggests grounding `text_search` / `file_slice` next actions (always in `full`, and in
+  `facts` when an anomaly is detected; always in `format_version=2`).
+
+Controls:
+
+- Command API: `options.anchor_policy` (`auto` | `off`)
+- MCP tool: `anchor_policy` (`auto` | `off`)
+- CLI: `context context-pack --anchor-policy off` (and `context search --anchor-policy off`)
+- Emergency override (all surfaces): `CONTEXT_ANCHOR_POLICY=off` (or `auto`)
+
+Trust/provenance signals are exposed under `meta.trust` (and as low-noise notes in MCP text output).
+
+Contracts (source of truth):
+
+- `contracts/command/v1/context_pack.schema.json`
+- `contracts/command/v1/request_options.schema.json`
+- `contracts/command/v1/tool_trust.schema.json`
 
 ## Examples
 

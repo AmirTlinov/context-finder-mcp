@@ -1,99 +1,35 @@
 use super::fallback;
 use super::graph_nodes;
+use super::helpers;
 use super::inputs;
 use super::response;
 
 use super::super::super::{
     current_model_id, pack_enriched_results, prepare_context_pack_enriched, AutoIndexPolicy,
     CallToolResult, ContextFinderService, ContextPackOutput, ContextPackRequest, McpError,
-    QueryClassifier, QueryType, CONTEXT_PACK_VERSION,
+    CONTEXT_PACK_VERSION,
 };
 use super::super::error::{
     attach_meta, internal_error_with_meta, invalid_request_with_root_context, meta_for_request,
 };
 use super::super::semantic_fallback::is_semantic_unavailable_error;
 
-use std::path::Path;
-
-fn select_language(
-    raw: Option<&str>,
-    engine: &mut super::super::super::EngineLock,
-) -> context_graph::GraphLanguage {
-    raw.map_or_else(
-        || {
-            let chunks = engine.engine_mut().context_search.hybrid().chunks();
-            ContextFinderService::detect_language(chunks)
-        },
-        |lang| ContextFinderService::parse_language(Some(lang)),
-    )
-}
-
-pub(super) fn disambiguate_context_pack_path_as_scope_hint_if_root_set(
-    session_root: Option<&Path>,
-    request: &mut ContextPackRequest,
-) -> bool {
-    let has_explicit_filters = request
-        .include_paths
-        .as_ref()
-        .is_some_and(|v| !v.is_empty())
-        || request
-            .exclude_paths
-            .as_ref()
-            .is_some_and(|v| !v.is_empty())
-        || request
-            .file_pattern
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|v| !v.is_empty());
-    if has_explicit_filters {
-        return false;
-    }
-
-    let Some(session_root) = session_root else {
-        return false;
-    };
-    let Some(raw_path) = request.path.as_deref() else {
-        return false;
-    };
-
-    let raw_path = raw_path.trim();
-    if raw_path.is_empty() {
-        return false;
-    }
-    if Path::new(raw_path).is_absolute() {
-        return false;
-    }
-
-    let normalized = raw_path.replace('\\', "/");
-    if normalized.contains('*') || normalized.contains('?') {
-        request.file_pattern = Some(normalized);
-        request.path = None;
-        return true;
-    }
-
-    let candidate = session_root.join(&normalized);
-    let is_dir = std::fs::metadata(&candidate)
-        .ok()
-        .map(|meta| meta.is_dir())
-        .unwrap_or(false);
-    if is_dir {
-        request.include_paths = Some(vec![normalized]);
-    } else {
-        request.file_pattern = Some(normalized);
-    }
-    request.path = None;
-    true
-}
+use context_indexer::{AnchorPolicy, RetrievalMode, ToolTrustMeta};
+use context_search::{count_anchor_hits, detect_primary_anchor};
 
 pub(in crate::tools::dispatch) async fn context_pack(
     service: &ContextFinderService,
     mut request: ContextPackRequest,
 ) -> Result<CallToolResult, McpError> {
     let session_root = { service.session.lock().await.clone_root().map(|(r, _)| r) };
-    let _ = disambiguate_context_pack_path_as_scope_hint_if_root_set(
+    let _ = helpers::disambiguate_context_pack_path_as_scope_hint_if_root_set(
         session_root.as_deref(),
         &mut request,
     );
+
+    let requested_anchor_policy = request.anchor_policy.unwrap_or_default();
+    let anchor_policy = helpers::effective_anchor_policy(requested_anchor_policy);
+    let primary_anchor = detect_primary_anchor(&request.query);
 
     let inputs = match inputs::parse_inputs(&request) {
         Ok(parsed) => parsed,
@@ -138,12 +74,35 @@ pub(in crate::tools::dispatch) async fn context_pack(
             let message = format!("Error: {err}");
             let meta = service.tool_meta(&root).await;
             if is_semantic_unavailable_error(&message) {
-                let fallback_pattern = inputs
-                    .query_tokens
-                    .iter()
-                    .max_by_key(|t| t.len())
-                    .cloned()
+                let fallback_pattern = primary_anchor
+                    .as_ref()
+                    .map(|anchor| anchor.normalized.clone())
+                    .or_else(|| inputs.query_tokens.iter().max_by_key(|t| t.len()).cloned())
                     .unwrap_or_else(|| request.query.trim().to_string());
+
+                let mut fallback_meta = meta.clone();
+                fallback_meta.trust = Some(match primary_anchor.as_ref() {
+                    Some(anchor) => ToolTrustMeta {
+                        retrieval_mode: Some(RetrievalMode::Lexical),
+                        fallback_used: Some(true),
+                        anchor_policy: Some(anchor_policy),
+                        anchor_detected: Some(true),
+                        anchor_kind: Some(anchor.kind),
+                        anchor_primary: Some(anchor.normalized.clone()),
+                        anchor_hits: None,
+                        anchor_not_found: None,
+                    },
+                    None => ToolTrustMeta {
+                        retrieval_mode: Some(RetrievalMode::Lexical),
+                        fallback_used: Some(true),
+                        anchor_policy: Some(anchor_policy),
+                        anchor_detected: Some(false),
+                        anchor_kind: None,
+                        anchor_primary: None,
+                        anchor_hits: None,
+                        anchor_not_found: None,
+                    },
+                });
 
                 match fallback::build_lexical_fallback_result(
                     service,
@@ -153,7 +112,7 @@ pub(in crate::tools::dispatch) async fn context_pack(
                     fallback::LexicalFallbackArgs {
                         query: &request.query,
                         fallback_pattern: &fallback_pattern,
-                        meta,
+                        meta: fallback_meta,
                         reason_note: Some(
                             "diagnostic: semantic index unavailable; using lexical fallback",
                         ),
@@ -170,7 +129,7 @@ pub(in crate::tools::dispatch) async fn context_pack(
         }
     };
 
-    let language = select_language(request.language.as_deref(), &mut engine);
+    let language = helpers::select_language(request.language.as_deref(), &mut engine);
     if let Err(err) = engine.engine_mut().ensure_graph(language).await {
         return Ok(internal_error_with_meta(
             format!("Graph build error: {err}"),
@@ -241,7 +200,7 @@ pub(in crate::tools::dispatch) async fn context_pack(
 
     let model_id = current_model_id().unwrap_or_else(|_| "bge-small".to_string());
     let query = request.query.clone();
-    let output = ContextPackOutput {
+    let mut output = ContextPackOutput {
         version: CONTEXT_PACK_VERSION,
         query: query.clone(),
         model_id,
@@ -252,15 +211,54 @@ pub(in crate::tools::dispatch) async fn context_pack(
         meta,
     };
 
-    // Guardrail: if a query contains a strong anchor (identifier/path), never return a pack that
-    // doesn't mention it. This prevents "high-confidence junk" in mixed queries like
-    // "LintWarning struct definition" when the identifier is missing from the repo.
-    if !output.items.is_empty()
-        && matches!(inputs.query_type, QueryType::Identifier | QueryType::Path)
-        && !QueryClassifier::is_docs_intent(&request.query)
-    {
-        if let Some(anchor) = fallback::choose_fallback_token(&inputs.query_tokens) {
-            if !fallback::items_mention_token(&output.items, &anchor) {
+    let retrieval_mode = if semantic_disabled_reason.is_some() {
+        RetrievalMode::Lexical
+    } else {
+        RetrievalMode::Hybrid
+    };
+    output.meta.trust = Some(match primary_anchor.as_ref() {
+        Some(anchor) => {
+            let hits = count_anchor_hits(&output.items, anchor);
+            ToolTrustMeta {
+                retrieval_mode: Some(retrieval_mode),
+                fallback_used: Some(false),
+                anchor_policy: Some(anchor_policy),
+                anchor_detected: Some(true),
+                anchor_kind: Some(anchor.kind),
+                anchor_primary: Some(anchor.normalized.clone()),
+                anchor_hits: Some(hits),
+                anchor_not_found: Some(hits == 0 && output.items.is_empty()),
+            }
+        }
+        None => ToolTrustMeta {
+            retrieval_mode: Some(retrieval_mode),
+            fallback_used: Some(false),
+            anchor_policy: Some(anchor_policy),
+            anchor_detected: Some(false),
+            anchor_kind: None,
+            anchor_primary: None,
+            anchor_hits: None,
+            anchor_not_found: None,
+        },
+    });
+
+    // Output gate: enforce strong-anchor coverage (fail-closed) as the last step before render.
+    if anchor_policy != AnchorPolicy::Off {
+        if let Some(anchor) = primary_anchor.as_ref() {
+            let hits = count_anchor_hits(&output.items, anchor);
+            if hits == 0 {
+                let mut fallback_meta = output.meta.clone();
+                fallback_meta.trust = Some(ToolTrustMeta {
+                    retrieval_mode: Some(RetrievalMode::Lexical),
+                    fallback_used: Some(true),
+                    anchor_policy: Some(anchor_policy),
+                    anchor_detected: Some(true),
+                    anchor_kind: Some(anchor.kind),
+                    anchor_primary: Some(anchor.normalized.clone()),
+                    anchor_hits: None,
+                    anchor_not_found: None,
+                });
+
                 match fallback::build_lexical_fallback_result(
                     service,
                     &root,
@@ -268,8 +266,8 @@ pub(in crate::tools::dispatch) async fn context_pack(
                     &inputs,
                     fallback::LexicalFallbackArgs {
                         query: &request.query,
-                        fallback_pattern: &anchor,
-                        meta: output.meta.clone(),
+                        fallback_pattern: &anchor.normalized,
+                        meta: fallback_meta,
                         reason_note: Some("semantic: anchor_missing (fallback to filesystem)"),
                     },
                 )
